@@ -11,12 +11,12 @@ public:
     VideoStreamPublisher()
     : Node("video_stream_publisher") {
         camera_devices_ = {0, 1}; // add more device indices here
-        for (size_t i = 0; i < camera_devices_.size(); i = i+2) {
+        for (size_t i = 0; i < camera_devices_.size(); i++) {
             std::string topic_name = "cam" + std::to_string(i) + "/image_raw";
             auto pub = this->create_publisher<sensor_msgs::msg::Image>(topic_name, 10);
             publishers_.push_back(pub);
 
-            cv::VideoCapture cap(camera_devices_[i]);
+            cv::VideoCapture cap(camera_devices_[i] * 2);
             if (!cap.isOpened()) {
                 RCLCPP_ERROR(this->get_logger(), "Could not open camera %zu", i);
                 continue;
