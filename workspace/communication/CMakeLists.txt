@@ -26,7 +26,7 @@ endif()
 
 install(PROGRAMS
   scripts/audio_server.py
-  scripts/base_socket.py
+  scripts/base_server.py
   scripts/command_server.py
   scripts/sub_lector.py
   DESTINATION lib/${PROJECT_NAME}
