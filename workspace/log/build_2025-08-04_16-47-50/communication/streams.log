@@ -1,0 +1,39 @@
+[0.020s] Invoking command in '/home/didi_121/Rescue-Major/workspace/build/communication': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/humble /usr/bin/cmake --build /home/didi_121/Rescue-Major/workspace/build/communication -- -j8 -l8
+[0.063s] -- Found ament_cmake: 1.3.11 (/opt/ros/humble/share/ament_cmake/cmake)
+[0.332s] -- Found rclpy: 3.3.16 (/opt/ros/humble/share/rclpy/cmake)
+[0.332s] -- Found rclcpp: 16.0.12 (/opt/ros/humble/share/rclcpp/cmake)
+[0.386s] -- Found rosidl_generator_c: 3.1.6 (/opt/ros/humble/share/rosidl_generator_c/cmake)
+[0.391s] -- Found rosidl_adapter: 3.1.6 (/opt/ros/humble/share/rosidl_adapter/cmake)
+[0.403s] -- Found rosidl_generator_cpp: 3.1.6 (/opt/ros/humble/share/rosidl_generator_cpp/cmake)
+[0.421s] -- Using all available rosidl_typesupport_c: rosidl_typesupport_fastrtps_c;rosidl_typesupport_introspection_c
+[0.445s] -- Using all available rosidl_typesupport_cpp: rosidl_typesupport_fastrtps_cpp;rosidl_typesupport_introspection_cpp
+[0.506s] -- Found rmw_implementation_cmake: 6.1.2 (/opt/ros/humble/share/rmw_implementation_cmake/cmake)
+[0.509s] -- Found rmw_fastrtps_cpp: 6.2.7 (/opt/ros/humble/share/rmw_fastrtps_cpp/cmake)
+[0.688s] -- Using RMW implementation 'rmw_fastrtps_cpp' as default
+[0.785s] -- Found ament_lint_auto: 0.12.12 (/opt/ros/humble/share/ament_lint_auto/cmake)
+[0.910s] -- Configuring done
+[0.920s] -- Generating done
+[0.926s] -- Build files have been written to: /home/didi_121/Rescue-Major/workspace/build/communication
+[0.971s] Invoked command in '/home/didi_121/Rescue-Major/workspace/build/communication' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/humble /usr/bin/cmake --build /home/didi_121/Rescue-Major/workspace/build/communication -- -j8 -l8
+[0.988s] Invoking command in '/home/didi_121/Rescue-Major/workspace/build/communication': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/humble /usr/bin/cmake --install /home/didi_121/Rescue-Major/workspace/build/communication
+[1.000s] -- Install configuration: ""
+[1.000s] -- Up-to-date: /home/didi_121/Rescue-Major/workspace/install/communication/lib/communication/audio_server.py
+[1.000s] -- Installing: /home/didi_121/Rescue-Major/workspace/install/communication/lib/communication/base_socket.py
+[1.000s] -- Installing: /home/didi_121/Rescue-Major/workspace/install/communication/lib/communication/command_server.py
+[1.001s] -- Up-to-date: /home/didi_121/Rescue-Major/workspace/install/communication/lib/communication/sub_lector.py
+[1.001s] -- Up-to-date: /home/didi_121/Rescue-Major/workspace/install/communication/share/ament_index/resource_index/package_run_dependencies/communication
+[1.001s] -- Up-to-date: /home/didi_121/Rescue-Major/workspace/install/communication/share/ament_index/resource_index/parent_prefix_path/communication
+[1.002s] -- Up-to-date: /home/didi_121/Rescue-Major/workspace/install/communication/share/communication/environment/ament_prefix_path.sh
+[1.002s] -- Installing: /home/didi_121/Rescue-Major/workspace/install/communication/share/communication/environment/ament_prefix_path.dsv
+[1.002s] -- Up-to-date: /home/didi_121/Rescue-Major/workspace/install/communication/share/communication/environment/path.sh
+[1.002s] -- Installing: /home/didi_121/Rescue-Major/workspace/install/communication/share/communication/environment/path.dsv
+[1.002s] -- Up-to-date: /home/didi_121/Rescue-Major/workspace/install/communication/share/communication/local_setup.bash
+[1.003s] -- Up-to-date: /home/didi_121/Rescue-Major/workspace/install/communication/share/communication/local_setup.sh
+[1.003s] -- Up-to-date: /home/didi_121/Rescue-Major/workspace/install/communication/share/communication/local_setup.zsh
+[1.003s] -- Installing: /home/didi_121/Rescue-Major/workspace/install/communication/share/communication/local_setup.dsv
+[1.003s] -- Installing: /home/didi_121/Rescue-Major/workspace/install/communication/share/communication/package.dsv
+[1.004s] -- Up-to-date: /home/didi_121/Rescue-Major/workspace/install/communication/share/ament_index/resource_index/packages/communication
+[1.004s] -- Up-to-date: /home/didi_121/Rescue-Major/workspace/install/communication/share/communication/cmake/communicationConfig.cmake
+[1.004s] -- Up-to-date: /home/didi_121/Rescue-Major/workspace/install/communication/share/communication/cmake/communicationConfig-version.cmake
+[1.004s] -- Up-to-date: /home/didi_121/Rescue-Major/workspace/install/communication/share/communication/package.xml
+[1.006s] Invoked command in '/home/didi_121/Rescue-Major/workspace/build/communication' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/humble /usr/bin/cmake --install /home/didi_121/Rescue-Major/workspace/build/communication

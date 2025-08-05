@@ -1,0 +1,9 @@
+/home/didi_121/Rescue-Major/workspace/build/communication/CMakeFiles/uninstall.dir
+/home/didi_121/Rescue-Major/workspace/build/communication/CMakeFiles/communication_uninstall.dir
+/home/didi_121/Rescue-Major/workspace/build/communication/CMakeFiles/test.dir
+/home/didi_121/Rescue-Major/workspace/build/communication/CMakeFiles/edit_cache.dir
+/home/didi_121/Rescue-Major/workspace/build/communication/CMakeFiles/rebuild_cache.dir
+/home/didi_121/Rescue-Major/workspace/build/communication/CMakeFiles/list_install_components.dir
+/home/didi_121/Rescue-Major/workspace/build/communication/CMakeFiles/install.dir
+/home/didi_121/Rescue-Major/workspace/build/communication/CMakeFiles/install/local.dir
+/home/didi_121/Rescue-Major/workspace/build/communication/CMakeFiles/install/strip.dir

@@ -1,0 +1,6 @@
+Invoking command in '/home/didi_121/Rescue-Major/workspace/build/communication': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake /home/didi_121/Rescue-Major/workspace/communication -DCMAKE_INSTALL_PREFIX=/home/didi_121/Rescue-Major/workspace/install/communication
+Invoked command in '/home/didi_121/Rescue-Major/workspace/build/communication' returned '0': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake /home/didi_121/Rescue-Major/workspace/communication -DCMAKE_INSTALL_PREFIX=/home/didi_121/Rescue-Major/workspace/install/communication
+Invoking command in '/home/didi_121/Rescue-Major/workspace/build/communication': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --build /home/didi_121/Rescue-Major/workspace/build/communication -- -j8 -l8
+Invoked command in '/home/didi_121/Rescue-Major/workspace/build/communication' returned '0': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --build /home/didi_121/Rescue-Major/workspace/build/communication -- -j8 -l8
+Invoking command in '/home/didi_121/Rescue-Major/workspace/build/communication': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --install /home/didi_121/Rescue-Major/workspace/build/communication
+Invoked command in '/home/didi_121/Rescue-Major/workspace/build/communication' returned '0': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --install /home/didi_121/Rescue-Major/workspace/build/communication
