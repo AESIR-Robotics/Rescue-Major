@@ -4,12 +4,13 @@ import json
 import time 
 import threading
 
-logging.basicConfig(level=logging.DEBUG, format=':%(message)s')
+logging.basicConfig(level=logging.INFO, format=':%(message)s')
+
 class ConnectionBase:
     def __init__(self, mode, port):
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(logging.DEBUG)
-        with open("com_vars.json", "r") as vars:
+        with open(r"communication/scripts/com_vars.json", "r") as vars:
             self.sok_vars = json.load(vars)
             self.host = self.sok_vars['server_ip']
             self.port = self.sok_vars[port]
@@ -17,8 +18,9 @@ class ConnectionBase:
         self.stop_threads = False
         self.end_instance  = False
         self.mode = mode  
-        self.manage_info = None
-        self.gather_info = None
+        #self.notify = None
+        #self.gather_info = None
+        self.buffer = None 
         
     def kill(self):
         self.end_instance = True
@@ -61,8 +63,17 @@ class ConnectionBase:
                     self.logger.error(f"Limit of attempts reached")
                     break
 
+            except Exception as e:
+                self.logger.error(f"Error connecting: {e}")
+                self.tries += 1
+                if self.mode == "server":
+                    self.client.close()
+                self.socket.close()
+                continue
+                
+
     def read(self):
-        manage_received_info = self.manage_info
+        #remember to create the notify method in the child class
         if self.mode == "server":
             read_from = self.client
         else:
@@ -73,18 +84,24 @@ class ConnectionBase:
                 message = read_from.recv(2048).decode()
                 if not message:
                     continue
-                manage_received_info(message)
+
                 if message == self.exit_pswrd:
                     self.logger.warning("Exit password received")
+                    self.buffer = message
+                    self.notify()
                     self.kill()
                     self.stop_threads = True
+
+                self.buffer = message
+                self.notify()
+                self.logger.debug(f"Received: {message}")    
                 message = ''
             except Exception as e:
                 self.logger.warning(f"Error at reading: {e}")
                 self.stop_threads = True
 
     def send(self):
-        gather_message_info = self.gather_info
+        #remember to create the gather_info method in the child class
         if self.mode == "server":
             send_to = self.client
         else:
@@ -92,7 +109,7 @@ class ConnectionBase:
 
         while not self.stop_threads:
             try:
-                message = gather_message_info().encode()
+                message = self.gather_info().encode()
                 send_to.send(message)
             except Exception as e:
                 self.logger.error(f"Error at sending: {e}")
