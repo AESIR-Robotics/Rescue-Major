@@ -26,9 +26,9 @@ endif()
 
 install(PROGRAMS
   scripts/audio_server.py
-  scripts/base_server.py
   scripts/command_server.py
-  scripts/sub_lector.py
+  scripts/dummy_subscriber.py
+  scripts/dummy_publisher.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

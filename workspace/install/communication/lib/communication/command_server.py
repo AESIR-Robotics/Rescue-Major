@@ -1,59 +1,128 @@
 #!/usr/bin/env python3
 import rclpy
+from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from std_msgs.msg import String
-from base_socket import ConnectionBase
-import threading
-import logging  
+import websockets 
+from websockets import serve
+import logging
+import json 
+import asyncio
 
-logger = logging.getLogger(__name__)  
-logging.basicConfig(level=logging.DEBUG, format=':%(message)s')
-
-class Server(ConnectionBase):
-    def __init__(self, mode, port):
-        super().__init__(mode, port)
-        self.gather_info = input
-        self.notify = print
-        
-    def bind_socket_ifneeded(self):
-        self.socket.bind((self.host, self.port))
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.DEBUG, format=':%(levelname)s:%(message)s') 
 
 class Publisher(Node):
     def __init__(self):
-        logger.info("Startinf publisher node")
-        super().__init__("publisher_node_client_info")
-        self.publisher_ = self.create_publisher(String, "Distribution_of_client_commands", 10)
-        self.server = Server("server", "communication_port")
-        self.server.notify = self.publish_from_buffer
-        server_thread = threading.Thread(target=self.server.start)
-
-        #The method from the server treiggers the publish method
-        server_thread.start()
-
-    def publish_from_buffer(self):
+        logger.info("Starting publisher node")
+        super().__init__("command_server_pub")
+        self.publisher_ = self.create_publisher(String, "Commands_topic_receive", 10)
+        
+    def publish(self, data):
         msg = String()
-        msg.data = self.server.buffer
-        logger.debug(f'Publishing: {msg.data}')
+        msg.data = data
+        logger.debug(f'Publishing: {data}')
         self.publisher_.publish(msg)
 
-""""
 class Subscriber(Node):
-    def __init__(self,socket_class):
-        super().init__("Gather info to send ")
-        self.sok = socket_class
-        self.subscription = self.create_subscription(string.String, "Send information to server", self.listener_callback, 10)
+    def __init__(self):    
+        super().__init__("command_server_sub")
+        self.subscription = self.create_subscription(String, "Commands_topic_send", self.listener_callback, 10)
+        self.get_logger().info("Subscriber initialized ")
+        self.flag = False
+        self.info = ""
 
-    def listener_callback(self, msg):
-        self.sok.manage_received_info(msg.data)
-"""
+    def listener_callback(self,msg):
+        logger.debug(f"Received message at listener : {msg.data}")
+        self.flag = True
+        self.info =  msg.data
 
-def main (args=None):
+class Server:
+    def __init__(self, port, publisher, subscriber ):
+        self.logger = logging.getLogger(__name__)
+        self.websocket = None
+        self.publisher = publisher
+        self.subscriber = subscriber
+        with open(r"communication/scripts/com_vars.json", "r") as config:
+            config = json.load(config)
+            self.host = config['server_ip']
+            self.port = config[port]
+            self.valid_token = config["com_token"]
+
+        self.stop_server = False
+    
+    def kill(self):
+        self.stop_server = True
+
+    async def recv_loop(self, websocket):
+        try:
+            while not self.stop_server:
+                message = await websocket.recv()
+                self.logger.debug(f"Received message: {message}")
+                if message != "":
+                    self.publisher.publish(message)
+        except Exception as e:
+            self.logger.error(f"Recv loop error: {e}")
+
+    async def send_loop(self, websocket):
+        try:
+            while not self.stop_server:
+                if self.subscriber.flag and self.subscriber.info != "":
+                    to_send = self.subscriber.info
+                    await websocket.send(to_send)
+                    self.subscriber.info = ""
+                    self.subscriber.flag = False 
+                await asyncio.sleep(0.01)  
+        except Exception as e:
+            self.logger.error(f"Send loop error: {e}")
+
+    async def handler(self, websocket):
+        self.logger.info(f"Client connected: {websocket.remote_address}")
+        
+        path = websocket.request.path
+        if "?" in path:
+            query = dict(p.split('=') for p in path.split('?')[1].split('&'))
+        else:
+            query = {}
+
+        if query.get("token") != self.valid_token:
+            self.logger.warning("Unauthorized client loooooool")
+            await websocket.close()
+            return
+        self.logger.info(f"Authorized client: {websocket.remote_address}")
+
+        recv_task = asyncio.create_task(self.recv_loop(websocket))
+        send_task = asyncio.create_task(self.send_loop(websocket))
+
+        done, pending = await asyncio.wait(
+            [recv_task, send_task], return_when=asyncio.FIRST_COMPLETED
+        )                       
+
+    async def start(self):
+
+        async with websockets.serve( self.handler, self.host, self.port):
+            self.logger.info(f"Server started on {self.host}:{self.port}")
+            await asyncio.Future()
+
+async def ros_spin_loop(executor):
+    while rclpy.ok():
+        executor.spin_once(timeout_sec=0.1)
+        await asyncio.sleep(0.01)  
+
+async def main (args=None):
     rclpy.init(args=args)
     pub = Publisher()
-    rclpy.spin(pub)
-    pub.destroy_node()
-    rclpy.shutdown()
+    sub = Subscriber()
+    server = Server("communication_port", publisher=pub, subscriber=sub)
+    
+    executor = SingleThreadedExecutor()
+    executor.add_node(pub)
+    executor.add_node(sub)
 
+    ros_task = asyncio.create_task(ros_spin_loop(executor))
+    server_task = asyncio.create_task(server.start())
+
+    await asyncio.gather(ros_task, server_task)
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

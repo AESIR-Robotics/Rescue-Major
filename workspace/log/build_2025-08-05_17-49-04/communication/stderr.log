@@ -1,0 +1,6 @@
+[31mCMake Error at cmake_install.cmake:46 (file):
+  file INSTALL cannot find
+  "/home/didi_121/Rescue-Major/workspace/communication/scripts/dummy_publisher.py":
+  No such file or directory.
+
+[0m

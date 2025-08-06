@@ -30,11 +30,11 @@
       }
   
       socket.onopen = () => {
-        addMessage("Conectado al servidor");
+        addMessage("Connecting to server...");
       };
   
       socket.onmessage = (event) => {
-        console.log("Mensaje recibido:", event.data);
+        console.log("Received mesage :", event.data);
         addMessage(`Servidor: ${event.data}`);
       };
   
@@ -50,7 +50,7 @@
         const message = msgInput.value.trim();
         if (!message) return;
         socket.send(message);
-        addMessage(`Tú: ${message}`);
+        addMessage(`Enviado: ${message}`);
         msgInput.value = "";
       };
     }

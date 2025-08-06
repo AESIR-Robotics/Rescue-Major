@@ -45,9 +45,9 @@ endif()
 if("x${CMAKE_INSTALL_COMPONENT}x" STREQUAL "xUnspecifiedx" OR NOT CMAKE_INSTALL_COMPONENT)
   file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/lib/communication" TYPE PROGRAM FILES
     "/home/didi_121/Rescue-Major/workspace/communication/scripts/audio_server.py"
-    "/home/didi_121/Rescue-Major/workspace/communication/scripts/base_socket.py"
     "/home/didi_121/Rescue-Major/workspace/communication/scripts/command_server.py"
-    "/home/didi_121/Rescue-Major/workspace/communication/scripts/sub_lector.py"
+    "/home/didi_121/Rescue-Major/workspace/communication/scripts/dummy_subscriber.py"
+    "/home/didi_121/Rescue-Major/workspace/communication/scripts/dummy_publisher.py"
     )
 endif()
 

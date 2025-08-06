@@ -1,7 +1,7 @@
 /home/didi_121/Rescue-Major/workspace/install/communication/lib/communication/audio_server.py
-/home/didi_121/Rescue-Major/workspace/install/communication/lib/communication/base_socket.py
 /home/didi_121/Rescue-Major/workspace/install/communication/lib/communication/command_server.py
-/home/didi_121/Rescue-Major/workspace/install/communication/lib/communication/sub_lector.py
+/home/didi_121/Rescue-Major/workspace/install/communication/lib/communication/dummy_subscriber.py
+/home/didi_121/Rescue-Major/workspace/install/communication/lib/communication/dummy_publisher.py
 /home/didi_121/Rescue-Major/workspace/install/communication/share/ament_index/resource_index/package_run_dependencies/communication
 /home/didi_121/Rescue-Major/workspace/install/communication/share/ament_index/resource_index/parent_prefix_path/communication
 /home/didi_121/Rescue-Major/workspace/install/communication/share/communication/environment/ament_prefix_path.sh
