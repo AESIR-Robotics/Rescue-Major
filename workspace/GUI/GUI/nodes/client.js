@@ -52,27 +52,12 @@ function createPeerConnection() {
         if (evt.track.kind === 'video') {
             // Only use videoIndex if it's within bounds
             if(videoIndex < videoElements.length) {
+                // create a new track for ever video
                 const video = videoElements[videoIndex];
-                const singleStream = new MediaStream([evt.track]);  // Solo esta pista
+                const singleStream = new MediaStream([evt.track]);  // 
                 video.srcObject = singleStream;
                 placeholders[videoIndex].style.display = 'none';
                 videoIndex++;
-
-                //const stream = evt.streams[0];
-                //const video = videoElements[videoIndex];
-
-                //video.srcObject = stream;
-
-                //video.play().catch(e => console.error('Video play error:', e));
-                //console.log('Video track added to element:', videoElements[videoIndex]); // Log for debugging
-                //placeholders[videoIndex].style.display = 'none';
-
-                //video.onplaying = () => {
-                //    console.log(`Video ${videoIndex + 1} is playing`);
-                //    placeholders[videoIndex].style.display = 'none';
-                //};
-                //videoIndex++;
-                //console.log(videoIndex); // Log for debugging
             }
             else {
                 console.warn('No more video elements available for new tracks'); // Log for debugging

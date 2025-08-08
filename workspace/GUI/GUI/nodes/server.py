@@ -45,8 +45,12 @@ class Intermediate(Node):
         self.placeholder_image = cv2.imread("placeholder.jpg")
         self.new_image = None
         self.rtt = None
+        self.last_rtt = None
         self.manual_resolution = (1881, 1051)
+        self.resolution = (1920, 1080)
         self.mode = mode
+
+        self.preallocate_latest_images()
 
         for i, topic in enumerate(camera_topic):
             print(f"Subscribing to {topic}")
@@ -59,9 +63,6 @@ class Intermediate(Node):
         """
         Callback function to process the incoming image messages.
         """
-
-        #logger.info("Index:  %s ", index)
-
         
         current_time = time.time()
         if current_time - self.last_time >= 1.0 / self.fps:
@@ -71,7 +72,14 @@ class Intermediate(Node):
             else:
                 resized_image = self.resize_image(cv_image)
 
-            self.latest_images[index] = resized_image
+            # Instead of replacing reference, copy data into preallocated buffer:
+            if self.latest_images[index].shape == resized_image.shape:
+                np.copyto(self.latest_images[index], resized_image)
+            else:
+                # Fallback (should not happen if you keep resolution consistent)
+                self.latest_images[index] = resized_image
+
+            #self.latest_images[index] = resized_image
             self.last_time = current_time
 
     def update_bandwidth(self, msg):
@@ -80,13 +88,21 @@ class Intermediate(Node):
         """
         self.bandwidth = msg.data
         self.adjust_fps_and_resolution()
+    
+    def preallocate_latest_images(self):
+        width, height = self.resolution
+        # Shape is (height, width, 3) for BGR images
+        shape = (height, width, 3)
+        for i in range(self.camera_count):
+            # Initialize with zeros, dtype uint8 for images
+            self.latest_images[i] = np.zeros(shape, dtype=np.uint8)
 
     def adjust_fps_and_resolution(self):
         """
         Adjusts FPS and resolution based on the current round-trip time (RTT).
         """
         rtt_settings = {
-            (0, 3): {'resolution': (1920, 1080), 'fps': 60},
+            (0, 3): {'resolution': (1920, 1080), 'fps': 30},
             (4, 7): {'resolution': (820, 720), 'fps': 30},
             (8, 11): {'resolution': (640, 480), 'fps': 15},
             (12, float('inf')): {'resolution': (320, 240), 'fps': 5},
@@ -97,13 +113,16 @@ class Intermediate(Node):
                 self.resolution = settings['resolution']
                 logger.info("Adjusted FPS to %s and resolution to %s", self.fps, self.resolution)
                 break
+        self.preallocate_latest_images()
 
     def resize_image(self, image):
         """
         Resize the image based on the current bandwidth.
         """
         if self.rtt is not None:
-            self.adjust_fps_and_resolution()
+            if self.rtt is not self.last_rtt:
+                self.adjust_fps_and_resolution()
+                self.last_rtt = self.rtt
             return cv2.resize(image, self.resolution)
         return image
 
@@ -111,8 +130,6 @@ class Intermediate(Node):
         """
         Returns the latest processed image or a placeholder if none available.
         """
-        #logger.info("Index in get_latest_image:  %s ", index)
-        #image = self.latest_images[index] if self.latest_images[index] is not None else self.placeholder_image
         return self.latest_images[index] if self.latest_images[index] is not None else self.placeholder_imageself.latest_images[index] if self.latest_images[index] is not None else self.placeholder_image
 
 class ImageVideoTrack(MediaStreamTrack):
@@ -152,7 +169,6 @@ class ImageVideoTrack(MediaStreamTrack):
         """
         Retrieves the latest image frame from the intermediate node.
         """
-        #logger.info("Index in get_latest_image:  %s ", self.index)
         latest_frame = self.intermediate_node.get_latest_image(self.index)
         await asyncio.sleep(1.0 / self.intermediate_node.fps)
         return latest_frame
@@ -195,7 +211,7 @@ async def offer(request):
         """
         logger.info(f"{pc_id} {msg}")
 
-    log_info("Received WebRTC offer")
+    #log_info("Received WebRTC offer")
 
     # Add tracks only for available cameras
     for index in range(intermediate_node.camera_count):
@@ -206,19 +222,6 @@ async def offer(request):
         else:
             log_info("No image subscriber for camera %d", index)
 
-    """
-    for index in range(len(intermediate_node.images_subscribers)):
-        log_info("Adding video track for camera " + str(index))
-        if index < len(intermediate_node.images_subscribers):
-            image_track = ImageVideoTrack(intermediate_node, index)
-            pc.addTrack(image_track)
-        else:
-            log_info("No image subscriber for camera %d", index)
-    """
-
-    #image_track = ImageVideoTrack(intermediate_node)
-    #pc.addTrack(image_track)
-
     @pc.on("datachannel")
     def on_datachannel(channel):
         @channel.on("message")
@@ -227,11 +230,11 @@ async def offer(request):
             Processes incoming messages on the data channel.
             """
             if isinstance(message, str) and message.startswith("ping"):
-                log_info("Received ping message", message)
+                #log_info("Received ping message", message)
                 channel.send("pong" + message[4:])
             if isinstance(message, str) and message.startswith("latency"):
                 intermediate_node.rtt = int(message[7:])
-                log_info("Updated RTT to %d", intermediate_node.rtt)
+                #log_info("Updated RTT to %d", intermediate_node.rtt)
 
     @pc.on("iceconnectionstatechange")
     async def on_iceconnectionstatechange():
