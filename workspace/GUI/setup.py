@@ -20,8 +20,8 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-        'reader_bag = GUI.nodes.reader_bag:main',
-        'server= GUI.nodes.server:main'
+        'reader_bag = GUI.reader_bag:main',
+        'server= GUI.server:main'
 
         ],
     },
