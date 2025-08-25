@@ -1,0 +1,10 @@
+-- Install configuration: ""
+-- Up-to-date: /home/didi_121/Rescue-Major/workspace/communication/install/communication/lib/communication/command_server.py
+-- Up-to-date: /home/didi_121/Rescue-Major/workspace/communication/install/communication/lib/communication/dummy_subscriber.py
+-- Up-to-date: /home/didi_121/Rescue-Major/workspace/communication/install/communication/lib/communication/dummy_publisher.py
+[31mCMake Error at cmake_install.cmake:46 (file):
+  file INSTALL cannot find
+  "/home/didi_121/Rescue-Major/workspace/communication/scripts/video_server.py":
+  No such file or directory.
+
+[0m

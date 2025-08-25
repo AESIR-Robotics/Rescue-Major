@@ -34,12 +34,12 @@ ament_target_dependencies(video_stream_publisher
   cv_bridge 
   OpenCV
   image_transport
-)
+) 
 
-install(DIRECTORY
-  launch
-  DESTINATION share/${PROJECT_NAME}/
-)
+#install(DIRECTORY
+#  launch
+#  DESTINATION share/${PROJECT_NAME}/
+#)
 
 install(TARGETS
   video_stream_publisher

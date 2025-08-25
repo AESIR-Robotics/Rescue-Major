@@ -25,7 +25,6 @@ endif()
 
 
 install(PROGRAMS
-  scripts/audio_server.py
   scripts/command_server.py
   scripts/dummy_subscriber.py
   scripts/dummy_publisher.py

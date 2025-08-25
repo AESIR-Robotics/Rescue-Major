@@ -1,0 +1,40 @@
+[1.321s] Invoking command in '/home/didi_121/Rescue-Major/workspace/GUI': PYTHONPATH=/home/didi_121/Rescue-Major/build/GUI/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/didi_121/Rescue-Major/install/GUI/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/GUI build --build-base /home/didi_121/Rescue-Major/build/GUI/build install --record /home/didi_121/Rescue-Major/build/GUI/install.log --single-version-externally-managed install_data
+[1.816s] running egg_info
+[1.817s] creating ../../build/GUI/GUI.egg-info
+[1.818s] writing ../../build/GUI/GUI.egg-info/PKG-INFO
+[1.818s] writing dependency_links to ../../build/GUI/GUI.egg-info/dependency_links.txt
+[1.819s] writing entry points to ../../build/GUI/GUI.egg-info/entry_points.txt
+[1.819s] writing requirements to ../../build/GUI/GUI.egg-info/requires.txt
+[1.819s] writing top-level names to ../../build/GUI/GUI.egg-info/top_level.txt
+[1.820s] writing manifest file '../../build/GUI/GUI.egg-info/SOURCES.txt'
+[1.823s] reading manifest file '../../build/GUI/GUI.egg-info/SOURCES.txt'
+[1.825s] writing manifest file '../../build/GUI/GUI.egg-info/SOURCES.txt'
+[1.825s] running build
+[1.826s] running build_py
+[1.826s] creating /home/didi_121/Rescue-Major/build/GUI/build
+[1.826s] creating /home/didi_121/Rescue-Major/build/GUI/build/lib
+[1.826s] creating /home/didi_121/Rescue-Major/build/GUI/build/lib/GUI
+[1.826s] copying GUI/__init__.py -> /home/didi_121/Rescue-Major/build/GUI/build/lib/GUI
+[1.826s] copying GUI/server.py -> /home/didi_121/Rescue-Major/build/GUI/build/lib/GUI
+[1.826s] running install
+[1.827s] running install_lib
+[1.828s] creating /home/didi_121/Rescue-Major/install/GUI/lib/python3.10/site-packages/GUI
+[1.828s] copying /home/didi_121/Rescue-Major/build/GUI/build/lib/GUI/__init__.py -> /home/didi_121/Rescue-Major/install/GUI/lib/python3.10/site-packages/GUI
+[1.829s] copying /home/didi_121/Rescue-Major/build/GUI/build/lib/GUI/server.py -> /home/didi_121/Rescue-Major/install/GUI/lib/python3.10/site-packages/GUI
+[1.829s] byte-compiling /home/didi_121/Rescue-Major/install/GUI/lib/python3.10/site-packages/GUI/__init__.py to __init__.cpython-310.pyc
+[1.830s] byte-compiling /home/didi_121/Rescue-Major/install/GUI/lib/python3.10/site-packages/GUI/server.py to server.cpython-310.pyc
+[1.835s] running install_data
+[1.835s] creating /home/didi_121/Rescue-Major/install/GUI/share
+[1.835s] creating /home/didi_121/Rescue-Major/install/GUI/share/ament_index
+[1.835s] creating /home/didi_121/Rescue-Major/install/GUI/share/ament_index/resource_index
+[1.835s] creating /home/didi_121/Rescue-Major/install/GUI/share/ament_index/resource_index/packages
+[1.835s] copying resource/GUI -> /home/didi_121/Rescue-Major/install/GUI/share/ament_index/resource_index/packages
+[1.836s] creating /home/didi_121/Rescue-Major/install/GUI/share/GUI
+[1.836s] copying package.xml -> /home/didi_121/Rescue-Major/install/GUI/share/GUI
+[1.836s] running install_egg_info
+[1.839s] Copying ../../build/GUI/GUI.egg-info to /home/didi_121/Rescue-Major/install/GUI/lib/python3.10/site-packages/GUI-0.0.0-py3.10.egg-info
+[1.840s] running install_scripts
+[1.882s] Installing reader_bag script to /home/didi_121/Rescue-Major/install/GUI/bin
+[1.882s] Installing server script to /home/didi_121/Rescue-Major/install/GUI/bin
+[1.883s] writing list of installed files to '/home/didi_121/Rescue-Major/build/GUI/install.log'
+[1.923s] Invoked command in '/home/didi_121/Rescue-Major/workspace/GUI' returned '0': PYTHONPATH=/home/didi_121/Rescue-Major/build/GUI/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/didi_121/Rescue-Major/install/GUI/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../../build/GUI build --build-base /home/didi_121/Rescue-Major/build/GUI/build install --record /home/didi_121/Rescue-Major/build/GUI/install.log --single-version-externally-managed install_data

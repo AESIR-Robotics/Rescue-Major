@@ -43,11 +43,11 @@ class Server:
         self.websocket = None
         self.publisher = publisher
         self.subscriber = subscriber
-        with open(r"communication/scripts/com_vars.json", "r") as config:
+    #communication/
+        with open(r"scripts/com_vars.json", "r") as config:
             config = json.load(config)
             self.host = config['server_ip']
             self.port = config[port]
-            self.valid_token = config["com_token"]
 
         self.stop_server = False
     
@@ -78,18 +78,6 @@ class Server:
 
     async def handler(self, websocket):
         self.logger.info(f"Client connected: {websocket.remote_address}")
-        
-        path = websocket.request.path
-        if "?" in path:
-            query = dict(p.split('=') for p in path.split('?')[1].split('&'))
-        else:
-            query = {}
-
-        if query.get("token") != self.valid_token:
-            self.logger.warning("Unauthorized client loooooool")
-            await websocket.close()
-            return
-        self.logger.info(f"Authorized client: {websocket.remote_address}")
 
         recv_task = asyncio.create_task(self.recv_loop(websocket))
         send_task = asyncio.create_task(self.send_loop(websocket))

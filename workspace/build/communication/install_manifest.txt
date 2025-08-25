@@ -1,4 +1,3 @@
-/home/didi_121/Rescue-Major/workspace/install/communication/lib/communication/audio_server.py
 /home/didi_121/Rescue-Major/workspace/install/communication/lib/communication/command_server.py
 /home/didi_121/Rescue-Major/workspace/install/communication/lib/communication/dummy_subscriber.py
 /home/didi_121/Rescue-Major/workspace/install/communication/lib/communication/dummy_publisher.py

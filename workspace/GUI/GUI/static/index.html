@@ -98,6 +98,21 @@
         background-color: #4D4949;
     }
 
+    .robot-info-container {
+    background-color: #2a2a38;  
+    margin-top: 10px;
+    padding: 10px;
+    border-radius: 4px;
+    }
+
+    #info-messages {
+        font-family: 'Courier New', monospace;
+        font-size: 80%;
+        margin-left: 10px;
+        white-space: pre-wrap; 
+    }
+
+
     pre {
         overflow-x: hidden;
         overflow-y: auto;
@@ -167,9 +182,14 @@
     <div class="state-labels">Signaling state: <span id="signaling-state"></span></div>
 
 <div class="title">Data Channel</div>
-<pre id="data-channel" style="height: 200px;"></pre>
-
+<pre id="data-channel" style="height: 40px;"></pre>
 </div>
+
+<div id="robot-info-container" class="info-container">
+    <div class="title">Robot Messages</div>
+    <pre id="info-messages" style="height:150px; overflow-y:auto;"></pre>
+</div>
+
 </div>
 </div>
 
@@ -195,5 +215,6 @@
 </div>
 
 <script src="client.js"></script>
+<script src="com_client.js"></script>
 </body>
 </html>
