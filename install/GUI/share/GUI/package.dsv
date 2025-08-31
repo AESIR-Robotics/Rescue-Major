@@ -1,9 +1,0 @@
-source;share/GUI/hook/path.ps1
-source;share/GUI/hook/path.dsv
-source;share/GUI/hook/path.sh
-source;share/GUI/hook/pythonpath.ps1
-source;share/GUI/hook/pythonpath.dsv
-source;share/GUI/hook/pythonpath.sh
-source;share/GUI/hook/pythonscriptspath.ps1
-source;share/GUI/hook/pythonscriptspath.dsv
-source;share/GUI/hook/pythonscriptspath.sh

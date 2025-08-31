@@ -1,4 +1,0 @@
-Invoking command in '/home/didi_121/Rescue-Major/build/vision': /usr/bin/cmake --build /home/didi_121/Rescue-Major/build/vision -- -j8 -l8
-Invoked command in '/home/didi_121/Rescue-Major/build/vision' returned '0': /usr/bin/cmake --build /home/didi_121/Rescue-Major/build/vision -- -j8 -l8
-Invoking command in '/home/didi_121/Rescue-Major/build/vision': /usr/bin/cmake --install /home/didi_121/Rescue-Major/build/vision
-Invoked command in '/home/didi_121/Rescue-Major/build/vision' returned '0': /usr/bin/cmake --install /home/didi_121/Rescue-Major/build/vision

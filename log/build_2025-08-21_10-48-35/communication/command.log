@@ -1,2 +1,0 @@
-Invoking command in '/home/didi_121/Rescue-Major/build/communication': /usr/bin/cmake --build /home/didi_121/Rescue-Major/build/communication -- -j8 -l8
-Invoked command in '/home/didi_121/Rescue-Major/build/communication' returned '2': /usr/bin/cmake --build /home/didi_121/Rescue-Major/build/communication -- -j8 -l8

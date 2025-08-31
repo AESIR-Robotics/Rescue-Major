@@ -1,4 +1,0 @@
-Invoking command in '/home/didi_121/Rescue-Major/workspace/vision/build/vision': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/humble /usr/bin/cmake --build /home/didi_121/Rescue-Major/workspace/vision/build/vision -- -j8 -l8
-Invoked command in '/home/didi_121/Rescue-Major/workspace/vision/build/vision' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/humble /usr/bin/cmake --build /home/didi_121/Rescue-Major/workspace/vision/build/vision -- -j8 -l8
-Invoking command in '/home/didi_121/Rescue-Major/workspace/vision/build/vision': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/humble /usr/bin/cmake --install /home/didi_121/Rescue-Major/workspace/vision/build/vision
-Invoked command in '/home/didi_121/Rescue-Major/workspace/vision/build/vision' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/humble /usr/bin/cmake --install /home/didi_121/Rescue-Major/workspace/vision/build/vision

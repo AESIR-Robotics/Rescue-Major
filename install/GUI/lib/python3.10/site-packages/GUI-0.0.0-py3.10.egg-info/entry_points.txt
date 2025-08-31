@@ -1,4 +1,0 @@
-[console_scripts]
-reader_bag = GUI.reader_bag:main
-server = GUI.server:main
-
