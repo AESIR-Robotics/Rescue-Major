@@ -38,16 +38,13 @@ class Subscriber(Node):
         self.info =  msg.data
 
 class Server:
-    def __init__(self, port, publisher, subscriber ):
+    def __init__(self, publisher, subscriber ):
         self.logger = logging.getLogger(__name__)
         self.websocket = None
         self.publisher = publisher
         self.subscriber = subscriber
-    #communication/
-        with open(r"scripts/com_vars.json", "r") as config:
-            config = json.load(config)
-            self.host = config['server_ip']
-            self.port = config[port]
+        self.host = '0.0.0.0'
+        self.port = 8082
 
         self.stop_server = False
     
@@ -101,7 +98,7 @@ async def main (args=None):
     rclpy.init(args=args)
     pub = Publisher()
     sub = Subscriber()
-    server = Server("communication_port", publisher=pub, subscriber=sub)
+    server = Server("publisher=pub, subscriber=sub)
     
     executor = SingleThreadedExecutor()
     executor.add_node(pub)

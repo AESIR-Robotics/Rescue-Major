@@ -1,0 +1,23 @@
+[0.023s] Invoking command in '/home/didi_121/Rescue-Major/workspace/communication/build/communication': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/humble /usr/bin/cmake --build /home/didi_121/Rescue-Major/workspace/communication/build/communication -- -j8 -l8
+[0.105s] Invoked command in '/home/didi_121/Rescue-Major/workspace/communication/build/communication' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/humble /usr/bin/cmake --build /home/didi_121/Rescue-Major/workspace/communication/build/communication -- -j8 -l8
+[0.129s] Invoking command in '/home/didi_121/Rescue-Major/workspace/communication/build/communication': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/humble /usr/bin/cmake --install /home/didi_121/Rescue-Major/workspace/communication/build/communication
+[0.146s] -- Install configuration: ""
+[0.146s] -- Up-to-date: /home/didi_121/Rescue-Major/workspace/communication/install/communication/lib/communication/command_server.py
+[0.147s] -- Up-to-date: /home/didi_121/Rescue-Major/workspace/communication/install/communication/lib/communication/dummy_subscriber.py
+[0.147s] -- Up-to-date: /home/didi_121/Rescue-Major/workspace/communication/install/communication/lib/communication/dummy_publisher.py
+[0.147s] -- Up-to-date: /home/didi_121/Rescue-Major/workspace/communication/install/communication/share/ament_index/resource_index/package_run_dependencies/communication
+[0.147s] -- Up-to-date: /home/didi_121/Rescue-Major/workspace/communication/install/communication/share/ament_index/resource_index/parent_prefix_path/communication
+[0.147s] -- Up-to-date: /home/didi_121/Rescue-Major/workspace/communication/install/communication/share/communication/environment/ament_prefix_path.sh
+[0.147s] -- Up-to-date: /home/didi_121/Rescue-Major/workspace/communication/install/communication/share/communication/environment/ament_prefix_path.dsv
+[0.147s] -- Up-to-date: /home/didi_121/Rescue-Major/workspace/communication/install/communication/share/communication/environment/path.sh
+[0.148s] -- Up-to-date: /home/didi_121/Rescue-Major/workspace/communication/install/communication/share/communication/environment/path.dsv
+[0.148s] -- Up-to-date: /home/didi_121/Rescue-Major/workspace/communication/install/communication/share/communication/local_setup.bash
+[0.148s] -- Up-to-date: /home/didi_121/Rescue-Major/workspace/communication/install/communication/share/communication/local_setup.sh
+[0.148s] -- Up-to-date: /home/didi_121/Rescue-Major/workspace/communication/install/communication/share/communication/local_setup.zsh
+[0.148s] -- Up-to-date: /home/didi_121/Rescue-Major/workspace/communication/install/communication/share/communication/local_setup.dsv
+[0.148s] -- Installing: /home/didi_121/Rescue-Major/workspace/communication/install/communication/share/communication/package.dsv
+[0.148s] -- Up-to-date: /home/didi_121/Rescue-Major/workspace/communication/install/communication/share/ament_index/resource_index/packages/communication
+[0.149s] -- Up-to-date: /home/didi_121/Rescue-Major/workspace/communication/install/communication/share/communication/cmake/communicationConfig.cmake
+[0.149s] -- Up-to-date: /home/didi_121/Rescue-Major/workspace/communication/install/communication/share/communication/cmake/communicationConfig-version.cmake
+[0.149s] -- Up-to-date: /home/didi_121/Rescue-Major/workspace/communication/install/communication/share/communication/package.xml
+[0.153s] Invoked command in '/home/didi_121/Rescue-Major/workspace/communication/build/communication' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/humble /usr/bin/cmake --install /home/didi_121/Rescue-Major/workspace/communication/build/communication

@@ -195,10 +195,6 @@ async def javascript1(request):
     content = open(os.path.join(ROOT, "com_client.js"), "r").read()
     return web.Response(content_type="application/javascript", text=content)
 
-async def json_com(request):
-    content = json.load(open("com_vars.json", "r"))
-    return web.Response(content_type="application/json", text=json.dumps(content))
-
 async def json_keymap(request):
     content = json.load(open("keymap.json", "r"))
     return web.Response(content_type="application/json", text=json.dumps(content))
@@ -318,7 +314,6 @@ def main(args=None):
     app.router.add_get("/", index)
     app.router.add_get("/client.js", javascript)
     app.router.add_get("/com_client.js", javascript1)
-    app.router.add_get("/com_vars.json", json_com)
     app.router.add_get("/keymap.json", json_keymap)
     app.router.add_post("/offer", offer)
     # -  - - - -- -- - - -  - - - --  -----------------
