@@ -195,8 +195,12 @@ async def javascript1(request):
     content = open(os.path.join(ROOT, "com_client.js"), "r").read()
     return web.Response(content_type="application/javascript", text=content)
 
-async def json_keymap(request):
-    content = json.load(open("keymap.json", "r"))
+async def json_keymap1(request):
+    content = json.load(open("controller_keymap.json", "r"))
+    return web.Response(content_type="application/json", text=json.dumps(content))
+
+async def json_keymap2(request):
+    content = json.load(open("keyboard_keymap.json", "r"))
     return web.Response(content_type="application/json", text=json.dumps(content))
 
 async def offer(request):
@@ -314,7 +318,8 @@ def main(args=None):
     app.router.add_get("/", index)
     app.router.add_get("/client.js", javascript)
     app.router.add_get("/com_client.js", javascript1)
-    app.router.add_get("/keymap.json", json_keymap)
+    app.router.add_get("/controller_keymap.json", json_keymap1)
+    app.router.add_get("/keyboard_keymap.json", json_keymap2)
     app.router.add_post("/offer", offer)
     # -  - - - -- -- - - -  - - - --  -----------------
 
