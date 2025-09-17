@@ -98,7 +98,7 @@ async def main (args=None):
     rclpy.init(args=args)
     pub = Publisher()
     sub = Subscriber()
-    server = Server("publisher=pub, subscriber=sub)
+    server = Server(publisher=pub, subscriber=sub)
     
     executor = SingleThreadedExecutor()
     executor.add_node(pub)
