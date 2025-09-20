@@ -65,7 +65,7 @@ async function init() {
       // Left joystick, for dc motors 
       const speedX = Math.round(ctrl.axes[0] * 100); // Left stick X
       const speedY = Math.round(ctrl.axes[1] * 100); // Left stick Y
-      const message = "hardware:DC," + speedX.toString() + "," + speedY.toString();
+      const message = "dc_motors:" +  speedX.toString() +"," + speedY.toString();
 
       if (message !== pollController.lastspeed) {
         socket.send(message);

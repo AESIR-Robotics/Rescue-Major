@@ -1,3 +1,4 @@
+"""
 #!/usr/bin/env python3
 import rclpy
 from rclpy.node import Node
@@ -7,7 +8,7 @@ from std_msgs.msg import Float32MultiArray
 class MotorNode(Node):
     def __init__(self):
         super().__init__('motor_node')
-        self.subscription = self.create_subscription(Int32MultiArray, '/cmd_vel', self.cmd_vel_callback, 10)
+        self.subscription = self.create_subscription(Int32MultiArray, 'commands_for_dc_motors', self.cmd_vel_callback, 10)
         self.publisher = self.create_publisher(Float32MultiArray, '/encoders', 10)
         self.timer = self.create_timer(.01, self.cmd_enc_callback)
         self.encoder_izq = 0
@@ -35,8 +36,6 @@ def main():
 if __name__ == '__main__':
     main()
 """
-Lo mismo que arriba pero con Serial
-
 #!/usr/bin/env python3
 import rclpy
 from rclpy.node import Node
@@ -57,7 +56,7 @@ class MotorNode(Node):
             self.ser = None
 
         #recibir velocidades
-        self.subscription = self.create_subscription(Int32MultiArray, '/cmd_vel', self.cmd_vel_callback, 10)
+        self.subscription = self.create_subscription(Int32MultiArray, 'commands_for_dc_motors', self.cmd_vel_callback, 10)
 
         #enviar valores de encoders
         self.publisher = self.create_publisher(Float32MultiArray, '/encoders', 10)
@@ -106,4 +105,4 @@ def main():
     rclpy.shutdown()
 
 if __name__ == '__main__':
-    main()"""
+    main()

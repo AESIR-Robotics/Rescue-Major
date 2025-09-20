@@ -1,8 +1,8 @@
 {
-    "w": "microcontroller: move; robot; forward",
-    "d": "microcontroller: move; robot; right",
-    "a": "microcontroller: move; robot; left",
-    "s": "microcontroller: move; robot; backward",
-    "1": "VISION: activate; camera; 1"
+    "w": "dc_motors: move; robot; forward",
+    "d": "dc_motors: move; robot; right",
+    "a": "dc_motors: move; robot; left",
+    "s": "dc_motors: move; robot; backward",
+    "1": "vision: activate; camera; 1"
 }
   

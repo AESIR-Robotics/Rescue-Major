@@ -26,7 +26,6 @@ endif()
 
 install(PROGRAMS
   scripts/command_server.py
-  scripts/dummy_subscriber.py
   scripts/dummy_publisher.py
   DESTINATION lib/${PROJECT_NAME}
 )

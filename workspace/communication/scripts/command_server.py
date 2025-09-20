@@ -16,18 +16,26 @@ class Publisher(Node):
     def __init__(self):
         logger.info("Starting publisher node")
         super().__init__("command_server_pub")
-        self.publisher_ = self.create_publisher(String, "Commands_topic_receive", 10)
-        
+        self.vision_pub = self.create_publisher(String, "commands_for_vision", 10)
+        self.dc_motors_pub = self.create_publisher(String, "commands_for_dc_motors", 10)
+        #constant for the propotion of the dc_motors with degrees 
+        self.k = 90 / 100
+
     def publish(self, data):
         msg = String()
-        msg.data = data
-        logger.debug(f'Publishing: {data}')
-        self.publisher_.publish(msg)
-
+        if data.split(":")[0] == "vision":
+            msg.data = data.split(":")[1]
+            self.vision_pub.publish(msg)
+        elif data.split(":")[0] == "dc_motors":
+            msg.data = data.split(":")[1]
+            x = int(data.split(":")[1].split(",")[0]) * self.k + 90
+            y = int(data.split(":")[1].split(",")[1]) * self.k + 90
+            self.dc_motors_pub.publish(msg)
+    
 class Subscriber(Node):
     def __init__(self):    
         super().__init__("command_server_sub")
-        self.subscription = self.create_subscription(String, "Commands_topic_send", self.listener_callback, 10)
+        self.subscription = self.create_subscription(String, "send_to_client", self.listener_callback, 10)
         self.get_logger().info("Subscriber initialized ")
         self.flag = False
         self.info = ""
