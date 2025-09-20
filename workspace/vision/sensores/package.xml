@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>sensores</name>
+  <version>0.0.0</version>
+  <description>YOLOv8 detector</description>
+  <maintainer email="ruyrdz23@gmail.com">ruy</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>cv_bridge</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

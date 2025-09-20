@@ -1,0 +1,3 @@
+[console_scripts]
+qr = sensores.qr:main
+
