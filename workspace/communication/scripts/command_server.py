@@ -19,7 +19,6 @@ class Publisher(Node):
         self.vision_pub = self.create_publisher(String, "commands_for_vision", 10)
         self.dc_motors_pub = self.create_publisher(String, "commands_for_dc_motors", 10)
         #constant for the propotion of the dc_motors with degrees 
-        self.k = 90 / 100
 
     def publish(self, data):
         msg = String()
@@ -28,9 +27,9 @@ class Publisher(Node):
             self.vision_pub.publish(msg)
         elif data.split(":")[0] == "dc_motors":
             msg.data = data.split(":")[1]
-            x = int(data.split(":")[1].split(",")[0]) * self.k + 90
-            y = int(data.split(":")[1].split(",")[1]) * self.k + 90
-            self.dc_motors_pub.publish(msg)
+            x = int(data.split(":")[1].split(",")[1]) + int(data.split(":")[1].split(",")[0]) 
+            y = int(data.split(":")[1].split(",")[1]) - int(data.split(":")[1].split(",")[0])
+            self.dc_motors_pub.publish(f"{x},{y}")
     
 class Subscriber(Node):
     def __init__(self):    

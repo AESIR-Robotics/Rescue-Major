@@ -63,15 +63,12 @@ async function init() {
       const ctrl = controllers[0];
 
       // Left joystick, for dc motors 
-      const speedX = Math.round(ctrl.axes[0] * 100); // Left stick X
-      const speedY = Math.round(ctrl.axes[1] * 100); // Left stick Y
+      const speedX = ctrl.axes[0]; // Left stick X
+      const speedY = ctrl.axes[1]; // Left stick Y
       const message = "dc_motors:" +  speedX.toString() +"," + speedY.toString();
+      socket.send(message);
+      console.log(`Sent from controller: ${message}`);
 
-      if (message !== pollController.lastspeed) {
-        socket.send(message);
-        console.log(`Sent from controller: ${message}`);
-      }
-      pollController.lastspeed = message;
 
       // Botones con edge detection
       ctrl.buttons.forEach((button, index) => {
