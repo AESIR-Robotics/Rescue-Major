@@ -20,7 +20,6 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            "motors_node = hardware.motors_node:main",
             "motor_node = hardware.motor_node:main",
             "control_node = hardware.control_node:main",
             "odometry_node = hardware.odometry_node:main"

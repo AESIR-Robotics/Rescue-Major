@@ -18,13 +18,13 @@ async function init() {
   const keyboard_keymap = await (await fetch("keyboard_keymap.json")).json();
   const controller_keymap = await (await fetch("controller_keymap.json")).json();
 
-  // WebSocket
-  const wsUrl = `ws://${'0.0.0.0'}:${8082}`;
+  // WebSocket, location hostname is the ip of the server
+  const wsUrl = `ws://${location.hostname}:${8082}`;
   const socket = new WebSocket(wsUrl);
 
   const messagesDiv = document.getElementById("info-messages");
 
-  function addMessage(text) {
+  function addMessage(text) { 
     messagesDiv.textContent += text + "\n";
     messagesDiv.scrollTop = messagesDiv.scrollHeight;
   }

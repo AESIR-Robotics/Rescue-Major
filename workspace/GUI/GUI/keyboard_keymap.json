@@ -1,8 +1,8 @@
 {
-    "w": "dc_motors: move; robot; forward",
-    "d": "dc_motors: move; robot; right",
-    "a": "dc_motors: move; robot; left",
-    "s": "dc_motors: move; robot; backward",
-    "1": "vision: activate; camera; 1"
+    "w": "dc_motors:1,1",
+    "d": "dc_motors:1,-1",
+    "a": "dc_motors:-1,1",
+    "s": "dc_motors:-1,-1",
+    "e": "dc_motors:0,0"
 }
   

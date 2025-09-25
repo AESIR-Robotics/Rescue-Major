@@ -2,11 +2,11 @@
 import rclpy
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
+from std_msgs.msg import Float32MultiArray
 from std_msgs.msg import String
 import websockets 
 from websockets import serve
 import logging
-import json 
 import asyncio
 
 logger = logging.getLogger(__name__)
@@ -17,19 +17,27 @@ class Publisher(Node):
         logger.info("Starting publisher node")
         super().__init__("command_server_pub")
         self.vision_pub = self.create_publisher(String, "commands_for_vision", 10)
-        self.dc_motors_pub = self.create_publisher(String, "commands_for_dc_motors", 10)
+        self.dc_motors_pub = self.create_publisher(Float32MultiArray, "commands_for_dc_motors", 10)
         #constant for the propotion of the dc_motors with degrees 
 
     def publish(self, data):
-        msg = String()
-        if data.split(":")[0] == "vision":
+        topic = data.split(":")[0]
+
+        if topic == "vision":
+            msg = String()
             msg.data = data.split(":")[1]
             self.vision_pub.publish(msg)
-        elif data.split(":")[0] == "dc_motors":
-            msg.data = data.split(":")[1]
-            x = int(data.split(":")[1].split(",")[1]) + int(data.split(":")[1].split(",")[0]) 
-            y = int(data.split(":")[1].split(",")[1]) - int(data.split(":")[1].split(",")[0])
-            self.dc_motors_pub.publish(f"{x},{y}")
+        elif topic == "dc_motors":
+            msg = Float32MultiArray()
+            x, y = map(float, data.split(":")[1].split(","))
+            self.get_logger().debug(f"velocities: x={x}, y={y}")
+            right_motor = y + x
+            left_motor = y - x
+
+            msg.data = [right_motor, left_motor]
+            self.dc_motors_pub.publish(msg)
+
+        self.get_logger().debug(f"Published: {data}")
     
 class Subscriber(Node):
     def __init__(self):    
