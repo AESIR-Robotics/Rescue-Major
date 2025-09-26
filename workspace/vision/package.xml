@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>vision</name>
+  <version>0.0.0</version>
+  <description>YOLOv8, QR, tracket motion detector</description>
+  <maintainer email="ruyrdz23@gmail.com">ruy</maintainer>
+  <license>MIT</license>
+
+  <depend>rclcpp</depend>
+  <exec_depend>sensor_msgs</exec_depend>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>cv_bridge</exec_depend>
+  <depend>image_transport</depend>
+  <exec_depend>opencv</exec_depend>
+  <build_depend>opencv</build_depend>
+  
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>ament_cmake_python</buildtool_depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

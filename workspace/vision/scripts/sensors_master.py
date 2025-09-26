@@ -27,20 +27,23 @@ class MultiDetectionNode(Node):
         # Ruta al modelo
         model_path = os.path.join(script_dir, "best.pt")
         if not os.path.exists(model_path):
-            self.get_logger().error(f"⚠️ No se encontró el modelo en: {model_path}")
+            self.get_logger().error(f"No se encontró el modelo en: {model_path}")
             self.model = None
         else:
             self.model = YOLO(model_path)
-            self.get_logger().info(f"✅ Modelo cargado desde: {model_path}")
+            self.get_logger().info(f"Modelo cargado desde: {model_path}")
 
         # Carpeta para guardar imágenes
         self.image_path = os.path.join(script_dir, "qr_videos")
         os.makedirs(self.image_path, exist_ok=True)
-        self.get_logger().info(f"📁 Carpeta de imágenes: {self.image_path}")
+        self.get_logger().info(f"Carpeta de imágenes: {self.image_path}")
 
         self.images = set()
         self.count = 0
         self.prev_frame = None
+
+        # Publisher al topico del video hacia la interfaz
+        self.publisher = self.create_publisher(Image, 'cam_raw/sensors', 10)
 
         # Suscripción al tópico de la cámara
         self.subscription = self.create_subscription(
@@ -53,7 +56,7 @@ class MultiDetectionNode(Node):
         # Suscripción para recibir comandos
         self.command_subscriber = self.create_subscription(
             String,
-            "Commands_topic_receive",
+            "commands_topic_receive",
             self.command_callback,
             10
         )
@@ -110,6 +113,10 @@ class MultiDetectionNode(Node):
 
             cv2.imshow("Multi Detection Viewer", frame)
             key = cv2.waitKey(1) & 0xFF
+
+            frame = self.bridge.cv2_to_imgmsg(frame, "bgr8")
+
+            self.publisher.publish(frame)
 
             # Cambio manual de modo con el teclado (opcional)
             if key == ord('1'):
