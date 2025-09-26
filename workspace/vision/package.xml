@@ -9,6 +9,7 @@
 
   <depend>rclcpp</depend>
   <exec_depend>sensor_msgs</exec_depend>
+  <depend>std_msgs</depend>
 
   <exec_depend>rclpy</exec_depend>
   <exec_depend>cv_bridge</exec_depend>

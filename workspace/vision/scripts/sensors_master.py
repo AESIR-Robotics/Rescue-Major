@@ -20,6 +20,7 @@ class MultiDetectionNode(Node):
         self.bridge = CvBridge()
         self.mode = 0  # 0: Ninguna detección, 1: QR, 2: Hazmat, 3: Movimiento
         self.camera = 0
+        self.threshold = 20 # senbility_dectetion_motion
 
         # 📌 Usar rutas relativas al script
         script_dir = os.path.dirname(os.path.realpath(__file__))
@@ -43,12 +44,12 @@ class MultiDetectionNode(Node):
         self.prev_frame = None
 
         # Publisher al topico del video hacia la interfaz
-        self.publisher = self.create_publisher(Image, 'cam_raw/sensors', 10)
+        self.publisher = self.create_publisher(Image, 'cam/sensors', 10)
 
         # Suscripción al tópico de la cámara
         self.subscription = self.create_subscription(
             Image,
-            'cam0/image_raw',
+            'cam_raw/sensors',
             self.image_callback,
             10
         )
@@ -56,7 +57,7 @@ class MultiDetectionNode(Node):
         # Suscripción para recibir comandos
         self.command_subscriber = self.create_subscription(
             String,
-            "commands_topic_receive",
+            "commands_vision",
             self.command_callback,
             10
         )
@@ -67,32 +68,47 @@ class MultiDetectionNode(Node):
     def command_callback(self, msg):
         """
         Espera mensajes en formato:
-        vision:mode,<camara>,<numero_de_modo>
-        Ejemplo: "vision:mode,0,2"
+        vision:mode,<numero_de_modo>
+        Ejemplo: "vision:mode,2"
+        vision:threshold,<numero>
+        Ejemplo: vision: "vision:threshold,20"
         """
         self.get_logger().info(f"Mensaje recibido: {msg.data}")
 
+        # Hice dos if por que por alguna razon tenerlo en uno no funcionaba
         if not msg.data.startswith("vision:mode"):
-            self.get_logger().debug("Mensaje ignorado: no es para vision.")
-            return
+            if not msg.data.startswith("vision:threshold"):
+                self.get_logger().debug("Mensaje ignorado: no es para vision.")
+                return
 
         try:
             _, payload = msg.data.split(":", 1)
-            parts = payload.split(",")
+            parts = [p.strip() for p in payload.split(",")]
 
-            if len(parts) < 3:
-                self.get_logger().warn("Formato incorrecto. Se esperaban 3 valores.")
+            if len(parts) < 2:
+                self.get_logger().warn("Formato incorrecto. Se esperaban 2 valores.")
                 return
+            
+            cmd, value_str = parts[0], parts[1]
+            
+            if cmd == "mode":
+                new_mode = int(value_str)
 
-            self.camera = int(parts[1])
-            new_mode = int(parts[2])
+                if new_mode < 0 or new_mode > 3:
+                    self.get_logger().warn(f"Modo {new_mode} fuera de rango (0-3).")
+                    return
+                self.mode = new_mode
+                self.get_logger().info(f"Modo actualizado a {self.mode}")
 
-            if new_mode < 0 or new_mode > 3:
-                self.get_logger().warn(f"Modo {new_mode} fuera de rango (0-3).")
-                return
+            elif cmd == "threshold":
+                new_threshold = int(value_str)
 
-            self.mode = new_mode
-            self.get_logger().info(f"Modo actualizado a {self.mode} (cámara {self.camera})")
+                if new_threshold < 0 or new_threshold > 255:
+                    self.get_logger().warn(f"Threshold {new_threshold} fuera de rango (0-255).")
+                    return
+                self.threshold = new_threshold
+                self.get_logger().info(f"Threshold actualizado a {self.threshold}")
+                
 
         except ValueError:
             self.get_logger().error(f"No se pudo convertir el modo '{parts[2]}' a número.")
@@ -175,7 +191,7 @@ class MultiDetectionNode(Node):
             return frame
 
         diff = cv2.absdiff(self.prev_frame, gray)
-        _, thresh = cv2.threshold(diff, 20, 255, cv2.THRESH_BINARY)
+        _, thresh = cv2.threshold(diff, self.threshold, 255, cv2.THRESH_BINARY)
         dilated = cv2.dilate(thresh, None, iterations=3)
 
         contours, _ = cv2.findContours(dilated, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
