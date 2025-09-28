@@ -1,6 +1,76 @@
 #!/usr/bin/env python3
 import rclpy
 from rclpy.node import Node
+from std_msgs.msg import Float32MultiArray
+import serial
+import threading
+
+class MotorNode(Node):
+    def __init__(self):
+        super().__init__('motor_node')
+
+        # Configuración Serial (ajusta el puerto según tu Raspberry/PC)
+        self.serial_port = "/dev/ttyUSB0"   # o "/dev/serial0" en la Raspberry
+        self.baud_rate = 115200
+        self.ser = serial.Serial(self.serial_port, self.baud_rate, timeout=1)
+
+        # Lock para acceso seguro al puerto serie
+        self.serial_lock = threading.Lock()
+
+        # recibir velocidades
+        self.subscription = self.create_subscription(
+            Float32MultiArray,
+            'commands_for_dc_motors',
+            self.cmd_vel_callback,
+            10
+        )
+
+
+    def motors(self, left, right):
+        if left < 0:
+            left = ((left) * -1) + 100
+        if right < 0:
+            right = ((right) * -1) + 100
+
+        data = [(11, left), (12, right)]
+        for command, value in data:
+            self.send_data(command, value)
+
+    def send_data(self, command, number):
+        try:
+            data_to_send = bytearray([
+                command,
+                (number >> 8) & 0xFF,  # High byte
+                number & 0xFF          # Low byte
+            ])
+
+            with self.serial_lock:
+                self.ser.write(data_to_send)
+
+        except Exception as e:
+            self.get_logger().error(f"Error sending data: {e}")
+
+    def cmd_vel_callback(self, msg):
+        # Recibe las velocidades y las envía al microcontrolador vía serial
+        motor_der, motor_izq = msg.data
+        self.get_logger().info(f'Recibido: Izq: {motor_izq}, Der: {motor_der}')
+        self.motors(int(motor_izq * 100), int(motor_der * 100))
+
+def main():
+    rclpy.init()
+    node = MotorNode()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
+
+if __name__ == '__main__':
+    main()
+
+
+"""
+#!/usr/bin/env python3
+import rclpy
+from rclpy.node import Node
 from std_msgs.msg import Int32MultiArray
 from std_msgs.msg import Float32MultiArray
 import smbus2  
@@ -57,31 +127,6 @@ class MotorNode(Node):
         self.get_logger().info(f'Recibido: Izq: {motor_izq}, Der: {motor_der}')
         self.motors(int(motor_izq * 100 ), int(motor_der * 100))
 
-        # # Enviar valores al microcontrolador
-        # if self.ser:
-        #     comando = f"{motor_izq},{motor_der}\n"
-        #     self.ser.write(comando.encode('utf-8'))  # Enviar como string
-
-    def cmd_enc_callback(self):
-        # #Lee los valores de los encoders desde el microcontrolador
-        # if self.ser:
-        #     try:
-        #         linea = self.ser.readline().decode('utf-8').strip()  # Leer una línea del puerto serial
-        #         if linea:
-        #             valores = linea.split(',')
-        #             if len(valores) == 2:  # Verificar que haya dos valores
-        #                 self.encoder_izq = float(valores[0])
-        #                 self.encoder_der = float(valores[1])
-
-        #                 # Publicar los valores de los encoders
-        #                 encoder_msg = Float32MultiArray()
-        #                 encoder_msg.data = [self.encoder_izq, self.encoder_der]
-        #                 self.publisher.publish(encoder_msg)
-
-        #     except Exception as e:
-        #         self.get_logger().error(f"Error en la lectura del puerto serial: {e}")
-        pass
-
 def main():
     rclpy.init()
     node = MotorNode()
@@ -91,4 +136,4 @@ def main():
 
 if __name__ == '__main__':
     main()
-        
+"""
