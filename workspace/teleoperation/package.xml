@@ -9,6 +9,10 @@
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
+  <!-- c++ dependencies -->
+  <depend>websocketpp</depend>
+  <depend>libboost-dev</depend>
+
   <depend>rclpy</depend>
   <depend>rclcpp</depend>
 

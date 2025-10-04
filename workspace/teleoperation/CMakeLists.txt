@@ -10,6 +10,33 @@ find_package(ament_cmake REQUIRED)
 find_package(ament_cmake_python REQUIRED)
 find_package(rclpy REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(std_msgs REQUIRED)
+find_package(Boost REQUIRED COMPONENTS system thread)
+
+# Create executable for C++ command server
+add_executable(command_server_cpp servers/command_server.cpp)
+
+target_link_libraries(command_server_cpp 
+    ${Boost_LIBRARIES}
+    pthread
+)
+
+# Include websocketpp headers (header-only library)
+target_include_directories(command_server_cpp PRIVATE
+    /usr/include/websocketpp
+)
+
+ament_target_dependencies(command_server_cpp
+    rclcpp
+    std_msgs
+)
+
+add_executable(dc_motors nodes/dc_motors.cpp)
+
+ament_target_dependencies(dc_motors
+    rclcpp
+    std_msgs
+)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
@@ -23,9 +50,15 @@ if(BUILD_TESTING)
   #ament_lint_auto_find_test_dependencies()
 endif()
 
+install(TARGETS
+  command_server_cpp
+  dc_motors
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 install(PROGRAMS
   servers/command_server.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
-ament_package()
+ament_package() 
