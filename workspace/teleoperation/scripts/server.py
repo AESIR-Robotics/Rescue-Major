@@ -293,7 +293,7 @@ def main(args=None):
     # App initialization and ROS node creation
     app = web.Application()
     app.on_shutdown.append(on_shutdown)
-    gui_path = os.path.join(ROOT, "../GUI")
+    gui_path = os.path.join(ROOT, "../../share/GUI")
     app.router.add_static("/static/", gui_path)
     app.router.add_get("/", index)  # Serve the main HTML page
     app.router.add_post("/offer", offer)  # Handle WebRTC offers

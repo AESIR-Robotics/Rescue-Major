@@ -14,24 +14,24 @@ find_package(std_msgs REQUIRED)
 find_package(Boost REQUIRED COMPONENTS system thread)
 
 # Create executable for C++ command server
-add_executable(command_server_cpp servers/command_server.cpp)
+add_executable(command_server src/command_server.cpp)
 
-target_link_libraries(command_server_cpp 
+target_link_libraries(command_server 
     ${Boost_LIBRARIES}
     pthread
 )
 
 # Include websocketpp headers (header-only library)
-target_include_directories(command_server_cpp PRIVATE
+target_include_directories(command_server PRIVATE
     /usr/include/websocketpp
 )
 
-ament_target_dependencies(command_server_cpp
+ament_target_dependencies(command_server
     rclcpp
     std_msgs
 )
 
-add_executable(dc_motors nodes/dc_motors.cpp)
+add_executable(dc_motors src/dc_motors.cpp)
 
 ament_target_dependencies(dc_motors
     rclcpp
@@ -51,14 +51,19 @@ if(BUILD_TESTING)
 endif()
 
 install(TARGETS
-  command_server_cpp
+  command_server
   dc_motors
   DESTINATION lib/${PROJECT_NAME}
 )
 
 install(PROGRAMS
-  servers/command_server.py
+  scripts/command_server.py
+  scripts/server.py
   DESTINATION lib/${PROJECT_NAME}
+)
+
+install(DIRECTORY GUI/
+  DESTINATION share/GUI
 )
 
 ament_package() 
