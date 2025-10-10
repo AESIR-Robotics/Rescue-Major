@@ -7,6 +7,9 @@
   <maintainer email="ruy@todo.todo">ruy</maintainer>
   <license>TODO: License declaration</license>
 
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
   <depend>rclpy</depend>
 
   <test_depend>ament_copyright</test_depend>
@@ -15,6 +18,6 @@
   <test_depend>python3-pytest</test_depend>
 
   <export>
-    <build_type>ament_python</build_type>
+    <build_type>ament_cmake</build_type>
   </export>
 </package>
