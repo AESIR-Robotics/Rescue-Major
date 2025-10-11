@@ -178,7 +178,7 @@ async def index(request):
     """
     Serves the index.html page.
     """
-    content = open(os.path.join(ROOT, "../../share/teleoperation/index.html"), "r").read()
+    content = open(os.path.join(ROOT, "../../share/teleoperation/GUI/index.html"), "r").read()
     return web.Response(content_type="text/html", text=content)
 
 async def offer(request):

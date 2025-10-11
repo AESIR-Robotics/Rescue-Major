@@ -30,10 +30,10 @@ def generate_launch_description():
     ld = launch.LaunchDescription()
 
     command_server = launch_ros.actions.LifecycleNode(
-        name='command_server.py',
+        name='command_server',
         namespace='',
         package='teleoperation',
-        executable='command_server',
+        executable='command_server.py',
         parameters=[],
         output='screen')
     
