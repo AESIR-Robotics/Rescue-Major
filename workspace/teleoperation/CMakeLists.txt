@@ -56,7 +56,8 @@ install(PROGRAMS
 
 install(DIRECTORY 
   GUI 
+  launch
   DESTINATION share/${PROJECT_NAME}
 )
 
-ament_package() 
+ament_package()

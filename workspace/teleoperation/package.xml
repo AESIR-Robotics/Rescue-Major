@@ -23,6 +23,11 @@
 
   <exec_depend>std_msgs</exec_depend>
 
+  <!-- launch -->
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+
+
   <!-- Python dependencies -->
   <exec_depend>sockets</exec_depend>
   <exec_depend>wave</exec_depend>
