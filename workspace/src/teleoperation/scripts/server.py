@@ -179,6 +179,7 @@ async def index(request):
     Serves the index.html page.
     """
     content = open(os.path.join(ROOT, "../../share/teleoperation/GUI/index.html"), "r").read()
+    #content = open(os.path.join(ROOT, "../GUI/index.html"), "r").read()
     return web.Response(content_type="text/html", text=content)
 
 async def offer(request):
@@ -294,6 +295,7 @@ def main(args=None):
     app = web.Application()
     app.on_shutdown.append(on_shutdown)
     gui_path = os.path.join(ROOT, "../../share/teleoperation")
+    #gui_path = os.path.join(ROOT, "../GUI")
     app.router.add_static("/static/", gui_path)
     app.router.add_get("/", index)  # Serve the main HTML page
     app.router.add_post("/offer", offer)  # Handle WebRTC offers

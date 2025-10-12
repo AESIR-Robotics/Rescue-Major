@@ -29,22 +29,19 @@ def generate_launch_description():
 
     ld = launch.LaunchDescription()
 
-    command_server = launch_ros.actions.LifecycleNode(
+    command_server = Node(
         name='command_server',
-        namespace='',
         package='teleoperation',
         executable='command_server.py',
-        parameters=[],
         output='screen')
     
-    server_py = launch_ros.actions.LifecycleNode(
+    server_py =Node(
         name='server_py',
-        namespace='',
         package='teleoperation',
         executable='server.py',
         output='screen')
     
-    ld.add_action(command_server)
+    #ld.add_action(command_server)
     ld.add_action(server_py)
 
     return ld
