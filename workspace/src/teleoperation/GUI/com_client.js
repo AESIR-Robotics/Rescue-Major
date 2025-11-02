@@ -18,21 +18,64 @@ async function init() {
   const keyboard_keymap = await (await fetch("/static/keyboard_keymap.json")).json();
   const controller_keymap = await (await fetch("/static/controller_keymap.json")).json();
   
-  // WebSocket, location hostname is the ip of the server
-  const wsUrl = `ws://${location.hostname}:${8082}`;
-  const socket = new WebSocket(wsUrl);
-
   const messagesDiv = document.getElementById("info-messages");
+  let socket = null;
+  let isConnected = false;
 
   function addMessage(text) { 
     messagesDiv.textContent += text + "\n";
     messagesDiv.scrollTop = messagesDiv.scrollHeight;
   }
 
-  socket.onopen = () => addMessage("Connecting to server...");
-  socket.onmessage = (event) => addMessage(`Server : ${event.data}`);
-  socket.onerror = (error) => addMessage(`Error: ${error}`);
-  socket.onclose = () => addMessage("Closed connection");
+  // Function to attempt WebSocket connection with retry logic
+  function connectToServer() {
+    if (isConnected) return;
+
+    const wsUrl = `ws://${location.hostname}:${8082}`;
+    addMessage("Looking for server...");
+    
+    socket = new WebSocket(wsUrl);
+
+    socket.onopen = () => {
+      isConnected = true;
+      addMessage("Connected to server!");
+    };
+
+    socket.onmessage = (event) => {
+      addMessage(`Server: ${event.data}`);
+    };
+
+    socket.onerror = (error) => {
+      addMessage("Connection error - retrying in 5 seconds...");
+    };
+
+    socket.onclose = () => {
+      isConnected = false;
+      if (socket) {
+        addMessage("Connection lost - retrying in 5 seconds...");
+      }
+      
+      setTimeout(() => {
+        if (!isConnected) {
+          connectToServer();
+        }
+      }, 5000);
+    };
+  }
+
+  // Start initial connection attempt
+  connectToServer();
+
+  // Helper function to send message safely
+  function sendMessage(message) {
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(message);
+      return true;
+    } else {
+      addMessage("Not connected to server - message not sent");
+      return false;
+    }
+  }
 
   // Keyboard
   document.addEventListener("keydown", (event) => {
@@ -40,16 +83,14 @@ async function init() {
     const key = event.key.toLowerCase(); 
     if (key in keyboard_keymap) { 
       const message = keyboard_keymap[key];
-      socket.send(message);
-      console.log("Sent message with keyboard: "  + message);
+      sendMessage(message);
     }
   });
-  
 
   pollController.lastspeed = null;
   let visionmode = 0;
   let current_camera = 0;
-  let prevButtons = []; // buttons state for edge detection
+  let prevButtons = [];
 
   // CONTROLLER
   function pollController() {
@@ -63,34 +104,30 @@ async function init() {
       const ctrl = controllers[0];
 
       // Left joystick, for dc motors 
-      const speedX = ctrl.axes[0]; // Left stick X
-      const speedY = ctrl.axes[1]; // Left stick Y
-      const message = "dc_motors:" +  speedX.toString() +"," + speedY.toString();
-      socket.send(message);
-      console.log(`Sent from controller: ${message}`);
-
+      const speedX = ctrl.axes[0];
+      const speedY = ctrl.axes[1];
+      const message = "dc_motors:" + speedX.toString() + "," + speedY.toString();
+      sendMessage(message);
 
       // Botones con edge detection
       ctrl.buttons.forEach((button, index) => {
         const prev = prevButtons[index] || { pressed: false };
-        //edge detection
         if (button.pressed && !prev.pressed) {
           if (index in controller_keymap) { 
             const msg = controller_keymap[index];
-            socket.send(msg);
-            console.log(`Sent from controller ${msg}`);
+            sendMessage(msg);
           }
           else if (index === 4) { // change vision mode -
             if (visionmode === 0) visionmode = 3;
             else visionmode -= 1;
-            socket.send("vision:mode," + current_camera.toString() + "," + visionmode.toString());
-            console.log(`Sent (change vision mode): for ${current_camera}, ${visionmode}`);
+            const msg = "vision:mode," + current_camera.toString() + "," + visionmode.toString();
+            sendMessage(msg);
           }
           else if (index === 5) { // change vision mode +
             if (visionmode === 3) visionmode = 0;
             else visionmode += 1;
-            socket.send("vision:mode," + current_camera.toString() + "," + visionmode.toString());
-            console.log(`Sent (change vision mode): for ${current_camera}, ${visionmode}`);
+            const msg = "vision:mode," + current_camera.toString() + "," + visionmode.toString();
+            sendMessage(msg);
           }
           else if (index === 9) { // select camera
             if (current_camera === 3) current_camera = 0;
@@ -98,7 +135,6 @@ async function init() {
             addMessage(`Camera selected: ${current_camera}`);
           }
         }
-        // Get button state 
         prevButtons[index] = { pressed: button.pressed };
       });
     }
@@ -107,12 +143,10 @@ async function init() {
   }
 
   window.addEventListener("gamepadconnected", (e) => {
-    console.log("Controller connected: " + e.gamepad.id);
     pollController();
   });
 
   window.addEventListener("gamepaddisconnected", (e) => {
-    console.log("Controller disconnected: " + e.gamepad.id);
   });
 }
 

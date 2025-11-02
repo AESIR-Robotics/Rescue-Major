@@ -3,6 +3,8 @@
     "d": "dc_motors:1,-1",
     "a": "dc_motors:-1,1",
     "s": "dc_motors:-1,-1",
-    "e": "dc_motors:0,0"
+    "e": "dc_motors:0,0",
+    "o": "webrtc:start_audio",
+    "p": "webrtc:stop_audio"
 }
   

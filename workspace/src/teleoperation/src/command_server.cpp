@@ -21,6 +21,7 @@ public:
         RCLCPP_INFO(this->get_logger(), "Starting publisher node");
         vision_pub_ = this->create_publisher<std_msgs::msg::String>("commands_for_vision", 10);
         dc_motors_pub_ = this->create_publisher<std_msgs::msg::Float32MultiArray>("commands_for_dc_motors", 10);
+        webrtc_pub_ = this->create_publisher<std_msgs::msg::String>("commands_for_webrtc", 10);
     }
 
     void publish(const std::string& data) {
@@ -50,14 +51,20 @@ public:
                 msg.data = {right_motor, left_motor};
                 dc_motors_pub_->publish(msg);
             }
+        } else if (topic == "webrtc") {
+            auto msg = std_msgs::msg::String();
+            msg.data = payload;
+            RCLCPP_DEBUG(this->get_logger(), "Publishing to webrtc: %s", payload.c_str());
+            webrtc_pub_->publish(msg);
         }
         
-        //RCLCPP_INFO(this->get_logger(), "Published: %s", data.c_str());
+        RCLCPP_DEBUG(this->get_logger(), "Published: %s", data.c_str());
     }
 
 private:
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr vision_pub_;
     rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr dc_motors_pub_;
+    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr webrtc_pub_;
 };
 
 class Subscriber : public rclcpp::Node {
@@ -142,7 +149,7 @@ public:
     }
 
 private:
-    void on_message(websocketpp::connection_hdl hdl, server::message_ptr msg) {
+    void on_message(websocketpp::connection_hdl, server::message_ptr msg) {
         std::string message = msg->get_payload();
         RCLCPP_INFO(rclcpp::get_logger("CommandServer"), "Received message: %s", message.c_str());
         
@@ -156,7 +163,7 @@ private:
         connection_ = hdl;
     }
 
-    void on_close(websocketpp::connection_hdl hdl) {
+    void on_close(websocketpp::connection_hdl) {
         RCLCPP_INFO(rclcpp::get_logger("CommandServer"), "Client disconnected");
     }
 

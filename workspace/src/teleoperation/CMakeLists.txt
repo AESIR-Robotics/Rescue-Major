@@ -11,6 +11,8 @@ find_package(ament_cmake_python REQUIRED)
 find_package(rclpy REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(cv_bridge REQUIRED)
 find_package(Boost REQUIRED COMPONENTS system thread)
 
 # Create executable for C++ command server
@@ -29,6 +31,7 @@ target_include_directories(command_server PRIVATE
 ament_target_dependencies(command_server
     rclcpp
     std_msgs
+    sensor_msgs
 )
 
 if(BUILD_TESTING)

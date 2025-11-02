@@ -14,15 +14,20 @@ import rclpy
 import cv_bridge 
 from rclpy.node import Node
 from sensor_msgs.msg import Image
+from std_msgs.msg import String
 from aiohttp import web
-from av import VideoFrame
+from av import VideoFrame, AudioFrame
 from fractions import Fraction
 from aiortc import MediaStreamTrack, RTCPeerConnection, RTCSessionDescription
 import numpy as np
+import subprocess
+import signal
 
 # Setting up logging and global variables
 ROOT = os.path.dirname(__file__)
 
+# Configure logging early so it's available for ROS callbacks
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("pc")
 pcs = set()
 
@@ -50,6 +55,13 @@ class Intermediate(Node):
         self.resolution = (1920, 1080)
         self.mode = mode
 
+        # Audio management
+        self.audio_tracks = set()
+        self.active_peers = set()
+        
+        # Store main event loop reference for cross-thread calls
+        self.main_loop = None
+
         self.preallocate_latest_images()
 
         for i, topic in enumerate(camera_topic):
@@ -57,7 +69,19 @@ class Intermediate(Node):
             sub = self.create_subscription(Image, topic, lambda msg, idx=i: self.image_callback(msg, idx), 10)
             self.images_subscribers.append(sub)
 
+        # Add subscriber for WebRTC commands
+        self.webrtc_command_subscriber = self.create_subscription(
+            String, 
+            "commands_for_webrtc", 
+            self.webrtc_command_callback, 
+            10
+        )
+
         logger.info("Intermediate Node initialized in %s mode", self.mode)
+    
+    def set_main_loop(self, loop):
+        """Set reference to main asyncio event loop."""
+        self.main_loop = loop
 
     def image_callback(self, msg, index):
         """
@@ -81,6 +105,79 @@ class Intermediate(Node):
 
             #self.latest_images[index] = resized_image
             self.last_time = current_time
+
+    def webrtc_command_callback(self, msg):
+        """
+        Callback function to process WebRTC commands.
+        """
+        command = msg.data
+        logger.info(f"Received WebRTC command: {command}")
+    
+        if command == "start_audio":
+            logger.info("Processing start_audio command")
+            self._direct_start_audio()
+        elif command == "stop_audio":
+            logger.info("Processing stop_audio command")
+            self._direct_stop_audio()
+        else:
+            logger.warning(f"Unknown WebRTC command: {command}")
+    
+    def _direct_start_audio(self):
+        """Start audio capture directly (thread-safe)."""
+        logger.info(f"_direct_start_audio called. Audio tracks available: {len(self.audio_tracks)}")
+        if len(self.audio_tracks) == 0:
+            logger.warning("No audio tracks registered! Cannot start audio capture.")
+            return
+        for track in self.audio_tracks:
+            logger.info(f"Starting audio capture for track: {track}")
+            # Call the track method directly - it will handle asyncio internally
+            track.enable_audio_capture()
+        logger.info("_direct_start_audio completed")
+
+    def _direct_stop_audio(self):
+        """Stop audio capture directly (thread-safe)."""
+        logger.info(f"_direct_stop_audio called. Audio tracks available: {len(self.audio_tracks)}")
+        for track in self.audio_tracks:
+            logger.info(f"Stopping audio capture for track: {track}")
+            track.disable_audio_capture()
+
+    def add_peer(self, peer_id):
+        """Add a new peer connection."""
+        self.active_peers.add(peer_id)
+        logger.info(f"Peer {peer_id} connected. Active peers: {len(self.active_peers)}")
+
+    def remove_peer(self, peer_id):
+        """Remove a peer connection."""
+        self.active_peers.discard(peer_id)
+        logger.info(f"Peer {peer_id} disconnected. Active peers: {len(self.active_peers)}")
+        
+        # Stop audio if no active peers
+        if len(self.active_peers) == 0:
+            self.stop_audio_capture()
+
+    def register_audio_track(self, audio_track):
+        """Register an audio track."""
+        self.audio_tracks.add(audio_track)
+        logger.info(f"Audio track registered. Total tracks: {len(self.audio_tracks)}")
+
+    def unregister_audio_track(self, audio_track):
+        """Unregister an audio track."""
+        self.audio_tracks.discard(audio_track)
+        logger.info(f"Audio track unregistered. Total tracks: {len(self.audio_tracks)}")
+        
+        # Stop audio capture if no tracks need it
+        if len(self.audio_tracks) == 0:
+            self.stop_audio_capture()
+
+    def start_audio_capture(self):
+        """Start audio capture for all registered tracks."""
+        for track in self.audio_tracks:
+            track.start_audio_capture()
+
+    def stop_audio_capture(self):
+        """Stop audio capture for all registered tracks."""
+        for track in self.audio_tracks:
+            track.stop_audio_capture()
 
     def update_bandwidth(self, msg):
         """
@@ -130,7 +227,7 @@ class Intermediate(Node):
         """
         Returns the latest processed image or a placeholder if none available.
         """
-        return self.latest_images[index] if self.latest_images[index] is not None else self.placeholder_imageself.latest_images[index] if self.latest_images[index] is not None else self.placeholder_image
+        return self.latest_images[index] if self.latest_images[index] is not None else self.placeholder_image
 
 class ImageVideoTrack(MediaStreamTrack):
     """
@@ -173,13 +270,326 @@ class ImageVideoTrack(MediaStreamTrack):
         await asyncio.sleep(1.0 / self.intermediate_node.fps)
         return latest_frame
 
+class AudioStreamTrack(MediaStreamTrack):
+    """
+    MediaStreamTrack for audio, capturing and streaming audio from microphone using ALSA.
+    """
+    kind = "audio"
+
+    def __init__(self, main_loop_ref=None):
+        super().__init__()
+        self.sample_rate = 48000
+        self.channels = 1
+        self.samples_per_frame = 960  # 20ms at 48kHz
+        self.start_time = time.time()
+        self.frame_count = 0
+        self.audio_enabled = False
+        
+        # Store reference to main event loop
+        self._main_loop_ref = main_loop_ref
+        
+        # Use ASYNCIO queue on both sides for perfect synchronization
+        self.audio_queue = asyncio.Queue(maxsize=15)  # Larger buffer for stability
+        self.capture_process = None
+        self.capture_task = None
+        self.producer_task = None
+        
+        # Flag-based approach for cross-thread communication
+        self._start_audio_requested = False
+        self._stop_audio_requested = False
+        
+    def enable_audio_capture(self):
+        """Enable audio capture (thread-safe method callable from ROS thread)."""
+        logger.info("enable_audio_capture called - using flag-based approach")
+        self._start_audio_requested = True
+        self._stop_audio_requested = False
+        logger.info("Audio start flag set - will be processed in next recv() call")
+    
+    def disable_audio_capture(self):
+        """Disable audio capture (thread-safe method callable from ROS thread)."""
+        logger.info("disable_audio_capture called - using flag-based approach")
+        self._stop_audio_requested = True
+        self._start_audio_requested = False
+        logger.info("Audio stop flag set - will be processed in next recv() call")
+    
+    async def _start_audio_producer(self):
+        """Start the async audio producer task."""
+        logger.info("_start_audio_producer: Starting audio producer")
+        try:
+            # Check if audio devices are available
+            logger.info("_start_audio_producer: Checking audio devices with 'arecord -l'")
+            result = await asyncio.create_subprocess_exec(
+                'arecord', '-l',
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            await result.wait()
+            
+            if result.returncode != 0:
+                logger.error("No audio input devices available")
+                self.audio_enabled = False
+                return
+            
+            logger.info("_start_audio_producer: Audio devices found, starting ALSA subprocess")
+            
+            # Start audio capture subprocess
+            cmd = [
+                'arecord',
+                '-f', 'FLOAT_LE',
+                '-c', str(self.channels),
+                '-r', str(self.sample_rate),
+                '-t', 'raw',
+                '--buffer-size', str(self.samples_per_frame * 4 * 4),  # Larger ALSA buffer
+                '-'
+            ]
+            
+            logger.info(f"_start_audio_producer: Executing command: {' '.join(cmd)}")
+            
+            self.capture_process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            
+            logger.info(f"_start_audio_producer: ALSA subprocess started with PID: {self.capture_process.pid}")
+            logger.info(f"Async ALSA capture started: {self.sample_rate}Hz, {self.channels} channels")
+            
+            # Start the producer loop
+            logger.info("_start_audio_producer: Starting producer loop")
+            await self._async_producer_loop()
+            
+        except Exception as e:
+            logger.error(f"Failed to start async audio producer: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            self.audio_enabled = False
+    
+    async def _async_producer_loop(self):
+        """Async producer loop that reads from ALSA and feeds the queue."""
+        bytes_per_sample = 4  # float32
+        bytes_per_frame = self.samples_per_frame * self.channels * bytes_per_sample
+        
+        logger.info("Starting async audio producer loop")
+        logger.info(f"Reading {bytes_per_frame} bytes per frame ({self.samples_per_frame} samples)")
+        logger.info("Audio enabled - transmitting all microphone input")
+        
+        frame_counter = 0
+        
+        while self.audio_enabled and self.capture_process:
+            try:
+                # Async read from subprocess
+                audio_data = await self.capture_process.stdout.read(bytes_per_frame)
+                
+                if not audio_data or len(audio_data) == 0:
+                    logger.warning("No audio data from ALSA subprocess")
+                    await asyncio.sleep(0.001)  # Small delay before retry
+                    continue
+                
+                # Handle partial reads
+                while len(audio_data) < bytes_per_frame and self.audio_enabled:
+                    remaining = bytes_per_frame - len(audio_data)
+                    additional_data = await self.capture_process.stdout.read(remaining)
+                    if additional_data:
+                        audio_data += additional_data
+                    else:
+                        # Pad with zeros if no more data
+                        audio_data += b'\x00' * remaining
+                        break
+                
+                frame_counter += 1
+                
+                # Convert to numpy array
+                samples = np.frombuffer(audio_data[:bytes_per_frame], dtype=np.float32)
+                
+                # Ensure correct sample count
+                expected_samples = self.samples_per_frame * self.channels
+                if len(samples) != expected_samples:
+                    if len(samples) > expected_samples:
+                        samples = samples[:expected_samples]
+                    else:
+                        samples = np.pad(samples, (0, expected_samples - len(samples)))
+                
+                # Reshape for channels
+                if self.channels == 1:
+                    samples = samples.reshape(-1, 1)
+                else:
+                    samples = samples.reshape(-1, self.channels)
+                
+                # Simple processing - no VAD, transmit everything
+                processed_samples = samples
+                
+                # Light processing to prevent clipping
+                processed_samples = processed_samples - np.mean(processed_samples)
+                processed_samples = np.clip(processed_samples, -0.95, 0.95)
+                
+                # Log audio level occasionally for monitoring
+                if frame_counter % 100 == 0:  # Log every 2 seconds
+                    audio_level = np.sqrt(np.mean(samples ** 2))  # RMS
+                    peak_level = np.max(np.abs(samples))  # Peak
+                    logger.info(f"Audio transmission - RMS: {audio_level:.4f}, Peak: {peak_level:.4f}")
+                
+                # Add to asyncio queue (with timeout to prevent blocking)
+                try:
+                    await asyncio.wait_for(
+                        self.audio_queue.put(processed_samples), 
+                        timeout=0.005  # 5ms timeout
+                    )
+                except asyncio.TimeoutError:
+                    # Queue is full, drop oldest frames
+                    dropped = 0
+                    while not self.audio_queue.empty() and dropped < 3:
+                        try:
+                            self.audio_queue.get_nowait()
+                            dropped += 1
+                        except asyncio.QueueEmpty:
+                            break
+                    
+                    # Try to add again
+                    try:
+                        self.audio_queue.put_nowait(processed_samples)
+                    except asyncio.QueueFull:
+                        logger.warning("Audio queue still full after cleanup")
+                
+                # Small delay to prevent busy loop
+                await asyncio.sleep(0.001)
+                        
+            except Exception as e:
+                if self.audio_enabled:
+                    logger.error(f"Async producer error: {e}")
+                await asyncio.sleep(0.01)  # Delay on error
+        
+        logger.info("Async audio producer loop ended")
+
+    async def _get_audio_frame(self):
+        """Get audio frame from asyncio queue - perfect sync with recv()."""
+        if not self.audio_enabled:
+            return np.zeros((self.samples_per_frame, self.channels), dtype=np.float32)
+        
+        try:
+            # Wait for audio data with timeout
+            audio_data = await asyncio.wait_for(
+                self.audio_queue.get(), 
+                timeout=0.025  # 25ms timeout (slightly more than frame time)
+            )
+            
+            # Ensure correct frame size
+            if len(audio_data) >= self.samples_per_frame:
+                return audio_data[:self.samples_per_frame].astype(np.float32)
+            else:
+                # Pad if needed
+                padding = np.zeros((self.samples_per_frame - len(audio_data), self.channels), dtype=np.float32)
+                return np.vstack([audio_data, padding]).astype(np.float32)
+                
+        except asyncio.TimeoutError:
+            # No audio available - return true silence instead of noise
+            logger.debug("Audio timeout - returning silence")
+            return np.zeros((self.samples_per_frame, self.channels), dtype=np.float32)
+        except Exception as e:
+            logger.error(f"Error getting audio frame: {e}")
+            return np.zeros((self.samples_per_frame, self.channels), dtype=np.float32)
+
+    async def _stop_audio_internal(self):
+        """Internal method to stop audio capture (async context)."""
+        logger.info("_stop_audio_internal: Stopping audio capture")
+        self.audio_enabled = False
+        
+        # Cancel producer task
+        if self.producer_task:
+            logger.info("_stop_audio_internal: Cancelling producer task")
+            self.producer_task.cancel()
+            try:
+                await self.producer_task
+            except asyncio.CancelledError:
+                logger.info("_stop_audio_internal: Producer task cancelled successfully")
+            except Exception as e:
+                logger.error(f"_stop_audio_internal: Error cancelling producer task: {e}")
+            self.producer_task = None
+        
+        # Stop ALSA process
+        if self.capture_process:
+            logger.info("_stop_audio_internal: Terminating ALSA process")
+            try:
+                self.capture_process.terminate()
+                await asyncio.wait_for(self.capture_process.wait(), timeout=2.0)
+                logger.info("_stop_audio_internal: ALSA process terminated successfully")
+            except asyncio.TimeoutError:
+                logger.warning("_stop_audio_internal: ALSA process didn't terminate, killing it")
+                self.capture_process.kill()
+            except Exception as e:
+                logger.error(f"_stop_audio_internal: Error terminating ALSA process: {e}")
+            self.capture_process = None
+        
+        # Clear the queue
+        cleared_items = 0
+        while not self.audio_queue.empty():
+            try:
+                self.audio_queue.get_nowait()
+                cleared_items += 1
+            except:
+                break
+        
+        if cleared_items > 0:
+            logger.info(f"_stop_audio_internal: Cleared {cleared_items} items from audio queue")
+        
+        logger.info("_stop_audio_internal: Audio capture stopped")
+
+    async def recv(self):
+        """
+        Receives the next audio frame to be sent to the peer.
+        """
+        # Check if audio start was requested (flag-based approach)
+        if self._start_audio_requested and not self.audio_enabled:
+            logger.info("recv(): Processing audio start request")
+            self._start_audio_requested = False
+            self.audio_enabled = True
+            
+            # Start the audio producer task
+            try:
+                self.producer_task = asyncio.create_task(self._start_audio_producer())
+                logger.info("recv(): Audio producer task created successfully")
+            except Exception as e:
+                logger.error(f"recv(): Failed to create audio producer task: {e}")
+                self.audio_enabled = False
+        
+        # Check if audio stop was requested
+        if self._stop_audio_requested and self.audio_enabled:
+            logger.info("recv(): Processing audio stop request")
+            self._stop_audio_requested = False
+            await self._stop_audio_internal()
+        
+        # Get audio samples (either from microphone or silence)
+        samples = await self._get_audio_frame()
+        
+        # Ensure correct data type and shape
+        samples = samples.astype(np.float32)
+        
+        # Convert to int16 format for Opus encoder
+        # Apply gentle gain and clipping
+        samples = np.clip(samples * 0.8, -1.0, 1.0)  # Reduce gain to prevent clipping
+        samples_int16 = (samples * 32767).astype(np.int16)
+        
+        # For mono: transpose to shape (1, samples)
+        if self.channels == 1:
+            samples_int16 = samples_int16.T
+        
+        # Create AudioFrame with s16 format
+        frame = AudioFrame.from_ndarray(samples_int16, format='s16', layout='mono')
+        frame.sample_rate = self.sample_rate
+        
+        # Set consistent timing
+        self.frame_count += 1
+        frame.pts = int((self.frame_count * self.samples_per_frame * 1000) / self.sample_rate)
+        frame.time_base = Fraction(1, 1000)
+        
+        return frame
+
 # Web handler functions
 async def index(request):
     """
     Serves the index.html page.
     """
-    content = open(os.path.join(ROOT, "../../share/teleoperation/GUI/index.html"), "r").read()
-    #content = open(os.path.join(ROOT, "../GUI/index.html"), "r").read()
+    # Updated path to point to the GUI directory in src
+    content = open(os.path.join(ROOT, "../GUI/index.html"), "r").read()
     return web.Response(content_type="text/html", text=content)
 
 async def offer(request):
@@ -199,6 +609,9 @@ async def offer(request):
     pc_id = "PeerConnection(%s)" % uuid.uuid4()
     pcs.add(pc)
 
+    # Register this peer with the intermediate node
+    intermediate_node.add_peer(pc_id)
+
     def log_info(msg, *args):
         """
         Utility function for logging information.
@@ -207,7 +620,7 @@ async def offer(request):
 
     #log_info("Received WebRTC offer")
 
-    # Add tracks only for available cameras
+    # Add video tracks for available cameras
     for index in range(intermediate_node.camera_count):
         if intermediate_node.latest_images[index] is not None:
             log_info("Adding video track for camera " + str(index))
@@ -215,6 +628,12 @@ async def offer(request):
             pc.addTrack(image_track)
         else:
             log_info("No image subscriber for camera %d", index)
+
+    # Add audio track
+    log_info("Adding audio track")
+    audio_track = AudioStreamTrack(main_loop_ref=intermediate_node.main_loop)
+    intermediate_node.register_audio_track(audio_track)
+    pc.addTrack(audio_track)
 
     @pc.on("datachannel")
     def on_datachannel(channel):
@@ -239,6 +658,20 @@ async def offer(request):
         if pc.iceConnectionState == "failed":
             await pc.close()
             pcs.discard(pc)
+            # Clean up peer and audio track
+            intermediate_node.remove_peer(pc_id)
+            intermediate_node.unregister_audio_track(audio_track)
+
+    @pc.on("connectionstatechange")
+    async def on_connectionstatechange():
+        """
+        Monitors the connection state changes.
+        """
+        log_info("Connection state is %s", pc.connectionState)
+        if pc.connectionState in ["disconnected", "failed", "closed"]:
+            # Clean up peer and audio track
+            intermediate_node.remove_peer(pc_id)
+            intermediate_node.unregister_audio_track(audio_track)
 
     await pc.setRemoteDescription(offer)
     answer = await pc.createAnswer()
@@ -294,8 +727,7 @@ def main(args=None):
     # App initialization and ROS node creation
     app = web.Application()
     app.on_shutdown.append(on_shutdown)
-    gui_path = os.path.join(ROOT, "../../share/teleoperation")
-    #gui_path = os.path.join(ROOT, "../GUI")
+    gui_path = os.path.join(ROOT, "../GUI")
     app.router.add_static("/static/", gui_path)
     app.router.add_get("/", index)  # Serve the main HTML page
     app.router.add_post("/offer", offer)  # Handle WebRTC offers
@@ -311,6 +743,8 @@ def main(args=None):
     ros_thread.start()
 
     # Start the web application
+    loop = asyncio.get_event_loop()
+    intermediate_node.set_main_loop(loop)
     web.run_app(
         app, access_log=None, host=args.host, port=args.port, ssl_context=ssl_context
     )

@@ -193,6 +193,16 @@
                     <video id="video3" autoplay="true" playsinline="true"></video>
                     <img class="placeholder" src="/static/placeholder.jpg" alt="Camera not available">
                 </div>
+                
+                <!-- Audio element for receiving audio from server -->
+                <div class="audio-container">
+                    <div class="title">Audio Stream</div>
+                    <audio id="audio" autoplay="true" controls style="width: 100%; margin-top: 10px;"></audio>
+                    <div class="audio-controls" style="margin-top: 10px;">
+                        <button id="mute-audio" onclick="toggleAudioMute()">Mute Audio</button>
+                        <span id="audio-status" style="margin-left: 10px; color: #007bff;">Audio: Ready</span>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
