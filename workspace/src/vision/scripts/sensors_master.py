@@ -26,16 +26,19 @@ class MultiDetectionNode(Node):
         script_dir = os.path.dirname(os.path.realpath(__file__))
 
         # Ruta al modelo
+        #device='cuda' if torch.cuda.is_available() else 'cpu'
+        #self.get_logger().info(f"Usando dispositivo: {device}")
+
         model_path = os.path.join(script_dir, "best.pt")
         if not os.path.exists(model_path):
             self.get_logger().error(f"No se encontró el modelo en: {model_path}")
             self.model = None
         else:
-            self.model = YOLO(model_path)
+            self.model = YOLO(model_path).to('cuda')
             self.get_logger().info(f"Modelo cargado desde: {model_path}")
 
         # Carpeta para guardar imágenes
-        self.image_path = os.path.join(script_dir, "qr_videos")
+        self.image_path = os.path.join(script_dir, "../../share/vision/qr_videos")
         os.makedirs(self.image_path, exist_ok=True)
         self.get_logger().info(f"Carpeta de imágenes: {self.image_path}")
 

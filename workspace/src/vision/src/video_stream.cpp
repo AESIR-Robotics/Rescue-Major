@@ -3,6 +3,7 @@
 #include "cv_bridge/cv_bridge.h"
 #include <opencv2/opencv.hpp>
 #include <string>
+#include <iostream>
 #include "std_msgs/msg/string.hpp"
 
 using std::placeholders::_1;
@@ -12,7 +13,7 @@ class VideoStreamPublisher : public rclcpp::Node {
 public:
     VideoStreamPublisher()
     : Node("video_stream_publisher") {
-        this->declare_parameter<bool>("enable_jetson",false);
+        this->declare_parameter<bool>("enable_jetson",true);
         rclcpp::Parameter param = this->get_parameter("enable_jetson");
         bool enable_jetson = param.as_bool();
 
@@ -27,7 +28,10 @@ public:
             std::bind(&VideoStreamPublisher::command_callback, this, std::placeholders::_1)
         );
 
-        camera_devices_ = {0}; // add more device indices here
+        //std::cout << "OpenCV Version: " << CV_VERSION << std::endl;
+        //std::cout << "\nBuild Information:\n" << cv::getBuildInformation() << std::endl;
+
+        camera_devices_ = {0, 2}; // add more device indices here
         for (size_t i = 0; i < camera_devices_.size(); i++) {
             std::string topic_name = "cam" + std::to_string(i) + "/image_raw";
             auto pub = this->create_publisher<sensor_msgs::msg::Image>(topic_name, 10);
@@ -35,19 +39,30 @@ public:
 
             cv::VideoCapture cap;
             if(enable_jetson){
-                // NVIDIA accelerated (Jetson) H.264
-                string pipeline = "v4l2src device=/dev/video" + to_string(camera_devices_[i]) +
-                "! video/x-h264, width=1920, height=1080, framerate=30/1 \
-                    ! h264parse \
-                    ! nvv4l2decoder \
-                    ! nvvidconv \
-                        compute-hw=GPU \
-                        nvbuf-memory-type=nvbuf-mem-cuda-device \
-                        ! video/x-raw, format=BGRx \
-                    ! videoconvert \
-                    ! video/x-raw, format=BGR \
-                    ! appsink";
+                // NVIDIA accelerated (Jetson) MJPEG
+                /*
+                std::string pipeline =
+                    "v4l2src device=/dev/video" + std::to_string(camera_devices_[i]) + " io-mode=2 ! "
+                    "image/jpeg, width=1920, height=1080, framerate=30/1 ! "
+                    "jpegparse ! nvjpegdec ! "                 // HW JPEG decode
+                    "nvvidconv ! video/x-raw, format=BGR ! "   // HW colorspace to BGR for OpenCV
+                    "appsink max-buffers=1 drop=true sync=false";
+                */
+
+                std::string pipeline =
+                    "v4l2src device=/dev/video" + std::to_string(camera_devices_[i]) + " ! "
+                    "image/jpeg, width=1920, height=1080, framerate=30/1 !"
+                    "jpegdec ! nvvidconv ! video/x-raw(memory:NVMM), format=NV12 !"                 // HW JPEG decode
+                    "nvvidconv ! video/x-raw, format=BGRx !"   // HW colorspace to BGR for OpenCV
+                    "videoconvert ! video/x-raw, format=BGR ! appsink";
+
+                 
                 cap.open(pipeline, cv::CAP_GSTREAMER);
+                if (!cap.isOpened()) {
+                    RCLCPP_ERROR(this->get_logger(), "Failed to open GStreamer pipeline for camera %zu", i);
+                } else {
+                    RCLCPP_INFO(this->get_logger(), "Camera %zu pipeline opened successfully", i);
+                }
             }
             else{
                 // Optimatize for generic computer
@@ -56,6 +71,14 @@ public:
                 cap.set(cv::CAP_PROP_FRAME_HEIGHT, 720);
                 cap.set(cv::CAP_PROP_FPS, 30);
                 cap.set(cv::CAP_PROP_BUFFERSIZE, 1);
+            }
+
+            if (cap.isOpened()) {
+                std::cout << "SUCCESS: OpenCV C++ can open a GStreamer pipeline (CAP_GSTREAMER)." << std::endl;
+                //continue;
+            } else {
+                std::cerr << "FAILURE: OpenCV C++ could NOT open the GStreamer pipeline. GStreamer backend might be missing or broken." << std::endl;
+                continue;
             }
 
             // Note: this configuration depend most of hardware, type of camera and device where it's runnnig 
