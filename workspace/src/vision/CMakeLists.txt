@@ -14,7 +14,6 @@ find_package(rclpy REQUIRED)
 find_package(sensor_msgs REQUIRED)  
 find_package(std_msgs REQUIRED)   
 find_package(cv_bridge REQUIRED)
-find_package(OpenCV REQUIRED)
 find_package(image_transport REQUIRED)
 
 if(BUILD_TESTING)
@@ -36,11 +35,12 @@ ament_target_dependencies(video_stream_publisher
   cv_bridge 
   OpenCV
   image_transport
-) 
+)
 
 install(TARGETS
   video_stream_publisher
   DESTINATION lib/${PROJECT_NAME})
+  
 
 # Use ament_python_install_package to install Python code
 install(PROGRAMS

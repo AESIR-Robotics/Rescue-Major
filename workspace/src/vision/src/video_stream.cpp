@@ -14,8 +14,11 @@ public:
     VideoStreamPublisher()
     : Node("video_stream_publisher") {
         this->declare_parameter<bool>("enable_jetson",true);
-        rclcpp::Parameter param = this->get_parameter("enable_jetson");
-        bool enable_jetson = param.as_bool();
+        this->declare_parameter<std::vector<int>>("camera_devices",{0, 2, 4}); // add more device indices here
+        std::vector<long int> camera_devices_long;
+        this->get_parameter("enable_jetson", enable_jetson);
+        this->get_parameter("camera_devices", camera_devices_long);
+        camera_devices_.assign(camera_devices_long.begin(), camera_devices_long.end());
 
         // Publisher image vision sensors
         pub_sensors_ = this->create_publisher<sensor_msgs::msg::Image>("cam_raw/sensors", 10);
@@ -28,10 +31,8 @@ public:
             std::bind(&VideoStreamPublisher::command_callback, this, std::placeholders::_1)
         );
 
-        //std::cout << "OpenCV Version: " << CV_VERSION << std::endl;
-        //std::cout << "\nBuild Information:\n" << cv::getBuildInformation() << std::endl;
+        int WIDTH=1920, HEIGHT=1080, FPS=30;
 
-        camera_devices_ = {0, 2}; // add more device indices here
         for (size_t i = 0; i < camera_devices_.size(); i++) {
             std::string topic_name = "cam" + std::to_string(i) + "/image_raw";
             auto pub = this->create_publisher<sensor_msgs::msg::Image>(topic_name, 10);
@@ -40,24 +41,26 @@ public:
             cv::VideoCapture cap;
             if(enable_jetson){
                 // NVIDIA accelerated (Jetson) MJPEG
-                /*
-                std::string pipeline =
-                    "v4l2src device=/dev/video" + std::to_string(camera_devices_[i]) + " io-mode=2 ! "
-                    "image/jpeg, width=1920, height=1080, framerate=30/1 ! "
-                    "jpegparse ! nvjpegdec ! "                 // HW JPEG decode
-                    "nvvidconv ! video/x-raw, format=BGR ! "   // HW colorspace to BGR for OpenCV
-                    "appsink max-buffers=1 drop=true sync=false";
-                */
 
+                if(i != 0){
+                    // Pipeline for secundary cameras
+                    WIDTH=1280, HEIGHT=720, FPS=30;
+                }
+                else {
+                    // Pipeline for main camera
+                    WIDTH=1920, HEIGHT=1080, FPS=30;
+                }
                 std::string pipeline =
                     "v4l2src device=/dev/video" + std::to_string(camera_devices_[i]) + " ! "
-                    "image/jpeg, width=1920, height=1080, framerate=30/1 !"
-                    "jpegdec ! nvvidconv ! video/x-raw(memory:NVMM), format=NV12 !"                 // HW JPEG decode
-                    "nvvidconv ! video/x-raw, format=BGRx !"   // HW colorspace to BGR for OpenCV
-                    "videoconvert ! video/x-raw, format=BGR ! appsink";
-
-                 
+                    "image/jpeg, width=" + std::to_string(WIDTH) + ", height=" + std::to_string(HEIGHT) + ", framerate=" + std::to_string(FPS) + "/1 !"
+                    "jpegparse ! " 
+                    "nvv4l2decoder ! video/x-raw(memory:NVMM) !"               
+                    "nvvidconv ! video/x-raw, format=BGRx ! "
+                    "videoconvert ! video/x-raw, format=BGR ! " 
+                    "appsink drop=true sync=false max-buffer=1";
                 cap.open(pipeline, cv::CAP_GSTREAMER);
+
+    
                 if (!cap.isOpened()) {
                     RCLCPP_ERROR(this->get_logger(), "Failed to open GStreamer pipeline for camera %zu", i);
                 } else {
@@ -71,14 +74,6 @@ public:
                 cap.set(cv::CAP_PROP_FRAME_HEIGHT, 720);
                 cap.set(cv::CAP_PROP_FPS, 30);
                 cap.set(cv::CAP_PROP_BUFFERSIZE, 1);
-            }
-
-            if (cap.isOpened()) {
-                std::cout << "SUCCESS: OpenCV C++ can open a GStreamer pipeline (CAP_GSTREAMER)." << std::endl;
-                //continue;
-            } else {
-                std::cerr << "FAILURE: OpenCV C++ could NOT open the GStreamer pipeline. GStreamer backend might be missing or broken." << std::endl;
-                continue;
             }
 
             // Note: this configuration depend most of hardware, type of camera and device where it's runnnig 
@@ -102,6 +97,7 @@ private:
     void timer_callback() {
         for (size_t i = 0; i < cameras_.size(); ++i) {
             cv::Mat frame;
+
             cameras_[i] >> frame;
             if (frame.empty()) continue;
 
@@ -162,6 +158,7 @@ private:
     int num_cam_s_;
 
     std::vector<int> camera_devices_;
+    bool enable_jetson;
     std::vector<rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr> publishers_;
     std::vector<cv::VideoCapture> cameras_;
     rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr pub_sensors_;

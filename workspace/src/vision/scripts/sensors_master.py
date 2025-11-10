@@ -26,9 +26,6 @@ class MultiDetectionNode(Node):
         script_dir = os.path.dirname(os.path.realpath(__file__))
 
         # Ruta al modelo
-        #device='cuda' if torch.cuda.is_available() else 'cpu'
-        #self.get_logger().info(f"Usando dispositivo: {device}")
-
         model_path = os.path.join(script_dir, "best.pt")
         if not os.path.exists(model_path):
             self.get_logger().error(f"No se encontró el modelo en: {model_path}")
@@ -130,8 +127,9 @@ class MultiDetectionNode(Node):
             elif self.mode == 3:
                 frame = self.detect_motion(frame)
 
-            cv2.imshow("Multi Detection Viewer", frame)
-            key = cv2.waitKey(1) & 0xFF
+            # Show image
+            #cv2.imshow("Multi Detection Viewer", frame)
+            #key = cv2.waitKey(1) & 0xFF
 
             frame = self.bridge.cv2_to_imgmsg(frame, "bgr8")
 
