@@ -14,7 +14,7 @@ import rclpy
 import cv_bridge 
 from rclpy.node import Node
 from sensor_msgs.msg import Image
-from std_msgs.msg import String
+from std_msgs.msg import String, Int16MultiArray
 from aiohttp import web
 from av import VideoFrame, AudioFrame
 from fractions import Fraction
@@ -62,6 +62,18 @@ class Intermediate(Node):
         # Store main event loop reference for cross-thread calls
         self.main_loop = None
 
+        # Publisher para audio del cliente
+        self.client_audio_publisher = self.create_publisher(Int16MultiArray, "client_audio", 10)
+        self.audio_receive_buffer = []
+        self.audio_receive_lock = threading.Lock()
+        self.is_receiving_client_audio = False
+        self.last_client_audio_time = 0
+        self.client_audio_timeout = 0.5  # 500ms timeout
+
+        # Hilo para procesar audio del cliente
+        self.client_audio_thread = threading.Thread(target=self.client_audio_processor, daemon=True)
+        self.client_audio_thread.start()
+
         self.preallocate_latest_images()
 
         for i, topic in enumerate(camera_topic):
@@ -78,6 +90,63 @@ class Intermediate(Node):
         )
 
         logger.info("Intermediate Node initialized in %s mode", self.mode)
+
+    def receive_client_audio(self, audio_data):
+        """Recibe datos de audio del cliente y los agrega al buffer"""
+        current_time = time.time()
+        
+        with self.audio_receive_lock:
+            if len(audio_data) > 0:
+                # Detectar si hay contenido de audio real (no solo silencio)
+                has_audio_content = any(abs(sample) > 100 for sample in audio_data)
+                
+                if has_audio_content:
+                    self.audio_receive_buffer.append(audio_data)
+                    self.last_client_audio_time = current_time
+                    
+                    if not self.is_receiving_client_audio:
+                        self.is_receiving_client_audio = True
+                        logger.info("Cliente audio detection started - receiving audio from client")
+                else:
+                    # Solo silencio - verificar timeout
+                    if self.is_receiving_client_audio and (current_time - self.last_client_audio_time) > self.client_audio_timeout:
+                        self.is_receiving_client_audio = False
+                        logger.info("Cliente audio detection stopped - no audio from client")
+
+    def client_audio_processor(self):
+        """Hilo para procesar el audio recibido del cliente"""
+        while True:
+            try:
+                current_time = time.time()
+                
+                with self.audio_receive_lock:
+                    # Verificar timeout de audio del cliente
+                    if self.is_receiving_client_audio and (current_time - self.last_client_audio_time) > self.client_audio_timeout:
+                        self.is_receiving_client_audio = False
+                        logger.info("Client audio stream timeout - client stopped sending audio")
+                    
+                    # Procesar buffer de audio si hay datos
+                    if self.audio_receive_buffer:
+                        audio_data = self.audio_receive_buffer.pop(0)
+                        self.publish_client_audio(audio_data)
+                
+                # Pequeña pausa para no sobrecargar el CPU
+                time.sleep(0.01)  # 10ms
+                
+            except Exception as e:
+                logger.error(f"Error in client audio processor: {e}")
+                time.sleep(0.1)
+
+    def publish_client_audio(self, audio_data):
+        """Publica los datos de audio del cliente al tópico ROS"""
+        try:
+            if self.is_receiving_client_audio:
+                msg = Int16MultiArray()
+                msg.data = audio_data.tolist() if hasattr(audio_data, 'tolist') else list(audio_data)
+                self.client_audio_publisher.publish(msg)
+                logger.debug(f"Published client audio data: {len(audio_data)} samples")
+        except Exception as e:
+            logger.error(f"Error publishing client audio data: {e}")
     
     def set_main_loop(self, loop):
         """Set reference to main asyncio event loop."""
@@ -288,8 +357,8 @@ class AudioStreamTrack(MediaStreamTrack):
         # Store reference to main event loop
         self._main_loop_ref = main_loop_ref
         
-        # Use ASYNCIO queue on both sides for perfect synchronization
-        self.audio_queue = asyncio.Queue(maxsize=15)  # Larger buffer for stability
+        # Buffer for smoother audio - 50 frames = 1 second buffer
+        self.audio_queue = asyncio.Queue(maxsize=50)
         self.capture_process = None
         self.capture_task = None
         self.producer_task = None
@@ -297,6 +366,15 @@ class AudioStreamTrack(MediaStreamTrack):
         # Flag-based approach for cross-thread communication
         self._start_audio_requested = False
         self._stop_audio_requested = False
+        
+        self.frame_duration = 1000 / 50  # 20ms in milliseconds
+        self.next_frame_time = None
+        
+        # Audio buffer for smoother playback with minimum buffer size
+        self.audio_buffer = []
+        self.buffer_target_size = 8  # Target 8 frames ahead for smooth playback (160ms)
+        self.buffer_minimum_size = 3  # NEVER go below 3 frames (60ms) - prevents micro-gaps
+        self.buffer_warmup_size = 12  # Start playing only after 12 frames (240ms) for initial stability
         
     def enable_audio_capture(self):
         """Enable audio capture (thread-safe method callable from ROS thread)."""
@@ -332,14 +410,15 @@ class AudioStreamTrack(MediaStreamTrack):
             
             logger.info("_start_audio_producer: Audio devices found, starting ALSA subprocess")
             
-            # Start audio capture subprocess
+            # Start audio capture subprocess with  ALSA BUFFER
             cmd = [
                 'arecord',
                 '-f', 'FLOAT_LE',
                 '-c', str(self.channels),
                 '-r', str(self.sample_rate),
                 '-t', 'raw',
-                '--buffer-size', str(self.samples_per_frame * 4 * 4),  # Larger ALSA buffer
+                '--buffer-size', str(self.samples_per_frame * 4 * 10),  # 10x larger buffer (38400 bytes)
+                '--period-size', str(self.samples_per_frame * 2),        # Larger periods for stability
                 '-'
             ]
             
@@ -461,16 +540,35 @@ class AudioStreamTrack(MediaStreamTrack):
         logger.info("Async audio producer loop ended")
 
     async def _get_audio_frame(self):
-        """Get audio frame from asyncio queue - perfect sync with recv()."""
+        """Get audio frame from asyncio queue """
         if not self.audio_enabled:
             return np.zeros((self.samples_per_frame, self.channels), dtype=np.float32)
         
-        try:
-            # Wait for audio data with timeout
-            audio_data = await asyncio.wait_for(
-                self.audio_queue.get(), 
-                timeout=0.025  # 25ms timeout (slightly more than frame time)
-            )
+        # Pre-fill buffer for smoother playback
+        while len(self.audio_buffer) < self.buffer_target_size and not self.audio_queue.empty():
+            try:
+                audio_data = self.audio_queue.get_nowait()
+                self.audio_buffer.append(audio_data)
+            except asyncio.QueueEmpty:
+                break
+        
+        # Wait for warmup buffer on first start for initial stability
+        initial_warmup_needed = len(self.audio_buffer) == 0 and self.frame_count < 10
+        if initial_warmup_needed:
+            logger.info("Audio warmup: Building initial buffer...")
+            warmup_count = 0
+            while len(self.audio_buffer) < self.buffer_warmup_size and warmup_count < 20:
+                try:
+                    audio_data = await asyncio.wait_for(self.audio_queue.get(), timeout=0.020)
+                    self.audio_buffer.append(audio_data)
+                    warmup_count += 1
+                except asyncio.TimeoutError:
+                    break
+            logger.info(f"Audio warmup completed: {len(self.audio_buffer)} frames buffered")
+        
+        #NEVER drain buffer below minimum - prevents micro-gaps
+        if len(self.audio_buffer) > self.buffer_minimum_size:
+            audio_data = self.audio_buffer.pop(0)
             
             # Ensure correct frame size
             if len(audio_data) >= self.samples_per_frame:
@@ -479,10 +577,45 @@ class AudioStreamTrack(MediaStreamTrack):
                 # Pad if needed
                 padding = np.zeros((self.samples_per_frame - len(audio_data), self.channels), dtype=np.float32)
                 return np.vstack([audio_data, padding]).astype(np.float32)
+        
+        # IMPROVED: Only if buffer is below minimum, try to get from queue with short timeout
+        elif len(self.audio_buffer) > 0:
+            # Use existing buffer but try to refill immediately
+            try:
+                audio_data = await asyncio.wait_for(self.audio_queue.get(), timeout=0.005)
+                self.audio_buffer.append(audio_data)
+                # Return the oldest frame
+                audio_data = self.audio_buffer.pop(0)
+                
+                if len(audio_data) >= self.samples_per_frame:
+                    return audio_data[:self.samples_per_frame].astype(np.float32)
+                else:
+                    padding = np.zeros((self.samples_per_frame - len(audio_data), self.channels), dtype=np.float32)
+                    return np.vstack([audio_data, padding]).astype(np.float32)
+                    
+            except asyncio.TimeoutError:
+                # Buffer is low and no new data - return what we have
+                if self.audio_buffer:
+                    audio_data = self.audio_buffer.pop(0)
+                    if len(audio_data) >= self.samples_per_frame:
+                        return audio_data[:self.samples_per_frame].astype(np.float32)
+                    else:
+                        padding = np.zeros((self.samples_per_frame - len(audio_data), self.channels), dtype=np.float32)
+                        return np.vstack([audio_data, padding]).astype(np.float32)
+                else:
+                    return np.zeros((self.samples_per_frame, self.channels), dtype=np.float32)
+        
+        # Last resort - buffer is completely empty
+        try:
+            audio_data = await asyncio.wait_for(self.audio_queue.get(), timeout=0.010)
+            
+            if len(audio_data) >= self.samples_per_frame:
+                return audio_data[:self.samples_per_frame].astype(np.float32)
+            else:
+                padding = np.zeros((self.samples_per_frame - len(audio_data), self.channels), dtype=np.float32)
+                return np.vstack([audio_data, padding]).astype(np.float32)
                 
         except asyncio.TimeoutError:
-            # No audio available - return true silence instead of noise
-            logger.debug("Audio timeout - returning silence")
             return np.zeros((self.samples_per_frame, self.channels), dtype=np.float32)
         except Exception as e:
             logger.error(f"Error getting audio frame: {e}")
@@ -535,13 +668,16 @@ class AudioStreamTrack(MediaStreamTrack):
 
     async def recv(self):
         """
-        Receives the next audio frame to be sent to the peer.
+        Receives the next audio frame with better timing control.
         """
         # Check if audio start was requested (flag-based approach)
         if self._start_audio_requested and not self.audio_enabled:
             logger.info("recv(): Processing audio start request")
             self._start_audio_requested = False
             self.audio_enabled = True
+            
+            # Initialize timing
+            self.next_frame_time = time.time()
             
             # Start the audio producer task
             try:
@@ -556,6 +692,17 @@ class AudioStreamTrack(MediaStreamTrack):
             logger.info("recv(): Processing audio stop request")
             self._stop_audio_requested = False
             await self._stop_audio_internal()
+        
+        # Precise timing control for consistent 20ms intervals
+        if self.audio_enabled and self.next_frame_time is not None:
+            current_time = time.time()
+            if current_time < self.next_frame_time:
+                sleep_time = self.next_frame_time - current_time
+                if sleep_time > 0 and sleep_time < 0.05:  # Max 50ms sleep
+                    await asyncio.sleep(sleep_time)
+            
+            # Schedule next frame time
+            self.next_frame_time = current_time + 0.02  # 20ms = 0.02 seconds
         
         # Get audio samples (either from microphone or silence)
         samples = await self._get_audio_frame()
@@ -576,13 +723,14 @@ class AudioStreamTrack(MediaStreamTrack):
         frame = AudioFrame.from_ndarray(samples_int16, format='s16', layout='mono')
         frame.sample_rate = self.sample_rate
         
-        # Set consistent timing
+        # timestamp calculation
         self.frame_count += 1
-        frame.pts = int((self.frame_count * self.samples_per_frame * 1000) / self.sample_rate)
+        pts = int((self.frame_count * self.samples_per_frame * 1000) / self.sample_rate)
+        frame.pts = pts
         frame.time_base = Fraction(1, 1000)
         
         return frame
-
+    
 # Web handler functions
 async def index(request):
     """
@@ -629,11 +777,38 @@ async def offer(request):
         else:
             log_info("No image subscriber for camera %d", index)
 
-    # Add audio track
-    log_info("Adding audio track")
+    # Add bidirectional audio track (server to client + client to server)
+    log_info("Adding bidirectional audio track")
     audio_track = AudioStreamTrack(main_loop_ref=intermediate_node.main_loop)
     intermediate_node.register_audio_track(audio_track)
     pc.addTrack(audio_track)
+
+    @pc.on("track")
+    def on_track(track):
+        """Handle incoming audio track from client"""
+        log_info(f"Received track: {track.kind}")
+        if track.kind == "audio":
+            log_info("Setting up client audio reception")
+            # Create a task to handle incoming audio frames
+            asyncio.create_task(handle_client_audio_track(track))
+
+    async def handle_client_audio_track(track):
+        """Process incoming audio frames from client"""
+        log_info("Starting client audio track handler")
+        try:
+            while True:
+                frame = await track.recv()
+                if frame:
+                    # Convert audio frame to numpy array
+                    audio_data = frame.to_ndarray()
+                    # Flatten to 1D array for processing
+                    audio_samples = audio_data.flatten().astype(np.int16)
+                    # Send to intermediate node for ROS publishing
+                    intermediate_node.receive_client_audio(audio_samples)
+                else:
+                    break
+        except Exception as e:
+            log_info(f"Client audio track ended or error: {e}")
 
     @pc.on("datachannel")
     def on_datachannel(channel):
@@ -648,6 +823,10 @@ async def offer(request):
             if isinstance(message, str) and message.startswith("latency"):
                 intermediate_node.rtt = int(message[7:])
                 #log_info("Updated RTT to %d", intermediate_node.rtt)
+            if isinstance(message, bytes):
+                # Process client audio data
+                audio_data = np.frombuffer(message, dtype=np.int16)
+                intermediate_node.receive_client_audio(audio_data)
 
     @pc.on("iceconnectionstatechange")
     async def on_iceconnectionstatechange():
@@ -660,7 +839,6 @@ async def offer(request):
             pcs.discard(pc)
             # Clean up peer and audio track
             intermediate_node.remove_peer(pc_id)
-            intermediate_node.unregister_audio_track(audio_track)
 
     @pc.on("connectionstatechange")
     async def on_connectionstatechange():
@@ -671,7 +849,6 @@ async def offer(request):
         if pc.connectionState in ["disconnected", "failed", "closed"]:
             # Clean up peer and audio track
             intermediate_node.remove_peer(pc_id)
-            intermediate_node.unregister_audio_track(audio_track)
 
     await pc.setRemoteDescription(offer)
     answer = await pc.createAnswer()

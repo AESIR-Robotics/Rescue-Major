@@ -8,6 +8,12 @@ var pc = null; // Variable for the PeerConnection
 var dc = null, dcInterval = null; // DataChannel and its interval
 let videoIndex = 0;
 
+// Audio transmission variables
+var clientAudioStream = null;
+var clientAudioTrack = null;
+var microphoneEnabled = false;
+var audioSender = null;
+
 const videoElements = [
     document.getElementById('video1'),
     document.getElementById('video2'),
@@ -241,9 +247,7 @@ function hideAudioNotification() {
 }
 
 // Function to negotiate the peer connection
-function negotiate()
-
-{
+function negotiate() {
     var videoResolutionSelect = document.getElementById('video-resolution');
     var selectedResolution = videoResolutionSelect.value;
 
@@ -287,15 +291,15 @@ function negotiate()
     });
 }
 
+
 // Function to start the peer connection and data channel
 function start() {
-
     videoIndex = 0;
 
     document.getElementById('start').style.display = 'none';
     pc = createPeerConnection();
 
-    /// Reset video elements and show placeholders
+    // Reset video elements and show placeholders
     videoElements.forEach((v, i) => {
         v.srcObject = null;
         placeholders[i].style.display = 'block';
@@ -304,19 +308,22 @@ function start() {
     // Enable audio autoplay by user interaction
     const audioElement = document.getElementById('audio');
     if (audioElement) {
-        // This user interaction enables autoplay for future audio streams
         audioElement.muted = false;
-        audioElement.play().catch(e => {
-        });
+        audioElement.play().catch(e => {});
     }
 
-    // Add transceivers based on server's camera count
+    // Add transceivers for video (receive only)
     pc.addTransceiver('video', { direction: 'recvonly' });
     pc.addTransceiver('video', { direction: 'recvonly' });
     pc.addTransceiver('video', { direction: 'recvonly' });
     
-    // Add audio transceiver to receive audio from server
-    pc.addTransceiver('audio', { direction: 'recvonly' });
+    // Add bidirectional audio transceiver (both send and receive)
+    pc.addTransceiver('audio', { direction: 'sendrecv' });
+
+    // Add existing microphone track if enabled
+    if (microphoneEnabled && clientAudioTrack) {
+        audioSender = pc.addTrack(clientAudioTrack, clientAudioStream);
+    }
 
     var time_start = null;
 
@@ -334,9 +341,8 @@ function start() {
     // Create DataChannel and setup event handlers
     dc = pc.createDataChannel('chat', parameters);
     dc.onclose = function() {
-    clearInterval(dcInterval);
-    dataChannelLog.textContent += '- close\n';
-
+        clearInterval(dcInterval);
+        dataChannelLog.textContent += '- close\n';
     };
     dc.onopen = function() {
         dataChannelLog.textContent += '- open\n';
@@ -357,9 +363,8 @@ function start() {
     };
 
     return negotiate();
-
-
 }
+
 // Function to stop the peer connection and data channel
 function stop() {
     document.getElementById('stop').style.display = 'none';
@@ -481,5 +486,207 @@ function toggleAudioMute() {
 function sendAudioCommand(command) {
     if (dc && dc.readyState === 'open') {
         dc.send('audio:' + command);
+    }
+}
+
+// Function to toggle microphone transmission
+async function toggleMicrophone() {
+    console.log('toggleMicrophone called, current state:', microphoneEnabled);
+    
+    const micButton = document.getElementById('toggle-microphone');
+    const micStatus = document.getElementById('microphone-status');
+    
+    // Debug: Check if elements exist
+    if (!micButton) {
+        console.error('Microphone button not found!');
+        alert('Error: Microphone button not found in DOM');
+        return;
+    }
+    
+    if (!micStatus) {
+        console.error('Microphone status element not found!');
+    }
+    
+    // Check if getUserMedia is available
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        console.error('getUserMedia not available');
+        if (micStatus) {
+            micStatus.textContent = 'Mic: Not supported (HTTP)';
+            micStatus.style.color = '#dc3545'; // Red
+        }
+        
+        const helpMessage = `
+Microphone access is blocked because this site is not using HTTPS.
+
+For local development, start Opera with:
+
+opera --unsafely-treat-insecure-origin-as-secure=http://${location.hostname}:${location.port} --user-data-dir=/tmp/opera_dev
+
+Or go to opera://flags/ and add this URL to "Insecure origins treated as secure"
+        `;
+        
+        alert(helpMessage);
+        return;
+    }
+    
+    if (!microphoneEnabled) {
+        console.log('Attempting to enable microphone...');
+        
+        // Update UI immediately to show we're trying
+        micButton.textContent = 'Enabling...';
+        micButton.disabled = true;
+        if (micStatus) {
+            micStatus.textContent = 'Mic: Requesting permissions...';
+            micStatus.style.color = '#ffc107'; // Yellow
+        }
+        
+        try {
+            console.log('Requesting microphone access...');
+            
+            // Request microphone access
+            clientAudioStream = await navigator.mediaDevices.getUserMedia({ 
+                audio: {
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true,
+                    sampleRate: 48000
+                }, 
+                video: false 
+            });
+            
+            console.log('Microphone access granted, stream:', clientAudioStream);
+            clientAudioTrack = clientAudioStream.getAudioTracks()[0];
+            console.log('Audio track obtained:', clientAudioTrack);
+            
+            console.log('PC connection state:', pc ? pc.connectionState : 'PC is null');
+            console.log('PC ICE connection state:', pc ? pc.iceConnectionState : 'PC is null');
+        
+            if (pc && (pc.connectionState === 'connected' || pc.iceConnectionState === 'connected')) {
+                // find audio senders only
+                let targetAudioSender = null;
+                
+                // try to find an existing audio sender that's empty (track is null)
+                const emptySenders = pc.getSenders().filter(sender => sender.track === null);
+                console.log('Found empty senders:', emptySenders.length);
+                
+                const transceivers = pc.getTransceivers();
+                for (let transceiver of transceivers) {
+                    if (transceiver.direction === 'sendrecv' || transceiver.direction === 'sendonly') {
+                        if (transceiver.sender && transceiver.sender.track === null) {
+                            // This looks like our audio transceiver that was created in start()
+                            targetAudioSender = transceiver.sender;
+                            console.log('Found empty audio transceiver sender');
+                            break;
+                        }
+                    }
+                }
+                
+                // If no empty audio sender found, look for existing audio track sender
+                if (!targetAudioSender) {
+                    const audioSenders = pc.getSenders().filter(sender => 
+                        sender.track && sender.track.kind === 'audio'
+                    );
+                    if (audioSenders.length > 0) {
+                        targetAudioSender = audioSenders[0];
+                        console.log('Found existing audio track sender');
+                    }
+                }
+                
+                if (targetAudioSender) {
+                    console.log('Replacing track on audio sender...');
+                    await targetAudioSender.replaceTrack(clientAudioTrack);
+                    audioSender = targetAudioSender;
+                    console.log('Audio track replaced successfully - NO RENEGOTIATION');
+                } else {
+                    // Last resort: add new track (may cause renegotiation)
+                    console.log('No suitable audio sender found, adding new track...');
+                    audioSender = pc.addTrack(clientAudioTrack, clientAudioStream);
+                    console.log('Audio track added - this may cause renegotiation');
+                }
+            } else {
+                console.log('PC not connected yet, track will be added when connection is established');
+            }
+            
+            microphoneEnabled = true;
+            micButton.textContent = 'Disable Microphone';
+            micButton.style.backgroundColor = '#dc3545'; // Red when enabled
+            micButton.disabled = false;
+            if (micStatus) {
+                micStatus.textContent = 'Mic: Enabled';
+                micStatus.style.color = '#28a745'; // Green
+            }
+            
+            console.log('Microphone enabled successfully');
+            
+            // Handle track ended event
+            clientAudioTrack.addEventListener('ended', function() {
+                console.log('Audio track ended');
+                disableMicrophone();
+            });
+            
+        } catch (error) {
+            console.error('Error accessing microphone:', error);
+            console.error('Error details:', error.name, error.message);
+            
+            micButton.textContent = 'Enable Microphone';
+            micButton.disabled = false;
+            
+            if (micStatus) {
+                micStatus.textContent = 'Mic: Error - ' + error.message;
+                micStatus.style.color = '#dc3545'; // Red
+            }
+            
+            let errorMessage = 'Could not access microphone. ';
+            if (error.name === 'NotAllowedError') {
+                errorMessage += 'Permission denied. Please allow microphone access and try again.';
+            } else if (error.name === 'NotFoundError') {
+                errorMessage += 'No microphone found. Please connect a microphone and try again.';
+            } else if (error.name === 'NotSupportedError') {
+                errorMessage += 'Microphone not supported by this browser.';
+            } else {
+                errorMessage += 'Error: ' + error.message;
+            }
+            alert(errorMessage);
+        }
+    } else {
+        console.log('Disabling microphone...');
+        disableMicrophone();
+    }
+}
+
+// Function to disable microphone
+function disableMicrophone() {
+    const micButton = document.getElementById('toggle-microphone');
+    const micStatus = document.getElementById('microphone-status');
+    
+    if (clientAudioTrack) {
+        clientAudioTrack.stop();
+        clientAudioTrack = null;
+    }
+    
+    if (clientAudioStream) {
+        clientAudioStream.getTracks().forEach(track => track.stop());
+        clientAudioStream = null;
+    }
+    
+    if (audioSender && pc) {
+        //Use replaceTrack(null) instead of removeTrack to avoid renegotiation
+        console.log('Replacing audio track with null (disabling)');
+        audioSender.replaceTrack(null).then(() => {
+            console.log('Audio track disabled successfully - NO RENEGOTIATION');
+        }).catch(error => {
+            console.error('Error disabling audio track:', error);
+        });
+        
+        // Keep the sender reference - don't set to null
+        // audioSender = null; // ← DON'T DO THIS - keep sender for future replaceTrack calls
+    }
+    
+    microphoneEnabled = false;
+    micButton.textContent = 'Enable Microphone';
+    micButton.style.backgroundColor = '#007bff'; // Blue when disabled
+    if (micStatus) {
+        micStatus.textContent = 'Mic: Disabled';
+        micStatus.style.color = '#6c757d'; // Gray
     }
 }

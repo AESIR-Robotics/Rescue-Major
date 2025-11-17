@@ -19,6 +19,7 @@ class Publisher(Node):
         self.vision_pub = self.create_publisher(String, "commands_for_vision", 10)
         self.dc_motors_pub = self.create_publisher(Float32MultiArray, "commands_for_dc_motors", 10)
         self.webrtc_pub = self.create_publisher(String, "commands_for_webrtc", 10)
+        self.audio_pub = self.create_publisher(String, "audio_commands", 10)
         logger.info("Publisher node initialized")
 
     def publish(self, data):
@@ -43,6 +44,11 @@ class Publisher(Node):
             msg.data = data.split(":")[1]
             self.webrtc_pub.publish(msg)
             logger.info(f"Published WebRTC command: {msg.data}")
+        elif topic == "audio":
+            msg = String()
+            msg.data = data.split(":")[1]
+            self.audio_pub.publish(msg)
+            logger.info(f"Published audio command: {msg.data}")
         else:
             logger.warning(f"Unknown topic: {topic}")
     
