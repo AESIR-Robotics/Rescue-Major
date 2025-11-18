@@ -31,16 +31,19 @@ class MultiDetectionNode(Node):
             self.get_logger().error(f"No se encontró el modelo en: {model_path}")
             self.model = None
         else:
-            self.model = YOLO(model_path).to('cuda')
+            #self.model = YOLO(model_path).to('cuda')
+            self.model = YOLO(model_path)
             self.get_logger().info(f"Modelo cargado desde: {model_path}")
 
         # Carpeta para guardar imágenes
-        self.image_path = os.path.join(script_dir, "../../share/vision/qr_videos")
+        self.image_path = os.path.join(script_dir, "../../../saves/vision")
         os.makedirs(self.image_path, exist_ok=True)
         self.get_logger().info(f"Carpeta de imágenes: {self.image_path}")
 
         self.images = set()
-        self.count = 0
+        self.count_qr = 0
+        self.count_hazmat = 0
+        self.detected_hazmats = set()
         self.prev_frame = None
 
         # Publisher al topico del video hacia la interfaz
@@ -129,7 +132,7 @@ class MultiDetectionNode(Node):
 
             # Show image
             #cv2.imshow("Multi Detection Viewer", frame)
-            #key = cv2.waitKey(1) & 0xFF
+            key = cv2.waitKey(1) & 0xFF
 
             frame = self.bridge.cv2_to_imgmsg(frame, "bgr8")
 
@@ -167,7 +170,7 @@ class MultiDetectionNode(Node):
 
             if barcodeData not in self.images:
                 self.images.add(barcodeData)
-                self.take_picture(barcodeData, frame)
+                self.take_picture(barcodeData, frame, "qr")
 
         return frame
 
@@ -181,6 +184,10 @@ class MultiDetectionNode(Node):
             cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
             cv2.putText(frame, f'{label} {conf:.2f}', (x1, y1 - 10),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+            
+            if label not in self.detected_hazmats:
+                self.take_picture(label, frame, "hazmat")
+                self.detected_hazmats.add(label)
         return frame
 
     def detect_motion(self, frame):
@@ -206,15 +213,26 @@ class MultiDetectionNode(Node):
         return frame
 
     # Guardar QR detectado
-    def take_picture(self, name, frame):
+    def take_picture(self, name, frame, file):
         now = datetime.now().strftime("%Y%m%d-%H%M%S")
-        img_name = os.path.join(self.image_path, f"image_{self.count}_{now}.jpg")
-        txt_name = os.path.join(self.image_path, f"image_{self.count}_{now}.txt")
-        self.count += 1
+
+        if file == "qr":
+            self.get_logger().info(self.image_path)
+            image_path = os.path.join(self.image_path, "qr_images")
+            count = self.count_qr
+            self.count_qr += 1
+        elif file == "hazmat":
+            self.get_logger().info(self.image_path)
+            image_path = os.path.join(self.image_path, "hazmat_images")
+            count = self.count_hazmat
+            self.count_hazmat += 1
+
+        img_name = os.path.join(image_path, f"image_{count}_{now}.jpg")
+        txt_name = os.path.join(image_path, f"image_{count}_{now}.txt")
         cv2.imwrite(img_name, frame)
         with open(txt_name, "w") as f:
             f.write(name)
-        self.get_logger().info(f"QR detectado y guardado: {name}")
+        self.get_logger().info(f"Detectado y guardado: {name}")
 
 
 def main(args=None):

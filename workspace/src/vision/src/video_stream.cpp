@@ -13,7 +13,7 @@ class VideoStreamPublisher : public rclcpp::Node {
 public:
     VideoStreamPublisher()
     : Node("video_stream_publisher") {
-        this->declare_parameter<bool>("enable_jetson",true);
+        this->declare_parameter<bool>("enable_jetson",false);
         this->declare_parameter<std::vector<int>>("camera_devices",{0, 2, 4}); // add more device indices here
         std::vector<long int> camera_devices_long;
         this->get_parameter("enable_jetson", enable_jetson);
