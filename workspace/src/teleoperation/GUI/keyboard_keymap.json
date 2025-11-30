@@ -4,7 +4,7 @@
     "a": "dc_motors:-1,1",
     "s": "dc_motors:-1,-1",
     "e": "dc_motors:0,0",
-    "o": "webrtc:start_audio",
-    "p": "webrtc:stop_audio"
+    "o": "webrtc:toggle_audio",
+    "p": "audio:toggle_audio"
 }
   

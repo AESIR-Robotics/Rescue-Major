@@ -54,6 +54,8 @@ install(TARGETS
 install(PROGRAMS
   scripts/command_server.py
   scripts/server.py
+  scripts/audio_reproducer.py
+  scripts/test_audio.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

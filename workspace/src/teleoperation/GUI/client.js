@@ -516,13 +516,7 @@ async function toggleMicrophone() {
         }
         
         const helpMessage = `
-Microphone access is blocked because this site is not using HTTPS.
-
-For local development, start Opera with:
-
-opera --unsafely-treat-insecure-origin-as-secure=http://${location.hostname}:${location.port} --user-data-dir=/tmp/opera_dev
-
-Or go to opera://flags/ and add this URL to "Insecure origins treated as secure"
+            Microphone access is blocked because this site is not using HTTPS.
         `;
         
         alert(helpMessage);
