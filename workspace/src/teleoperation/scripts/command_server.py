@@ -44,11 +44,6 @@ class Publisher(Node):
             msg.data = data.split(":")[1]
             self.webrtc_pub.publish(msg)
             logger.info(f"Published WebRTC command: {msg.data}")
-        elif topic == "audio":
-            msg = String()
-            msg.data = data.split(":")[1]
-            self.audio_pub.publish(msg)
-            logger.info(f"Published audio command: {msg.data}")
         else:
             logger.warning(f"Unknown topic: {topic}")
     

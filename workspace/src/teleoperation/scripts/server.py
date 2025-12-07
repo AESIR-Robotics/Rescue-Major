@@ -23,6 +23,8 @@ import numpy as np
 import subprocess
 import signal
 
+from audio_reproducer import AudioReproducer
+
 # Setting up logging and global variables
 ROOT = os.path.dirname(__file__)
 
@@ -62,17 +64,13 @@ class Intermediate(Node):
         # Store main event loop reference for cross-thread calls
         self.main_loop = None
 
-        # Publisher para audio del cliente
-        self.client_audio_publisher = self.create_publisher(Int16MultiArray, "client_audio", 10)
-        self.audio_receive_buffer = []
-        self.audio_receive_lock = threading.Lock()
-        self.is_receiving_client_audio = False
-        self.last_client_audio_time = 0
-        self.client_audio_timeout = 0.5  # 500ms timeout
-
-        # Hilo para procesar audio del cliente
-        self.client_audio_thread = threading.Thread(target=self.client_audio_processor, daemon=True)
-        self.client_audio_thread.start()
+        # AudioReproducer instance for direct playback
+        self.audio_reproducer = AudioReproducer(sample_rate=48000, channels=1, chunk_size=960)
+        self.audio_reproducer_started = False
+        self.audio_reproducer_enabled = False  # Manual control flag
+        self.audio_reproducer_lock = threading.Lock()
+        
+        logger.info("AudioReproducer instance created (manual control mode)")
 
         self.preallocate_latest_images()
 
@@ -91,62 +89,27 @@ class Intermediate(Node):
 
         logger.info("Intermediate Node initialized in %s mode", self.mode)
 
-    def receive_client_audio(self, audio_data):
-        """Recibe datos de audio del cliente y los agrega al buffer"""
-        current_time = time.time()
+    def receive_client_audio(self, audio_data_float32):
+        """
+        Receive float32 audio from WebRTC client and feed directly to AudioReproducer.
+        Only plays if client audio playback is enabled.
         
-        with self.audio_receive_lock:
-            if len(audio_data) > 0:
-                # Detectar si hay contenido de audio real (no solo silencio)
-                has_audio_content = any(abs(sample) > 100 for sample in audio_data)
-                
-                if has_audio_content:
-                    self.audio_receive_buffer.append(audio_data)
-                    self.last_client_audio_time = current_time
-                    
-                    if not self.is_receiving_client_audio:
-                        self.is_receiving_client_audio = True
-                        logger.info("Cliente audio detection started - receiving audio from client")
-                else:
-                    # Solo silencio - verificar timeout
-                    if self.is_receiving_client_audio and (current_time - self.last_client_audio_time) > self.client_audio_timeout:
-                        self.is_receiving_client_audio = False
-                        logger.info("Cliente audio detection stopped - no audio from client")
-
-    def client_audio_processor(self):
-        """Hilo para procesar el audio recibido del cliente"""
-        while True:
-            try:
-                current_time = time.time()
-                
-                with self.audio_receive_lock:
-                    # Verificar timeout de audio del cliente
-                    if self.is_receiving_client_audio and (current_time - self.last_client_audio_time) > self.client_audio_timeout:
-                        self.is_receiving_client_audio = False
-                        logger.info("Client audio stream timeout - client stopped sending audio")
-                    
-                    # Procesar buffer de audio si hay datos
-                    if self.audio_receive_buffer:
-                        audio_data = self.audio_receive_buffer.pop(0)
-                        self.publish_client_audio(audio_data)
-                
-                # Pequeña pausa para no sobrecargar el CPU
-                time.sleep(0.01)  # 10ms
-                
-            except Exception as e:
-                logger.error(f"Error in client audio processor: {e}")
-                time.sleep(0.1)
-
-    def publish_client_audio(self, audio_data):
-        """Publica los datos de audio del cliente al tópico ROS"""
-        try:
-            if self.is_receiving_client_audio:
-                msg = Int16MultiArray()
-                msg.data = audio_data.tolist() if hasattr(audio_data, 'tolist') else list(audio_data)
-                self.client_audio_publisher.publish(msg)
-                logger.debug(f"Published client audio data: {len(audio_data)} samples")
-        except Exception as e:
-            logger.error(f"Error publishing client audio data: {e}")
+        Args:
+            audio_data_float32: numpy array of float32 samples in range [-1.0, 1.0]
+        """
+        with self.audio_reproducer_lock:
+            # Only process if client audio playback is enabled
+            if not self.audio_reproducer_enabled:
+                return  # Discard audio silently
+            
+            # Start reproducer on first audio data (if enabled)
+            if not self.audio_reproducer_started:
+                logger.info("Starting AudioReproducer on first client audio (playback enabled)")
+                self.audio_reproducer.start()
+                self.audio_reproducer_started = True
+        
+        # Feed audio directly to reproducer
+        self.audio_reproducer.feed_audio(audio_data_float32)
     
     def set_main_loop(self, loop):
         """Set reference to main asyncio event loop."""
@@ -178,16 +141,44 @@ class Intermediate(Node):
     def webrtc_command_callback(self, msg):
         """
         Callback function to process WebRTC commands.
+        
+        Commands:
+          - toggle_server_audio: Enable/disable server microphone capture (send to client)
+          - toggle_client_audio: Enable/disable client audio playback (local speakers)
         """
         command = msg.data
         logger.info(f"Received WebRTC command: {command}")
     
-        if command == "start_audio":
-            logger.info("Processing start_audio command")
-            self._direct_start_audio()
-        elif command == "stop_audio":
-            logger.info("Processing stop_audio command")
-            self._direct_stop_audio()
+        if command == "toggle_server_audio":
+            # Toggle server microphone (captures and sends to client)
+            logger.info("Processing toggle_server_audio command")
+            if len(self.audio_tracks) > 0:
+                # Check if any track is enabled
+                any_enabled = any(track.audio_enabled for track in self.audio_tracks)
+                if any_enabled:
+                    logger.info("Disabling server audio capture")
+                    self._direct_stop_audio()
+                else:
+                    logger.info("Enabling server audio capture")
+                    self._direct_start_audio()
+            else:
+                logger.warning("No audio tracks available for server audio")
+        
+        elif command == "toggle_client_audio":
+            # Toggle client audio playback (plays client audio locally)
+            logger.info("Processing toggle_client_audio command")
+            with self.audio_reproducer_lock:
+                if self.audio_reproducer_enabled:
+                    logger.info("Disabling client audio playback")
+                    self.audio_reproducer_enabled = False
+                    if self.audio_reproducer_started:
+                        self.audio_reproducer.stop()
+                        self.audio_reproducer_started = False
+                else:
+                    logger.info("Enabling client audio playback")
+                    self.audio_reproducer_enabled = True
+                    # Will start on first audio data
+        
         else:
             logger.warning(f"Unknown WebRTC command: {command}")
     
@@ -793,22 +784,65 @@ async def offer(request):
             asyncio.create_task(handle_client_audio_track(track))
 
     async def handle_client_audio_track(track):
-        """Process incoming audio frames from client"""
+        """Process incoming audio frames from client (Opus decoded to float32)"""
         log_info("Starting client audio track handler")
+        frame_count = 0
         try:
             while True:
                 frame = await track.recv()
-                if frame:
-                    # Convert audio frame to numpy array
-                    audio_data = frame.to_ndarray()
-                    # Flatten to 1D array for processing
-                    audio_samples = audio_data.flatten().astype(np.int16)
-                    # Send to intermediate node for ROS publishing
-                    intermediate_node.receive_client_audio(audio_samples)
-                else:
+                if not frame:
                     break
+                
+                frame_count += 1
+                
+                # Get audio as numpy array (aiortc/av returns float32 from Opus decoder)
+                audio_data = frame.to_ndarray()
+                
+                # Log format on first frame
+                if frame_count == 1:
+                    log_info(f"Client audio format: dtype={audio_data.dtype}, shape={audio_data.shape}, range=[{audio_data.min():.6f}, {audio_data.max():.6f}]")
+                
+                # Normalize shape to 1D array
+                if audio_data.ndim == 2:
+                    # Handle (channels, samples) or (samples, channels) formats
+                    if audio_data.shape[0] < audio_data.shape[1]:
+                        # Likely (channels, samples) - transpose and take first channel
+                        audio_data = audio_data[0, :]
+                    else:
+                        # Likely (samples, channels) - take first channel
+                        audio_data = audio_data[:, 0]
+                elif audio_data.ndim > 2:
+                    audio_data = audio_data.flatten()
+                
+                # Ensure float32 (Opus decoder should already output this)
+                if audio_data.dtype != np.float32:
+                    if np.issubdtype(audio_data.dtype, np.integer):
+                        # If integer, normalize to float32 [-1.0, 1.0]
+                        if audio_data.dtype == np.int16:
+                            audio_data = audio_data.astype(np.float32) / 32768.0
+                        elif audio_data.dtype == np.int32:
+                            audio_data = audio_data.astype(np.float32) / 2147483648.0
+                        else:
+                            audio_data = audio_data.astype(np.float32)
+                        log_info(f"Converted integer audio to float32")
+                    else:
+                        audio_data = audio_data.astype(np.float32)
+                
+                # Feed float32 audio directly to reproducer (no normalization/clipping)
+                intermediate_node.receive_client_audio(audio_data)
+                
+                # Log stats periodically
+                if frame_count % 100 == 0:
+                    rms = np.sqrt(np.mean(audio_data ** 2))
+                    peak = np.max(np.abs(audio_data))
+                    log_info(f"Client audio stats [frame {frame_count}]: RMS={rms:.4f}, Peak={peak:.4f}")
+                    
         except Exception as e:
             log_info(f"Client audio track ended or error: {e}")
+            import traceback
+            log_info(f"Traceback: {traceback.format_exc()}")
+        finally:
+            log_info(f"Client audio track handler finished (processed {frame_count} frames)")
 
     @pc.on("datachannel")
     def on_datachannel(channel):
@@ -823,10 +857,6 @@ async def offer(request):
             if isinstance(message, str) and message.startswith("latency"):
                 intermediate_node.rtt = int(message[7:])
                 #log_info("Updated RTT to %d", intermediate_node.rtt)
-            if isinstance(message, bytes):
-                # Process client audio data
-                audio_data = np.frombuffer(message, dtype=np.int16)
-                intermediate_node.receive_client_audio(audio_data)
 
     @pc.on("iceconnectionstatechange")
     async def on_iceconnectionstatechange():

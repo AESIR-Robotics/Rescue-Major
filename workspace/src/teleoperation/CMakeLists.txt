@@ -23,9 +23,18 @@ target_link_libraries(command_server
     pthread
 )
 
-# Include websocketpp headers (header-only library)
+# Include websocketpp headers
+find_path(WEBSOCKETPP_INCLUDE_DIR
+  NAMES websocketpp/config/asio_no_tls.hpp
+  PATHS /usr/include /usr/local/include
+)
+
+if(NOT WEBSOCKETPP_INCLUDE_DIR)
+  message(FATAL_ERROR "websocketpp headers not found. Install libwebsocketpp-dev or set WEBSOCKETPP_INCLUDE_DIR")
+endif()
+
 target_include_directories(command_server PRIVATE
-    /usr/include/websocketpp
+  ${WEBSOCKETPP_INCLUDE_DIR}
 )
 
 ament_target_dependencies(command_server
@@ -55,7 +64,6 @@ install(PROGRAMS
   scripts/command_server.py
   scripts/server.py
   scripts/audio_reproducer.py
-  scripts/test_audio.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
