@@ -4,5 +4,8 @@ workspace/GUI/GUI/com_vars.json
 /workspace/install
 /workspace/log
 /venv
+
 /workspace/.vscode/
+**.vscode/** 
+
 __pycache__
