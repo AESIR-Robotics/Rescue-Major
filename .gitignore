@@ -5,4 +5,4 @@ workspace/GUI/GUI/com_vars.json
 /workspace/log
 /venv
 /workspace/.vscode/
-
+__pycache__
