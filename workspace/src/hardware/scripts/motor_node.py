@@ -12,15 +12,28 @@ class MotorNode(Node):
         # Configuración Serial (ajusta el puerto según tu Raspberry/PC)
         self.serial_port = "/dev/ttyUSB0"   # o "/dev/serial0" en la Raspberry
         self.baud_rate = 115200
-        self.ser = serial.Serial(self.serial_port, self.baud_rate, timeout=1)
+        self.ser = None
+        self.serial_available = False
 
-        # Lock para acceso seguro al puerto serie
+        # Intentar abrir el puerto serial; si falla, seguir en modo solo-lectura
+        try:
+            self.ser = serial.Serial(self.serial_port, self.baud_rate, timeout=1)
+            self.serial_available = True
+            self.get_logger().info(f"Serial abierto en {self.serial_port} @ {self.baud_rate}")
+        except Exception as e:
+            self.ser = None
+            self.serial_available = False
+            self.get_logger().warning(
+                f"Dispositivo serial no disponible en {self.serial_port}: {e}. Ejecutando en modo lectura (solo imprime topic)."
+            )
+
+        # Lock para acceso seguro al puerto serie (aunque no esté disponible)
         self.serial_lock = threading.Lock()
 
         # recibir velocidades
         self.subscription = self.create_subscription(
             Float32MultiArray,
-            'commands_for_dc_motors',
+            '/dc_motors',
             self.cmd_vel_callback,
             10
         )
@@ -37,6 +50,11 @@ class MotorNode(Node):
             self.send_data(command, value)
 
     def send_data(self, command, number):
+        # Si no hay serial disponible, no lanzar error: solo informar qué se habría enviado
+        if not self.serial_available or self.ser is None:
+            self.get_logger().info(f"(No serial) Se intentó enviar - cmd: {command}, valor: {number}")
+            return
+
         try:
             data_to_send = bytearray([
                 command,
@@ -54,7 +72,9 @@ class MotorNode(Node):
         # Recibe las velocidades y las envía al microcontrolador vía serial
         motor_der, motor_izq = msg.data
         self.get_logger().info(f'Recibido: Izq: {motor_izq}, Der: {motor_der}')
-        self.motors(int(motor_izq * 100), int(motor_der * 100))
+        # Siempre imprimir lo recibido. Solo enviar a los motores si el serial está disponible.
+        if self.serial_available:
+            self.motors(int(motor_izq * 100), int(motor_der * 100))
 
 def main():
     rclpy.init()

@@ -1,0 +1,4 @@
+{
+  "0": ["topic", "/web_rtc_commands", "toggle_client_audio"],
+  "1": ["topic", "/web_rtc_commands", "toggle_server_audio"]
+}

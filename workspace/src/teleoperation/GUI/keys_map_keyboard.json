@@ -1,0 +1,6 @@
+{
+  "o": ["topic", "/web_rtc_commands", "toggle_client_audio"],
+  "p": ["topic", "/web_rtc_commands", "toggle_server_audio"],
+  " ": ["topic", "/dc_motors", [0.0, 0.0]],
+  "1": ["param", "/vision_camera_modes", 1]
+}

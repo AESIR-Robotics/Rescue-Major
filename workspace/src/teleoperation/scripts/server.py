@@ -84,7 +84,7 @@ class Intermediate(Node):
         # Add subscriber for WebRTC commands
         self.webrtc_command_subscriber = self.create_subscription(
             String, 
-            "commands_for_webrtc", 
+            "/web_rtc_commands", 
             self.webrtc_command_callback, 
             10
         )
