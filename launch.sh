@@ -2,11 +2,10 @@
 set -e
 
 # Activate environment
-cd ..
 source /opt/ros/humble/setup.bash
 source venv/bin/activate
 
-#sudo chmod 666 /dev/ttyUSB0
+sudo chmod 666 /dev/ttyUSB0
 
 cd workspace
 source install/setup.bash
@@ -40,7 +39,7 @@ sleep 2
 # Pane 2 (bottom-right): run teleoperation server.py
 tmux select-pane -t 2
 tmux send-keys "ros2 run hardware dc_motors" Enter
-sleep 2
+sleep 1
 
 # Pane 2 (bottom-right): run teleoperation server.py
 tmux select-pane -t 3
