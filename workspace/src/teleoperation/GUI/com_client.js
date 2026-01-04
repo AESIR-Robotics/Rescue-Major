@@ -3,28 +3,32 @@ class InputHandler {
     this.deadzone = deadzone;
     this.keys = new Set();
     this.gamepadIndex = null;
+    this._rafId = null;
+    this.prevButtonsByPad = {};
+    this.listeners = Object.create(null); // simple event emitter: buttonDown, buttonUp, axis, gamepadConnected, gamepadDisconnected
     this._setupKeyboard();
     this._setupGamepadEvents();
+    this._startGamepadPoll();
   }
 
   _setupKeyboard() {
-    window.addEventListener('keydown', (e) => {
-      const k = e.key.toLowerCase();
-      this.keys.add(k);
-    });
-    window.addEventListener('keyup', (e) => {
-      const k = e.key.toLowerCase();
-      this.keys.delete(k);
-    });
+    this._onKeyDown = (e) => { const k = (e.key || '').toLowerCase(); this.keys.add(k); };
+    this._onKeyUp = (e) => { const k = (e.key || '').toLowerCase(); this.keys.delete(k); };
+    window.addEventListener('keydown', this._onKeyDown);
+    window.addEventListener('keyup', this._onKeyUp);
   }
 
   _setupGamepadEvents() {
-    window.addEventListener('gamepadconnected', (e) => {
+    this._onGamepadConnected = (e) => {
       this.gamepadIndex = e.gamepad.index;
-    });
-    window.addEventListener('gamepaddisconnected', (e) => {
+      this._emit('gamepadConnected', e.gamepad.index);
+    };
+    this._onGamepadDisconnected = (e) => {
       if (this.gamepadIndex === e.gamepad.index) this.gamepadIndex = null;
-    });
+      this._emit('gamepadDisconnected', e.gamepad.index);
+    };
+    window.addEventListener('gamepadconnected', this._onGamepadConnected);
+    window.addEventListener('gamepaddisconnected', this._onGamepadDisconnected);
   }
 
   _applyDeadzone(v) {
@@ -42,6 +46,76 @@ class InputHandler {
     // Some controllers use inverted y; keep raw values as requested
     const active = x !== 0 || y !== 0;
     return { x, y, active };
+  }
+
+  // Simple event emitter API
+  on(name, cb) {
+    if (!this.listeners[name]) this.listeners[name] = [];
+    this.listeners[name].push(cb);
+  }
+  off(name, cb) {
+    if (!this.listeners[name]) return;
+    const i = this.listeners[name].indexOf(cb);
+    if (i >= 0) this.listeners[name].splice(i, 1);
+  }
+  _emit(name, ...args) {
+    const ls = this.listeners[name];
+    if (!ls) return;
+    for (let i = 0; i < ls.length; i++) {
+      try { ls[i](...args); } catch (e) { console.error('InputHandler listener error', e); }
+    }
+  }
+
+  _startGamepadPoll() {
+    if (this._rafId != null) return;
+    const poll = () => {
+      this._pollGamepads();
+      this._rafId = requestAnimationFrame(poll);
+    };
+    this._rafId = requestAnimationFrame(poll);
+  }
+  _stopGamepadPoll() {
+    if (this._rafId != null) {
+      cancelAnimationFrame(this._rafId);
+      this._rafId = null;
+    }
+  }
+
+  _pollGamepads() {
+    const gps = navigator.getGamepads ? navigator.getGamepads() : [];
+    for (let i = 0; i < gps.length; i++) {
+      const gp = gps[i];
+      if (!gp) continue;
+      const id = String(i);
+      if (!this.prevButtonsByPad[id]) this.prevButtonsByPad[id] = [];
+      gp.buttons.forEach((b, idx) => {
+        const was = !!this.prevButtonsByPad[id][idx];
+        const now = !!b.pressed;
+        if (now && !was) {
+          this._emit('buttonDown', i, idx);
+        } else if (!now && was) {
+          this._emit('buttonUp', i, idx);
+        }
+        this.prevButtonsByPad[id][idx] = now;
+      });
+      // emit axis update per pad (left stick only)
+      const x = this._applyDeadzone(gp.axes[0] || 0);
+      const y = this._applyDeadzone(gp.axes[1] || 0);
+      this._emit('axis', { pad: i, x, y, active: x !== 0 || y !== 0 });
+    }
+  }
+
+  dispose() {
+    try {
+      window.removeEventListener('keydown', this._onKeyDown);
+      window.removeEventListener('keyup', this._onKeyUp);
+    } catch (e) { console.error('Error removing keyboard listeners', e); }
+    try {
+      window.removeEventListener('gamepadconnected', this._onGamepadConnected);
+      window.removeEventListener('gamepaddisconnected', this._onGamepadDisconnected);
+    } catch (e) { console.error('Error removing gamepad listeners', e); }
+    this._stopGamepadPoll();
+    this.listeners = Object.create(null);
   }
 
   _readKeyboard() {
@@ -133,7 +207,6 @@ class RobotComms {
     this.bindingsKeyboard = {}; // precreated bindings for keyboard
     this.bindingsController = {}; // precreated bindings for controller
     this.topicPublishers = {};
-    this.servicesSet = new Set();
     this.params = {};
     this.services = {};
     this._loadKeymaps();
@@ -156,7 +229,7 @@ class RobotComms {
       console.info('Keymaps loaded (keyboard/controller)', Object.keys(this.keymapKeyboard).length, Object.keys(this.keymapController).length);
       // Prepare publishers/services/params based on entries (precreate instances)
       this._prepareBindings();
-      try { if (this.onInfoMessage) this.onInfoMessage(`Keymaps loaded: keyboard=${Object.keys(this.keymapKeyboard).length}, controller=${Object.keys(this.keymapController).length}`); } catch (e) {}
+      try { if (this.onInfoMessage) this.onInfoMessage(`Keymaps loaded: keyboard=${Object.keys(this.keymapKeyboard).length}, controller=${Object.keys(this.keymapController).length}`); } catch (e) { console.error('onInfoMessage handler error', e); }
     }).catch((e) => { console.warn('Error loading keymaps', e); this.keymapKeyboard = {}; this.keymapController = {}; });
   }
 
@@ -169,12 +242,18 @@ class RobotComms {
       const value = entry.length > 2 ? entry[2] : undefined;
 
       if (mode === 'topic') {
-        // create publisher based on known targets or inferred type
+        // create or reuse publisher based on known targets or inferred type
         let msgType = 'std_msgs/String';
         if (target === '/dc_motors') msgType = 'std_msgs/Float32MultiArray';
         else if (Array.isArray(value)) msgType = 'std_msgs/Float32MultiArray';
-        const pub = new ROSLIB.Topic({ ros: this.ros, name: target, messageType: msgType });
-        this.topicPublishers[target] = pub;
+        // reuse existing canonical publisher when available (avoid duplicates)
+        let pub = this.topicPublishers[target];
+        if (!pub) {
+          // prefer the dedicated `this.publisher` for /dc_motors if already created
+          if (target === '/dc_motors' && this.publisher) pub = this.publisher;
+          else pub = new ROSLIB.Topic({ ros: this.ros, name: target, messageType: msgType });
+          this.topicPublishers[target] = pub;
+        }
         sourceBindings[key] = { mode: 'topic', target, value, instance: pub, msgType };
       } else if (mode === 'service') {
         const svc = new ROSLIB.Service({ ros: this.ros, name: target, serviceType: 'std_srvs/Trigger' });
@@ -198,7 +277,7 @@ class RobotComms {
     console.info('Prepared bindings', Object.keys(this.bindingsKeyboard).length, Object.keys(this.bindingsController).length);
     try {
       if (this.onInfoMessage) this.onInfoMessage(`Prepared bindings: keyboard=[${Object.keys(this.bindingsKeyboard).join(', ')}] controller=[${Object.keys(this.bindingsController).join(', ')}]`);
-    } catch (e) {}
+    } catch (e) { console.error('onInfoMessage handler error', e); }
   }
 
   // Send a mapped key. JSON format: key: [ target_string, value ]
@@ -323,10 +402,10 @@ class RobotComms {
   dispose() {
     try {
       if (this.infoSub) this.infoSub.unsubscribe();
-    } catch (e) {}
+    } catch (e) { console.error('Error unsubscribing infoSub', e); }
     try {
       if (this.ros) this.ros.close();
-    } catch (e) {}
+    } catch (e) { console.error('Error closing ROS connection', e); }
   }
 }
 
@@ -395,32 +474,15 @@ class RobotComms {
     }
   });
 
-  // Controller polling for button presses (uses controller bindings)
-  let prevButtonsByPad = {};
-  function pollGamepads() {
-    const gps = navigator.getGamepads ? navigator.getGamepads() : [];
-    for (let i = 0; i < gps.length; i++) {
-      const gp = gps[i];
-      if (!gp) continue;
-      const id = String(i);
-      if (!prevButtonsByPad[id]) prevButtonsByPad[id] = [];
-      gp.buttons.forEach((b, idx) => {
-        const was = !!prevButtonsByPad[id][idx];
-        const now = !!b.pressed;
-        if (now && !was) {
-          addMessage(`Detected controller button: ${idx}`);
-          const res = comms.sendMappedKey(String(idx), 'controller');
-          if (res && res.ok) {
-            const b = (comms.bindingsController && comms.bindingsController[String(idx)]) || {};
-            addMessage(`Command sent (controller): ${b.mode || 'unknown'} ${b.target || ''} ${JSON.stringify(b.value !== undefined ? b.value : '')}`);
-          } else if (res && res.reason) addMessage(`Controller button ${idx} not mapped: ${res.reason}`);
-        }
-        prevButtonsByPad[id][idx] = now;
-      });
-    }
-    requestAnimationFrame(pollGamepads);
-  }
-  requestAnimationFrame(pollGamepads);
+  // Controller button events are emitted by `input` (InputHandler).
+  input.on('buttonDown', (padIndex, buttonIdx) => {
+    addMessage(`Detected controller button: ${buttonIdx}`);
+    const res = comms.sendMappedKey(String(buttonIdx), 'controller');
+    if (res && res.ok) {
+      const b = (comms.bindingsController && comms.bindingsController[String(buttonIdx)]) || {};
+      addMessage(`Command sent (controller): ${b.mode || 'unknown'} ${b.target || ''} ${JSON.stringify(b.value !== undefined ? b.value : '')}`);
+    } else if (res && res.reason) addMessage(`Controller button ${buttonIdx} not mapped: ${res.reason}`);
+  });
 
   let isControlEnabled = false;
   let intervalId = null;
@@ -452,7 +514,7 @@ class RobotComms {
 
   // Ensure we always send heartbeat when enabled even if page unloads
   window.addEventListener('beforeunload', () => {
-    try { comms.publishMotors(0.0, 0.0); } catch (e) {}
+    try { comms.publishMotors(0.0, 0.0); } catch (e) { console.error('Error publishing motors on unload', e); }
   });
 
 })();
