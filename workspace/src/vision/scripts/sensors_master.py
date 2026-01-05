@@ -6,6 +6,7 @@ from rclpy.node import Node
 from std_msgs.msg import String
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
+from vision.srv import Command
 from pyzbar import pyzbar
 from ultralytics import YOLO
 import cv2
@@ -47,28 +48,27 @@ class MultiDetectionNode(Node):
         self.prev_frame = None
 
         # Publisher al topico del video hacia la interfaz
-        self.publisher = self.create_publisher(Image, 'cam/sensors', 10)
+        self.publisher = self.create_publisher(Image, 'cam_sensors/image', 10)
 
         # Suscripción al tópico de la cámara
         self.subscription = self.create_subscription(
             Image,
-            'cam_raw/sensors',
+            'cam_sensors/image_raw',
             self.image_callback,
             10
         )
 
         # Suscripción para recibir comandos
-        self.command_subscriber = self.create_subscription(
-            String,
-            "commands_vision",
-            self.command_callback,
-            10
+        self.srv = self.create_service(
+            Command,
+            'command_vision_sensors',
+            self.command_callback
         )
 
         self.get_logger().info("Nodo MultiDetection iniciado y escuchando Commands_topic_receive")
 
     # Callback para recibir mensajes de modo
-    def command_callback(self, msg):
+    def command_callback(self, request, response):
         """
         Espera mensajes en formato:
         vision:mode,<numero_de_modo>
@@ -76,47 +76,57 @@ class MultiDetectionNode(Node):
         vision:threshold,<numero>
         Ejemplo: vision: "vision:threshold,20"
         """
-        self.get_logger().info(f"Mensaje recibido: {msg.data}")
-
-        # Hice dos if por que por alguna razon tenerlo en uno no funcionaba
-        if not msg.data.startswith("vision:mode"):
-            if not msg.data.startswith("vision:threshold"):
-                self.get_logger().debug("Mensaje ignorado: no es para vision.")
-                return
+        cmd = request.data
+        self.get_logger().info(f"Mensaje recibido: {cmd}")
 
         try:
-            _, payload = msg.data.split(":", 1)
-            parts = [p.strip() for p in payload.split(",")]
+            if cmd.lower().startswith("vision"):
+                cmd = cmd[7:]
 
+            cmd = cmd.replace(",",":")
+
+            parts = cmd.split(":")
             if len(parts) < 2:
-                self.get_logger().warn("Formato incorrecto. Se esperaban 2 valores.")
-                return
-            
-            cmd, value_str = parts[0], parts[1]
-            
-            if cmd == "mode":
-                new_mode = int(value_str)
+                response.success = False
+                response.message = "Formato inválido. Use 'vision:mode,1'"
+                return response
 
-                if new_mode < 0 or new_mode > 3:
-                    self.get_logger().warn(f"Modo {new_mode} fuera de rango (0-3).")
-                    return
-                self.mode = new_mode
-                self.get_logger().info(f"Modo actualizado a {self.mode}")
+            label = parts[0].strip().lower()
+            value_str = parts[1].strip()
+            value = int(value_str)
 
-            elif cmd == "threshold":
-                new_threshold = int(value_str)
+            # Lógica para MODO
+            if label == "mode":
+                if 0 <= value <= 3:
+                    self.mode = value
+                    response.success = True
+                    response.message = f"Modo de detección actualizado a: {self.mode}"
+                else:
+                    response.success = False
+                    response.message = "Error: Modo fuera de rango (0-3)"
 
-                if new_threshold < 0 or new_threshold > 255:
-                    self.get_logger().warn(f"Threshold {new_threshold} fuera de rango (0-255).")
-                    return
-                self.threshold = new_threshold
-                self.get_logger().info(f"Threshold actualizado a {self.threshold}")
-                
+            # Lógica para THRESHOLD (Sensibilidad de movimiento)
+            elif label == "threshold":
+                if 0 <= value <= 255:
+                    self.threshold = value
+                    response.success = True
+                    response.message = f"Umbral de movimiento ajustado a: {self.threshold}"
+                else:
+                    response.success = False
+                    response.message = "Error: Threshold fuera de rango (0-255)"
+
+            else:
+                response.success = False
+                response.message = f"Comando '{label}' no reconocido"
 
         except ValueError:
-            self.get_logger().error(f"No se pudo convertir el modo '{parts[2]}' a número.")
+            response.success = False
+            response.message = "Error: El valor debe ser un número entero"
         except Exception as e:
-            self.get_logger().error(f"Error procesando mensaje: {e}")
+            response.success = False
+            response.message = f"Error inesperado: {str(e)}"
+
+        return response
 
     # Callback para procesar la imagen según el modo
     def image_callback(self, msg):
