@@ -60,9 +60,10 @@ class AudioReproducer:
                 self.audio_flag = True
                 self.audio_thread = threading.Thread(target=self._playback_loop, daemon=True)
                 self.audio_thread.start()
-                logging.info("Audio playback thread started")
+                # logging.info("Audio playback thread started")
             else:
-                logging.warning("Audio playback already running")
+                # logging.warning("Audio playback already running")
+                pass
     
     def stop(self):
         """Stop audio playback thread"""
@@ -112,7 +113,7 @@ class AudioReproducer:
         Internal playback loop that reads from buffer and writes to ALSA.
         Converts float32 [-1.0, 1.0] to int16 PCM for ALSA.
         """
-        logging.info("Starting audio playback loop...")
+        # logging.info("Starting audio playback loop...")
         
         # Configure ALSA playback device
         try:
@@ -121,7 +122,7 @@ class AudioReproducer:
             device.setrate(self.sample_rate)
             device.setformat(alsaaudio.PCM_FORMAT_S16_LE)
             device.setperiodsize(self.chunk_size)
-            logging.info(f"ALSA configured: {self.sample_rate}Hz, {self.channels}ch, {self.chunk_size} samples/period")
+            # logging.info(f"ALSA configured: {self.sample_rate}Hz, {self.channels}ch, {self.chunk_size} samples/period")
         except Exception as e:
             logging.error(f"Error configuring ALSA device: {e}")
             self.audio_flag = False
@@ -142,7 +143,7 @@ class AudioReproducer:
                     if not playback_started:
                         if buffer_size >= self.min_buffer_size:
                             playback_started = True
-                            logging.info(f"Starting playback with {buffer_size} chunks buffered")
+                            # logging.info(f"Starting playback with {buffer_size} chunks buffered")
                     
                     if playback_started and buffer_size > 0:
                         audio_data_float = self.audio_buffer.popleft()
@@ -165,7 +166,7 @@ class AudioReproducer:
                     # Underrun: no data available but already playing
                     self.underrun_count += 1
                     self.underruns += 1
-                    
+
                     if self.underrun_count < 5:
                         # Smooth underrun with fade-out or silence
                         if self.last_audio_chunk is not None:
@@ -179,7 +180,7 @@ class AudioReproducer:
                             device.write(silence.tobytes())
                     else:
                         # Too many underruns - reset playback
-                        logging.warning(f"Multiple underruns detected - resetting playback (stats: rx={self.frames_received}, played={self.frames_played}, underruns={self.underruns})")
+                        # logging.warning(f"Multiple underruns detected - resetting playback (stats: rx={self.frames_received}, played={self.frames_played}, underruns={self.underruns})")
                         playback_started = False
                         self.underrun_count = 0
                         time.sleep(0.05)
@@ -188,15 +189,15 @@ class AudioReproducer:
                     time.sleep(0.002)  # 2ms sleep - very short
                     
             except Exception as e:
-                logging.error(f"Error in playback loop: {e}")
-                import traceback
-                logging.error(traceback.format_exc())
+                # logging.error(f"Error in playback loop: {e}")
+                # import traceback
+                # logging.error(traceback.format_exc())
                 time.sleep(0.1)
         
         # Cleanup audio device
         try:
             device.close()
-            logging.info(f"ALSA device closed (stats: rx={self.frames_received}, played={self.frames_played}, underruns={self.underruns})")
+            # logging.info(f"ALSA device closed (stats: rx={self.frames_received}, played={self.frames_played}, underruns={self.underruns})")
         except:
             pass
         

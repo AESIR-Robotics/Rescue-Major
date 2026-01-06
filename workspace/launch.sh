@@ -42,7 +42,7 @@ fi
 
 SOURCE_VENV_DIR="../venv/bin/activate"
 
-#sudo chmod 666 /dev/ttyUSB0
+sudo chmod 666 /dev/ttyUSB0
 
 ENV_CMD="bash -lc ' \
   source \"$SOURCE_VENV_DIR\" && \
@@ -69,5 +69,24 @@ tmux send-keys -t 1 "ros2 run teleoperation server.py" Enter
 tmux send-keys -t 2 "ros2 run hardware dc_motors" Enter
 tmux send-keys -t 3 "ros2 run vision video_stream_publisher" Enter
 
-# Atachar
-tmux attach-session -t "$session_name"
+# Pane 1 (bottom-left): run teleoperation command_server.py
+tmux select-pane -t 1
+tmux send-keys "ros2 run teleoperation server.py" Enter
+sleep 2
+
+# Pane 2 (bottom-right): run teleoperation server.py
+tmux select-pane -t 2
+tmux send-keys "ros2 run hardware dc_motors" Enter
+sleep 1
+
+# Pane 2 (bottom-right): run teleoperation server.py
+tmux select-pane -t 3
+tmux send-keys "ros2 run vision video_stream_publisher" Enter
+sleep 2
+
+# Optional key bindings to switch panes
+tmux bind-key -n C-a select-pane -t :.+
+tmux bind-key -n C-s select-pane -t :.-
+
+# Attach to session
+tmux -2 attach-session -t "$session_name"

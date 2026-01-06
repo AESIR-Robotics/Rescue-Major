@@ -510,7 +510,7 @@ async function toggleMicrophone() {
     // Check if getUserMedia is available
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         console.error('getUserMedia not available');
-        if (micStatus) {
+        if (micStatus) {    
             micStatus.textContent = 'Mic: Not supported (HTTP)';
             micStatus.style.color = '#dc3545'; // Red
         }
@@ -537,13 +537,15 @@ async function toggleMicrophone() {
         try {
             console.log('Requesting microphone access...');
             
-            // Request microphone access
+            // Request microphone access with explicit constraints
             clientAudioStream = await navigator.mediaDevices.getUserMedia({ 
                 audio: {
                     echoCancellation: true,
                     noiseSuppression: true,
                     autoGainControl: true,
-                    sampleRate: 48000
+                    sampleRate: { ideal: 48000, min: 44100 },
+                    channelCount: { ideal: 1 },
+                    sampleSize: { ideal: 16 }
                 }, 
                 video: false 
             });

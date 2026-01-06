@@ -5,6 +5,6 @@
     "s": "dc_motors:-1,-1",
     "e": "dc_motors:0,0",
     "o": "webrtc:toggle_server_audio",
-    "p": "webrtc:toggle_server_audio"
+    "p": "webrtc:toggle_client_audio"
 }
   

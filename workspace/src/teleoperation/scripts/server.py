@@ -22,6 +22,8 @@ from aiortc import MediaStreamTrack, RTCPeerConnection, RTCSessionDescription
 import numpy as np
 import subprocess
 import signal
+from av import VideoFrame, AudioFrame
+import av
 
 from audio_reproducer import AudioReproducer
 
@@ -784,59 +786,67 @@ async def offer(request):
             asyncio.create_task(handle_client_audio_track(track))
 
     async def handle_client_audio_track(track):
-        """Process incoming audio frames from client (Opus decoded to float32)"""
-        log_info("Starting client audio track handler")
+        """Process incoming audio frames from client (resample to float mono 48kHz)."""
+        log_info("Starting client audio track handler (with resampler)")
         frame_count = 0
+
+        # Initialize resampler to force float mono 48kHz
+        try:
+            resampler = av.AudioResampler(format='flt', layout='mono', rate=48000)
+            log_info("AudioResampler initialized: format=flt, layout=mono, rate=48000")
+        except Exception as e:
+            log_info(f"Failed to create AudioResampler: {e}")
+            resampler = None
+
         try:
             while True:
                 frame = await track.recv()
                 if not frame:
                     break
-                
+
                 frame_count += 1
-                
-                # Get audio as numpy array (aiortc/av returns float32 from Opus decoder)
-                audio_data = frame.to_ndarray()
-                
-                # Log format on first frame
-                if frame_count == 1:
-                    log_info(f"Client audio format: dtype={audio_data.dtype}, shape={audio_data.shape}, range=[{audio_data.min():.6f}, {audio_data.max():.6f}]")
-                
-                # Normalize shape to 1D array
-                if audio_data.ndim == 2:
-                    # Handle (channels, samples) or (samples, channels) formats
-                    if audio_data.shape[0] < audio_data.shape[1]:
-                        # Likely (channels, samples) - transpose and take first channel
-                        audio_data = audio_data[0, :]
+
+                # Resample/convert frame to desired format
+                try:
+                    if resampler is not None:
+                        out = resampler.resample(frame)
                     else:
-                        # Likely (samples, channels) - take first channel
-                        audio_data = audio_data[:, 0]
-                elif audio_data.ndim > 2:
-                    audio_data = audio_data.flatten()
-                
-                # Ensure float32 (Opus decoder should already output this)
-                if audio_data.dtype != np.float32:
-                    if np.issubdtype(audio_data.dtype, np.integer):
-                        # If integer, normalize to float32 [-1.0, 1.0]
-                        if audio_data.dtype == np.int16:
-                            audio_data = audio_data.astype(np.float32) / 32768.0
-                        elif audio_data.dtype == np.int32:
-                            audio_data = audio_data.astype(np.float32) / 2147483648.0
-                        else:
+                        out = frame
+                except Exception as e:
+                    log_info(f"Resampling error: {e}")
+                    out = frame
+
+                frames_to_process = out if isinstance(out, (list, tuple)) else [out]
+
+                for res_frame in frames_to_process:
+                    # Convert resampled frame to numpy array
+                    try:
+                        audio_data = res_frame.to_ndarray()
+                    except Exception as e:
+                        log_info(f"to_ndarray error: {e}")
+                        continue
+
+                    # Flatten and ensure float32
+                    if isinstance(audio_data, np.ndarray):
+                        if audio_data.ndim > 1:
+                            audio_data = audio_data.flatten()
+                        if audio_data.dtype != np.float32:
                             audio_data = audio_data.astype(np.float32)
-                        log_info(f"Converted integer audio to float32")
                     else:
-                        audio_data = audio_data.astype(np.float32)
-                
-                # Feed float32 audio directly to reproducer (no normalization/clipping)
-                intermediate_node.receive_client_audio(audio_data)
-                
-                # Log stats periodically
-                if frame_count % 100 == 0:
-                    rms = np.sqrt(np.mean(audio_data ** 2))
-                    peak = np.max(np.abs(audio_data))
-                    log_info(f"Client audio stats [frame {frame_count}]: RMS={rms:.4f}, Peak={peak:.4f}")
-                    
+                        audio_data = np.array(audio_data, dtype=np.float32)
+
+                    # Pass the cleaned, resampled float32 audio to the intermediate node
+                    intermediate_node.receive_client_audio(audio_data)
+
+                    # # Log stats periodically
+                    # if frame_count % 100 == 0:
+                    #     try:
+                    #         rms = np.sqrt(np.mean(audio_data ** 2))
+                    #         peak = np.max(np.abs(audio_data))
+                    #         log_info(f"Client audio stats [frame {frame_count}]: RMS={rms:.4f}, Peak={peak:.4f}")
+                    #     except Exception:
+                    #         pass
+
         except Exception as e:
             log_info(f"Client audio track ended or error: {e}")
             import traceback

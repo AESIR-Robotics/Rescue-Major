@@ -7,3 +7,4 @@ workspace/GUI/GUI/com_vars.json
 **.vscode/** 
 compile_commands.json
 **.cache/**
+__pycache__
