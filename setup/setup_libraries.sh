@@ -1,6 +1,26 @@
 #!/usr/bin/env bash
 set -e
 
+# Source global ROS_UBUNTU_VERSION if available
+# Try to find the ros version helper relative to this script
+if [ -n "${BASH_SOURCE[0]:-}" ]; then
+	SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+else
+	SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+fi
+
+if [ -f "$SCRIPT_DIR/ros_ubuntu_version.sh" ]; then
+	# when run from setup/ this path works
+	# shellcheck source=/dev/null
+	source "$SCRIPT_DIR/ros_ubuntu_version.sh"
+elif [ -f "$(pwd)/setup/ros_ubuntu_version.sh" ]; then
+	# fallback to repo-relative path (if script run from other cwd)
+	# shellcheck source=/dev/null
+	source "$(pwd)/setup/ros_ubuntu_version.sh"
+fi
+
+echo "setup_libraries.sh: ROS_UBUNTU_VERSION='${ROS_UBUNTU_VERSION:-}'"
+
 # Helpers
 command_exists() { command -v "$1" >/dev/null 2>&1; }
 
@@ -48,13 +68,13 @@ source venv/bin/activate
 pip_install_if_missing em lark
 
 # Vision/python libs
-pip_install_if_missing aiohttp aiortc opencv-python av2 catkin-pkg
+pip_install_if_missing numpy aiohttp aiortc opencv-python av2 catkin-pkg
 
 # vision: zbar y pyzbar
 apt_install_if_missing libzbar0
 pip_install_if_missing pyzbar ultralytics DateTime websockets
 
 # Dependencias del sistema
-apt_install_if_missing libwebsocketpp-dev libboost-all-dev libssl-dev tmux ros-humble-cv-bridge libopencv-dev
+apt_install_if_missing libwebsocketpp-dev libboost-all-dev libssl-dev tmux ros-${ROS_UBUNTU_VERSION}-cv-bridge libopencv-dev tmux
 
 #Websockets

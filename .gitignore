@@ -5,3 +5,5 @@ workspace/GUI/GUI/com_vars.json
 /workspace/log
 /venv
 **.vscode/** 
+compile_commands.json
+**.cache/**
