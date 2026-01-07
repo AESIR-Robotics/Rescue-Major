@@ -37,6 +37,14 @@ if [ -n "${ROS_UBUNTU_VERSION:-}" ]; then
 elif [ -z "${SOURCE_ROS_DIR:-}" ]; then
 	SOURCE_ROS_DIR="/opt/ros/humble/setup.bash"
 else
+<<<<<<< HEAD
+=======
+	echo "ROS_UBUNTU_VERSION not set - attempting to find default ros directories"
+	if [ -f "/opt/ros/humble/setup.bash" ]; then
+		SOURCE_ROS_DIR="/opt/ros/humble/setup.bash"
+	fi
+	
+>>>>>>> 596a89243d924265400bdb4037aa0d0f232d6a5d
 	SOURCE_ROS_DIR="/opt/ros/jazzy/setup.bash"
 fi
 
