@@ -34,7 +34,7 @@ if [ -n "${ROS_UBUNTU_VERSION:-}" ]; then
 		echo "Warning: /opt/ros/${ROS_UBUNTU_VERSION}/setup.bash not found."
 		SOURCE_ROS_DIR=""
 	fi
-elif [ -z "${SOURCE_ROS_DIR:-}" ]; then
+elif [ -f "/opt/ros/humble/setup.bash" ]; then
 	SOURCE_ROS_DIR="/opt/ros/humble/setup.bash"
 else
 	SOURCE_ROS_DIR="/opt/ros/jazzy/setup.bash"
