@@ -71,8 +71,7 @@ pip_install_if_missing em lark
 pip_install_if_missing numpy aiohttp aiortc opencv-python av2 catkin-pkg
 
 # vision: zbar y pyzbar
-apt_install_if_missing libzbar0
-pip_install_if_missing pyzbar ultralytics DateTime websockets
+pip_install_if_missing pyzbar ultralytics DateTime websockets alsaaudio libzbar0
 
 # Dependencias del sistema
 apt_install_if_missing libwebsocketpp-dev libboost-all-dev libssl-dev tmux ros-${ROS_UBUNTU_VERSION}-cv-bridge libopencv-dev tmux
