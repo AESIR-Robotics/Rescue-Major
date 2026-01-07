@@ -1,4 +1,14 @@
 {
-  "0": ["topic", "/web_rtc_commands", "toggle_client_audio"],
-  "1": ["topic", "/web_rtc_commands", "toggle_server_audio"]
+  "0": {
+    "type": "topic",
+    "target": "/web_rtc_commands",
+    "msg_type": "std_msgs/String",
+    "payload": "toggle_client_audio"
+  },
+  "1": {
+    "type": "topic",
+    "target": "/web_rtc_commands",
+    "msg_type": "std_msgs/String",
+    "payload": "toggle_server_audio"
+  }
 }

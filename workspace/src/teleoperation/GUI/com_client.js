@@ -1,3 +1,184 @@
+
+//______________________ Rosbridge ____________________
+class RobotAPI {
+  constructor(rosInstance) {
+    if (!rosInstance) {
+      throw new Error('RobotAPI requires a valid ROSLIB.Ros instance');
+    }
+    
+    this.ros = rosInstance;
+    
+    this.topicCache = {};      // { '/target_name': ROSLIB.Topic }
+    this.serviceCache = {};    // { '/target_name': ROSLIB.Service }
+    
+    this.actionMap = {};       // { 'key_id': { type, ros_object, payload } }
+    
+    this.isInitialized = false;
+  }
+
+  init(configJson) {
+    if (!configJson || typeof configJson !== 'object') {
+      console.error('[RobotAPI] Invalid config: must be an object');
+      return false;
+    }
+
+    try {
+      Object.entries(configJson).forEach(([keyId, action]) => {
+        const { type, target, msg_type, srv_type, payload } = action;
+
+        if (!type || !target) {
+          console.warn(`[RobotAPI] Skipping invalid action for ${keyId}: missing type or target`);
+          return;
+        }
+
+        let rosObject = null;
+
+        // LÓGICA DE PRE-CACHING: Verifica y reutiliza conexiones existentes
+        if (type === 'topic') {
+          rosObject = this._getOrCreateTopic(target, msg_type || 'std_msgs/String');
+        } else if (type === 'service') {
+          rosObject = this._getOrCreateService(target, srv_type || 'std_srvs/Trigger');
+        } else {
+          console.warn(`[RobotAPI] Unknown action type "${type}" for key ${keyId}`);
+          return;
+        }
+
+        // MAPEO: Asocia la tecla con el objeto ROS y su payload
+        this.actionMap[keyId] = {
+          type,
+          target,
+          rosObject,
+          payload: payload || {}
+        };
+
+        console.log(`[RobotAPI] Mapped ${keyId} -> ${type}:${target}`);
+      });
+
+      this.isInitialized = true;
+      console.log(`[RobotAPI] Initialized with ${Object.keys(this.actionMap).length} actions`);
+      return true;
+    } catch (error) {
+      console.error('[RobotAPI] Init failed:', error.message);
+      return false;
+    }
+  }
+
+  _getOrCreateTopic(target, messageType) {
+
+    if (this.topicCache[target]) {
+      console.log(`[RobotAPI] Topic cache hit for ${target}`);
+      return this.topicCache[target];
+    }
+
+    console.log(`[RobotAPI] Creating new Topic for ${target}`);
+    const topic = new ROSLIB.Topic({
+      ros: this.ros,
+      name: target,
+      messageType: messageType,
+      queue_size: 1
+    });
+
+    this.topicCache[target] = topic;
+    return topic;
+  }
+
+  _getOrCreateService(target, serviceType) {
+    if (this.serviceCache[target]) {
+      console.log(`[RobotAPI] Service cache hit for ${target}`);
+      return this.serviceCache[target];
+    }
+
+    console.log(`[RobotAPI] Creating new Service for ${target}`);
+    const service = new ROSLIB.Service({
+      ros: this.ros,
+      name: target,
+      serviceType: serviceType
+    });
+
+    this.serviceCache[target] = service;
+    return service;
+  }
+
+  // Executes an action mapped to a key
+  executeAction(keyId) {
+    // Validar que la acción está mapeada
+    const action = this.actionMap[keyId];
+    if (!action) {
+      return { success: false, error: `Action "${keyId}" not found in map` };
+    }
+
+    try {
+      if (action.type === 'topic') {
+        return this._executeTopic(action);
+      } else if (action.type === 'service') {
+        return this._executeService(action);
+      } else {
+        return { success: false, error: `Unknown action type: ${action.type}` };
+      }
+    } catch (error) {
+      console.error(`[RobotAPI] Execute failed for ${keyId}:`, error.message);
+      return { success: false, error: error.message };
+    }
+  }
+
+  _executeTopic(action) {
+    const { target, rosObject, payload } = action;
+
+    const message = new ROSLIB.Message(payload);
+    rosObject.publish(message);
+
+    console.log(`[RobotAPI] Published to ${target}:`, payload);
+    return { success: true, type: 'topic', target, payload };
+  }
+
+  _executeService(action) {
+    const { target, rosObject, payload } = action;
+
+    // Crear request del servicio
+    const request = new ROSLIB.ServiceRequest(payload);
+
+    // Llamar al servicio con manejo de respuesta
+    rosObject.callService(request, (response) => {
+      console.log(`[RobotAPI] Service ${target} response:`, response);
+    });
+
+    console.log(`[RobotAPI] Called service ${target} with:`, payload);
+    return { success: true, type: 'service', target, payload };
+  }
+
+
+  getStats() {
+    return {
+      topicsCached: Object.keys(this.topicCache).length,
+      servicesCached: Object.keys(this.serviceCache).length,
+      actionsMapped: Object.keys(this.actionMap).length,
+      isInitialized: this.isInitialized
+    };
+  }
+
+  dispose() {
+    Object.values(this.topicCache).forEach(topic => {
+      try {
+        topic.unsubscribe && topic.unsubscribe();
+      } catch (e) {
+        console.error('[RobotAPI] Error unsubscribing topic:', e.message);
+      }
+    });
+
+    this.topicCache = {};
+    this.serviceCache = {};
+    this.actionMap = {};
+    this.isInitialized = false;
+    console.log('[RobotAPI] Disposed');
+  }
+
+  // Get cached topic directly without executing an action
+  getTopicPublisher(topicName) {
+    return this.topicCache[topicName] || null;
+  }
+}
+
+//______________________ Input Handler ____________________
 class InputHandler {
   constructor({ deadzone = 0.12 } = {}) {
     this.deadzone = deadzone;
@@ -118,381 +299,150 @@ class InputHandler {
     this.listeners = Object.create(null);
   }
 
-  _readKeyboard() {
-    // WASD or arrow keys
-    let x = 0, y = 0;
-    if (this.keys.has('a') || this.keys.has('arrowleft')) x -= 1;
-    if (this.keys.has('d') || this.keys.has('arrowright')) x += 1;
-    if (this.keys.has('w') || this.keys.has('arrowup')) y -= 1;
-    if (this.keys.has('s') || this.keys.has('arrowdown')) y += 1;
-    // Normalize diagonal to length 1
-    if (x !== 0 && y !== 0) {
-      const inv = 1 / Math.sqrt(2);
-      x *= inv; y *= inv;
-    }
-    const active = x !== 0 || y !== 0;
-    return { x, y, active };
-  }
-
-  read() {
-    // Read both, prioritize gamepad when it gives non-zero values
-    const gp = this._readGamepad();
-    const kb = this._readKeyboard();
-    if (gp.active) return { x: gp.x, y: gp.y };
-    return { x: kb.x, y: kb.y };
+  // Public method to read gamepad joystick values
+  readJoystick() {
+    return this._readGamepad();
   }
 }
 
-//______________________ Rosbridge ____________________
-class RobotComms {
-  constructor({ rosbridgeHost = location.hostname, rosbridgePort = 9090, onInfoMessage = null } = {}) {
-    this.rosbridgeHost = rosbridgeHost;
-    this.rosbridgePort = rosbridgePort;
-    this.onInfoMessage = onInfoMessage;
-    this.ros = null;
-    this.publisher = null; // /dc_motors
-    this.webrtcService = null; // /web_rtc_commands
-
-    this.visionParam = null; // /vision_camera_modes
-    this.infoSub = null; // /client_info_dummy
-
-    this.connected = false;
-    this._connect();
+//______________________ Main Application ____________________
+(function initializeApp() {
+  const infoPanel = document.getElementById('info-messages');
+  
+  function log(message) {
+    if (!infoPanel) return console.log(message);
+    infoPanel.textContent += message + '\n';
+    infoPanel.scrollTop = infoPanel.scrollHeight;
   }
 
-  _connect() {
-    if (typeof ROSLIB === 'undefined') {
-      console.error('ROSLIB not found. Please include roslib.js in the page.');
-      return;
-    }
-    const url = `ws://${this.rosbridgeHost}:${this.rosbridgePort}`;
-    this.ros = new ROSLIB.Ros({ url });
-    this.ros.on('connection', () => {
-      console.info('Connected to rosbridge at', url);
-      this.connected = true;
-      this._setupTopicsAndServices();
-    });
-    this.ros.on('close', () => {
-      console.warn('Connection to rosbridge closed');
-      this.connected = false;
-      setTimeout(() => this._connect(), 2000);
-    });
-    this.ros.on('error', (err) => {
-      console.error('rosbridge error', err);
-    });
-  }
+  // Initialize input handler
+  const inputHandler = new InputHandler();
 
-  _setupTopicsAndServices() {
-    // Publisher for dc motors: std_msgs/Float32MultiArray
-    this.publisher = new ROSLIB.Topic({
-      ros: this.ros,
-      name: '/dc_motors',
-      messageType: 'std_msgs/Float32MultiArray',
-      queue_size: 1,
-    });
-
-    // Publisher for WebRTC commands (server expects a topic String)
-    this.webrtcPub = new ROSLIB.Topic({ ros: this.ros, name: '/web_rtc_commands', messageType: 'std_msgs/String' });
-
-    // Subscriber for info
-    this.infoSub = new ROSLIB.Topic({ ros: this.ros, name: '/client_info_dummy', messageType: 'std_msgs/String' });
-    this.infoSub.subscribe((msg) => {
-      if (this.onInfoMessage) this.onInfoMessage(msg.data);
-      else console.info('client_info_dummy:', msg.data);
-    });
-
-    // Load keyboard and controller keymaps (files must be served alongside GUI)
-    this.keymapKeyboard = {};
-    this.keymapController = {};
-    this.bindingsKeyboard = {}; // precreated bindings for keyboard
-    this.bindingsController = {}; // precreated bindings for controller
-    this.topicPublishers = {};
-    this.services = {};
-    this._loadKeymaps();
-  }
-
-  _loadKeymaps() {
-    // Only use the canonical static paths for the keymaps
-    const keyboardPath = 'static/keys_map_keyboard.json';
-    const controllerPath = 'static/keys_map_controller.json';
-
-    const pKeyboard = fetch(keyboardPath).then(r => { if (!r.ok) throw new Error('not found'); return r.json(); }).catch(e => { console.warn('Keyboard keymap not loaded', e); return null; });
-    const pController = fetch(controllerPath).then(r => { if (!r.ok) throw new Error('not found'); return r.json(); }).catch(e => { console.warn('Controller keymap not loaded', e); return null; });
-
-    Promise.all([pKeyboard, pController]).then(([kb, ctl]) => {
-      this.keymapKeyboard = kb || {};
-      this.keymapController = ctl || {};
-      console.info('Keymaps loaded (keyboard/controller)', Object.keys(this.keymapKeyboard).length, Object.keys(this.keymapController).length);
-      // Prepare publishers/services/params based on entries (precreate instances)
-      this._prepareBindings();
-      try { if (this.onInfoMessage) this.onInfoMessage(`Keymaps loaded: keyboard=${Object.keys(this.keymapKeyboard).length}, controller=${Object.keys(this.keymapController).length}`); } catch (e) { console.error('onInfoMessage handler error', e); }
-    }).catch((e) => { console.warn('Error loading keymaps', e); this.keymapKeyboard = {}; this.keymapController = {}; });
-  }
-
-  _prepareBindings() {
-    // Helper to create instance for an entry: mode,target,value
-    const createFor = (key, entry, sourceBindings) => {
-      if (!Array.isArray(entry) || entry.length < 2) return;
-      const mode = entry[0];
-      const target = entry[1];
-      const value = entry.length > 2 ? entry[2] : undefined;
-
-      if (mode === 'topic') {
-        // create or reuse publisher based on known targets or inferred type
-        let msgType = 'std_msgs/String';
-        if (target === '/dc_motors') msgType = 'std_msgs/Float32MultiArray';
-        else if (Array.isArray(value)) msgType = 'std_msgs/Float32MultiArray';
-        // reuse existing canonical publisher when available (avoid duplicates)
-        let pub = this.topicPublishers[target];
-        if (!pub) {
-          // prefer the dedicated `this.publisher` for /dc_motors if already created
-          if (target === '/dc_motors' && this.publisher) pub = this.publisher;
-          else pub = new ROSLIB.Topic({ ros: this.ros, name: target, messageType: msgType });
-          this.topicPublishers[target] = pub;
-        }
-        sourceBindings[key] = { mode: 'topic', target, value, instance: pub, msgType };
-      } else if (mode === 'service') {
-        const svc = new ROSLIB.Service({ ros: this.ros, name: target, serviceType: 'std_srvs/Trigger' });
-        this.services[target] = svc;
-        sourceBindings[key] = { mode: 'service', target, value, instance: svc };
-      } else if (mode === 'param') {
-        const param = new ROSLIB.Param({ ros: this.ros, name: target });
-        this.params[target] = param;
-        sourceBindings[key] = { mode: 'param', target, value, instance: param };
-      } else {
-        // unknown mode: store raw for fallback
-        sourceBindings[key] = { mode: 'unknown', target, value };
-      }
-    };
-
-    // Prepare keyboard bindings
-    Object.keys(this.keymapKeyboard).forEach((k) => createFor(k, this.keymapKeyboard[k], this.bindingsKeyboard));
-    // Prepare controller bindings
-    Object.keys(this.keymapController).forEach((k) => createFor(k, this.keymapController[k], this.bindingsController));
-
-    console.info('Prepared bindings', Object.keys(this.bindingsKeyboard).length, Object.keys(this.bindingsController).length);
-    try {
-      if (this.onInfoMessage) this.onInfoMessage(`Prepared bindings: keyboard=[${Object.keys(this.bindingsKeyboard).join(', ')}] controller=[${Object.keys(this.bindingsController).join(', ')}]`);
-    } catch (e) { console.error('onInfoMessage handler error', e); }
-  }
-
-  // Send a mapped key. JSON format: key: [ target_string, value ]
-  // target_string must be explicit like '/dc_motors', '/web_rtc_commands', '/vision_camera_modes', etc.
-  sendMappedKey(key, source = 'keyboard') {
-    if (!this.connected) return { ok: false, reason: 'rosbridge not connected' };
-    const bindings = source === 'controller' ? this.bindingsController : this.bindingsKeyboard;
-    let b = bindings && bindings[key];
-    if (!b) {
-      // try alternate map
-      const alt = source === 'controller' ? this.bindingsKeyboard : this.bindingsController;
-      b = alt && alt[key];
-    }
-    if (!b) return { ok: false, reason: 'no binding' };
-
-    const mode = b.mode;
-    const target = b.target;
-    const value = b.value;
-
-    try {
-      if (mode === 'topic') {
-        const pub = b.instance; // ROSLIB.Topic
-        if (!pub) return { ok: false, reason: 'publisher missing' };
-        let msgObj;
-        if (b.msgType === 'std_msgs/Float32MultiArray') {
-          msgObj = { data: (Array.isArray(value) ? value : [value]).map(v => Number(v) || 0.0) };
-        } else if (b.msgType === 'std_msgs/Float32') {
-          msgObj = { data: Number(value) };
-        } else if (b.msgType === 'std_msgs/Bool') {
-          msgObj = { data: !!value };
-        } else {
-          msgObj = { data: String(value) };
-        }
-        pub.publish(new ROSLIB.Message(msgObj));
-        return { ok: true, mode: 'topic' };
-      }
-
-      if (mode === 'service') {
-        const svc = b.instance; // ROSLIB.Service
-        if (!svc) return { ok: false, reason: 'service client missing' };
-        const req = (value === null || value === undefined) ? {} : (typeof value === 'object' ? value : { data: value });
-        svc.callService(new ROSLIB.ServiceRequest(req), (res) => console.info('service result', res));
-        return { ok: true, mode: 'service' };
-      }
-
-      return { ok: false, reason: 'unknown mode' };
-    } catch (e) {
-      console.error('sendMappedKey error', e);
-      return { ok: false, reason: e.message };
-    }
-  }
-
-  publishMotors(x, y) {
-    if (!this.publisher || !this.connected) return false;
-    const arr = new Float32Array([Number(x) || 0.0, Number(y) || 0.0]);
-    const msg = new ROSLIB.Message({ data: Array.from(arr) });
-    try {
-      this.publisher.publish(msg);
-      return true;
-    } catch (e) {
-      console.error('publish error', e);
-      return false;
-    }
-  }
-
-  callWebRTCService(args, callback) {
-    if (this.webrtcService) {
-      const request = new ROSLIB.ServiceRequest(args || {});
-      this.webrtcService.callService(request, (result) => {
-        callback && callback(result);
-      });
-      return;
-    }
-
-    if (this.webrtcPub) {
-      try {
-        const cmd = (args && args.command) ? String(args.command) : String(args || '');
-        const msg = new ROSLIB.Message({ data: cmd });
-        this.webrtcPub.publish(msg);
-        callback && callback({ success: true, message: 'published' });
-      } catch (e) {
-        callback && callback({ success: false, message: String(e) });
-      }
-      return;
-    }
-
-    callback && callback({ success: false, message: 'webrtc interface unavailable' });
-  }
-
-  // Convenience helper to publish a WebRTC command string
-  sendWebRTCCommand(command) {
-    if (!this.webrtcPub || !this.connected) return false;
-    try {
-      const msg = new ROSLIB.Message({ data: String(command) });
-      this.webrtcPub.publish(msg);
-      return true;
-    } catch (e) {
-      console.error('webrtc publish error', e);
-      return false;
-    }
-  }
-
-  dispose() {
-    try {
-      if (this.infoSub) this.infoSub.unsubscribe();
-    } catch (e) { console.error('Error unsubscribing infoSub', e); }
-    try {
-      if (this.ros) this.ros.close();
-    } catch (e) { console.error('Error closing ROS connection', e); }
-  }
-}
-
-// Main control wiring
-(function main() {
-  const infoMessages = document.getElementById('info-messages');
-  function addMessage(s) {
-    if (!infoMessages) return console.log(s);
-    infoMessages.textContent += s + '\n';
-    infoMessages.scrollTop = infoMessages.scrollHeight;
-  }
-
-  const input = new InputHandler();
-  const comms = new RobotComms({ onInfoMessage: (d) => addMessage('ROS INFO: ' + d) });
-
-  // Show connection and bindings diagnostics in the frontend log once available
-  (function showBindings() {
-    const maxAttempts = 25; // ~5 seconds at 200ms
-    let attempts = 0;
-    const iv = setInterval(() => {
-      attempts += 1;
-      if (comms.bindingsKeyboard && Object.keys(comms.bindingsKeyboard).length > 0) {
-        addMessage(`ROS connected: ${comms.connected}`);
-        addMessage(`Keyboard bindings: ${Object.keys(comms.bindingsKeyboard).join(', ')}`);
-        addMessage(`Controller bindings: ${Object.keys(comms.bindingsController || {}).join(', ')}`);
-        clearInterval(iv);
-      } else if (attempts >= maxAttempts) {
-        addMessage(`Bindings not ready after ${attempts} attempts. ROS connected: ${comms.connected}`);
-        clearInterval(iv);
-      }
-    }, 200);
-  })();
-
-  // Quick debug toggle: add `?input_debug=1` to the GUI URL to log raw key events
-  const INPUT_DEBUG = (new URLSearchParams(location.search).get('input_debug') === '1');
-
-  // Keyboard mappings driven by preloaded keymap
-  window.addEventListener('keydown', (e) => {
-    const raw = (e.key || '');
-    const key = raw.toLowerCase();
-    if (INPUT_DEBUG) console.info('DEBUG keydown:', { raw, key, bindings: comms.bindingsKeyboard && Object.keys(comms.bindingsKeyboard) });
-    // Show detected key in frontend log
-    const displayKey = (raw === ' ') ? 'SPACE' : raw;
-    addMessage(`Detected key: ${displayKey}`);
-
-    // Accept both explicit single-space and the word 'space' in the JSON
-    const spaceKeys = [' ', 'space', 'spacebar'];
-
-    // Only attempt mapped-key send if a binding exists
-    const bindings = comms.bindingsKeyboard || {};
-    const hasDirect = !!bindings[key];
-    const hasSpace = spaceKeys.includes(key) && (bindings[' '] || bindings['space']);
-    if (!hasDirect && !hasSpace) return; // nothing to send
-
-    // Determine bindingKey used in bindings map
-    let bindingKey = key;
-    if (!hasDirect && hasSpace) bindingKey = (bindings[' '] ? ' ' : 'space');
-
-    // Send and log the command sent
-    const res = comms.sendMappedKey(bindingKey, 'keyboard');
-    if (res && res.ok) {
-      const b = (comms.bindingsKeyboard && comms.bindingsKeyboard[bindingKey]) || {};
-      addMessage(`Command sent: ${b.mode || 'unknown'} ${b.target || ''} ${JSON.stringify(b.value !== undefined ? b.value : '')}`);
-    } else if (res && res.reason) {
-      addMessage(`Key ${bindingKey} mapped but failed: ${res.reason}`);
-    }
-  });
-
-  // Controller button events are emitted by `input` (InputHandler).
-  input.on('buttonDown', (padIndex, buttonIdx) => {
-    addMessage(`Detected controller button: ${buttonIdx}`);
-    const res = comms.sendMappedKey(String(buttonIdx), 'controller');
-    if (res && res.ok) {
-      const b = (comms.bindingsController && comms.bindingsController[String(buttonIdx)]) || {};
-      addMessage(`Command sent (controller): ${b.mode || 'unknown'} ${b.target || ''} ${JSON.stringify(b.value !== undefined ? b.value : '')}`);
-    } else if (res && res.reason) addMessage(`Controller button ${buttonIdx} not mapped: ${res.reason}`);
-  });
-
+  // Setup ROS connection and RobotAPI
+  let robotAPI = null;
+  let motorPublisher = null; // Direct publisher for joystick velocities
   let isControlEnabled = false;
-  let intervalId = null;
+  let velocityInterval = null;
 
+  function initializeROS(rosbridgeHost = location.hostname, rosbridgePort = 9090) {
+    if (typeof ROSLIB === 'undefined') {
+      log('ERROR: ROSLIB not loaded');
+      return;
+    }
+
+    const ros = new ROSLIB.Ros({
+      url: `ws://${rosbridgeHost}:${rosbridgePort}`
+    });
+
+    ros.on('connection', () => {
+      log('Connected to ROS');
+      
+      // Initialize RobotAPI with keymaps
+      robotAPI = new RobotAPI(ros);
+      
+      // Load keyboard keymaps
+      fetch('static/keys_map_keyboard.json')
+        .then(r => r.json())
+        .then(config => {
+          robotAPI.init(config);
+          log(`RobotAPI initialized: ${robotAPI.getStats().actionsMapped} actions mapped`);
+          setupKeyboardBindings();
+          
+          // Get motor publisher from RobotAPI cache (reuse connection)
+          motorPublisher = robotAPI.getTopicPublisher('/dc_motors');
+          if (motorPublisher) {
+            log('Motor publisher obtained from RobotAPI cache');
+          }
+        })
+        .catch(e => log(`Failed to load keymaps: ${e.message}`));
+    });
+
+    ros.on('close', () => {
+      log('Disconnected from ROS');
+      if (velocityInterval) {
+        clearInterval(velocityInterval);
+        velocityInterval = null;
+      }
+    });
+
+    ros.on('error', (err) => {
+      log(`ROS Error: ${err}`);
+    });
+  }
+
+  function setupKeyboardBindings() {
+    window.addEventListener('keydown', (e) => {
+      if (!robotAPI || !robotAPI.isInitialized) return;
+      
+      const key = e.key.toLowerCase();
+      const result = robotAPI.executeAction(key);
+      
+      if (result.success) {
+        log(`Key '${key}' executed: ${result.type} -> ${result.target}`);
+      } else if (result.error !== `Action "${key}" not found in map`) {
+        log(`Key '${key}' failed: ${result.error}`);
+      }
+    });
+  }
+
+  function publishJoystickVelocities() {
+    if (!motorPublisher) return;
+    
+    const { x, y } = inputHandler.readJoystick();
+    const message = new ROSLIB.Message({
+      data: [Number(x) || 0.0, Number(y) || 0.0]
+    });
+    
+    try {
+      motorPublisher.publish(message);
+    } catch (e) {
+      console.error('Joystick velocity publish error:', e);
+    }
+  }
+
+  // Control button to enable/disable joystick velocity publishing
   const startButton = document.getElementById('start-btn') || document.getElementById('start-communication');
   if (startButton) {
     startButton.addEventListener('click', () => {
       isControlEnabled = !isControlEnabled;
       startButton.textContent = isControlEnabled ? 'Stop Control' : 'Start Control';
-      addMessage('Control ' + (isControlEnabled ? 'ENABLED' : 'DISABLED'));
+      log('Control ' + (isControlEnabled ? 'ENABLED' : 'DISABLED'));
+      
       if (!isControlEnabled) {
-        // send immediate stop
-        comms.publishMotors(0.0, 0.0);
-        if (intervalId) { clearInterval(intervalId); intervalId = null; }
+        if (velocityInterval) {
+          clearInterval(velocityInterval);
+          velocityInterval = null;
+        }
+        // Send stop command
+        if (motorPublisher) {
+          const stopMsg = new ROSLIB.Message({ data: [0.0, 0.0] });
+          motorPublisher.publish(stopMsg);
+        }
       } else {
-        // start periodic publisher at 10Hz
-        if (!intervalId) {
-          intervalId = setInterval(() => {
-            const { x, y } = input.read();
-            // publish raw x,y as requested
-            comms.publishMotors(x || 0.0, y || 0.0);
-          }, 100);
+        // Start publishing joystick velocities at 10Hz
+        if (!velocityInterval) {
+          velocityInterval = setInterval(publishJoystickVelocities, 100);
         }
       }
     });
   } else {
-    addMessage('Warning: start button not found (id start-btn or start-communication)');
+    log('Warning: Start button not found (id: start-btn or start-communication)');
   }
 
-  // Ensure we always send heartbeat when enabled even if page unloads
+  // Emergency stop on page unload
   window.addEventListener('beforeunload', () => {
-    try { comms.publishMotors(0.0, 0.0); } catch (e) { console.error('Error publishing motors on unload', e); }
+    if (motorPublisher) {
+      try {
+        motorPublisher.publish(new ROSLIB.Message({ data: [0.0, 0.0] }));
+      } catch (e) {
+        console.error('Error publishing emergency stop:', e);
+      }
+    }
+    if (robotAPI) robotAPI.dispose();
+    if (inputHandler) inputHandler.dispose();
   });
 
+  // Initialize on load
+  log('Initializing application...');
+  initializeROS();
 })();
-

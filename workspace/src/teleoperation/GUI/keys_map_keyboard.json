@@ -1,6 +1,83 @@
 {
-  "o": ["topic", "/web_rtc_commands", "toggle_client_audio"],
-  "p": ["topic", "/web_rtc_commands", "toggle_server_audio"],
-  " ": ["topic", "/dc_motors", [0.0, 0.0]],
-  "1": ["param", "/vision_camera_modes", 1]
+  "o": {
+    "type": "topic",
+    "target": "/web_rtc_commands",
+    "msg_type": "std_msgs/String",
+    "payload": {"data": "toggle_client_audio"}
+  },
+  "p": {
+    "type": "topic",
+    "target": "/web_rtc_commands",
+    "msg_type": "std_msgs/String",
+    "payload": {"data": "toggle_server_audio"}
+  }, 
+  " ": {
+    "type": "topic",
+    "target": "/dc_motors",
+    "msg_type": "std_msgs/Int16MultiArray",
+    "payload": {"data": [0.0, 0.0]}
+  },
+
+  "r": {
+    "type": "service",
+    "target": "/command_vision_videoStream",
+    "srv_type": "vision/srv/Command",
+    "payload": {"data": "vision:camera,0"}
+  },
+  "t": {
+    "type": "service",
+    "target": "/command_vision_videoStream",
+    "srv_type": "vision/srv/Command",
+    "payload": {"data": "vision:camera,1"}
+  },
+  "y": {
+    "type": "service",
+    "target": "/command_vision_videoStream",
+    "srv_type": "vision/srv/Command",
+    "payload": {"data": "vision:camera,2"}
+  },
+  "u": {
+    "type": "service",
+    "target": "/command_vision_videoStream",
+    "srv_type": "vision/srv/Command",
+    "payload": {"data": "vision:camera,3"}
+  },
+
+  "i": {
+    "type": "service",
+    "target": "/command_vision_videoStream",
+    "srv_type": "vision/srv/Command",
+    "payload": {"data": "vision:thermal,on"}
+  },
+  "f": {
+    "type": "service",
+    "target": "/command_vision_videoStream",
+    "srv_type": "vision/srv/Command",
+    "payload": {"data": "vision:thermal,off"}
+  },
+
+  "g": {
+    "type": "service",
+    "target": "/command_vision_sensors",
+    "srv_type": "vision/srv/Command",
+    "payload": {"data": "vision:mode,0"}
+  },
+  "h": {
+    "type": "service",
+    "target": "/command_vision_sensors",
+    "srv_type": "vision/srv/Command",
+    "payload": {"data": "vision:mode,1"}
+  },
+  "j": {
+    "type": "service",
+    "target": "/command_vision_sensors",
+    "srv_type": "vision/srv/Command",
+    "payload": {"data": "vision:mode,2"}
+  },
+  "k": {
+    "type": "service",
+    "target": "/command_vision_sensors",
+    "srv_type": "vision/srv/Command",
+    "payload": {"data": "vision:mode,3"}
+  }
 }
