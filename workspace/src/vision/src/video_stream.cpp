@@ -70,8 +70,10 @@ private:
         }
     }
 
+    using publish = rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr;
+
     std::vector<int> camera_devices_;
-    std::vector<rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr> publishers_;
+    std::vector<publish> publishers_;
     std::vector<cv::VideoCapture> cameras_;
     rclcpp::TimerBase::SharedPtr timer_;
 };

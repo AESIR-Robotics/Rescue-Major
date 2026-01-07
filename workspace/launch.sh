@@ -43,7 +43,7 @@ fi
 
 SOURCE_VENV_DIR="../venv/bin/activate"
 
-sudo chmod 666 /dev/ttyUSB0
+#sudo chmod 666 /dev/ttyUSB0
 
 ENV_CMD="bash -lc ' \
   source \"$SOURCE_VENV_DIR\" && \
