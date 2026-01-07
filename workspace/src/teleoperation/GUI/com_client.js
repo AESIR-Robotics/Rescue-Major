@@ -143,6 +143,7 @@ class InputHandler {
   }
 }
 
+//______________________ Rosbridge ____________________
 class RobotComms {
   constructor({ rosbridgeHost = location.hostname, rosbridgePort = 9090, onInfoMessage = null } = {}) {
     this.rosbridgeHost = rosbridgeHost;
@@ -150,9 +151,11 @@ class RobotComms {
     this.onInfoMessage = onInfoMessage;
     this.ros = null;
     this.publisher = null; // /dc_motors
-    this.visionParam = null; // /vision_camera_modes
     this.webrtcService = null; // /web_rtc_commands
+
+    this.visionParam = null; // /vision_camera_modes
     this.infoSub = null; // /client_info_dummy
+
     this.connected = false;
     this._connect();
   }
@@ -188,9 +191,6 @@ class RobotComms {
       queue_size: 1,
     });
 
-    // Vision-specific parameter for camera modes
-    this.visionParam = new ROSLIB.Param({ ros: this.ros, name: '/vision_camera_modes' });
-
     // Publisher for WebRTC commands (server expects a topic String)
     this.webrtcPub = new ROSLIB.Topic({ ros: this.ros, name: '/web_rtc_commands', messageType: 'std_msgs/String' });
 
@@ -207,7 +207,6 @@ class RobotComms {
     this.bindingsKeyboard = {}; // precreated bindings for keyboard
     this.bindingsController = {}; // precreated bindings for controller
     this.topicPublishers = {};
-    this.params = {};
     this.services = {};
     this._loadKeymaps();
   }
@@ -215,15 +214,12 @@ class RobotComms {
   _loadKeymaps() {
     // Only use the canonical static paths for the keymaps
     const keyboardPath = 'static/keys_map_keyboard.json';
-    const controllerPath = '/static/keys_map_controller.json';
+    const controllerPath = 'static/keys_map_controller.json';
 
     const pKeyboard = fetch(keyboardPath).then(r => { if (!r.ok) throw new Error('not found'); return r.json(); }).catch(e => { console.warn('Keyboard keymap not loaded', e); return null; });
     const pController = fetch(controllerPath).then(r => { if (!r.ok) throw new Error('not found'); return r.json(); }).catch(e => { console.warn('Controller keymap not loaded', e); return null; });
 
     Promise.all([pKeyboard, pController]).then(([kb, ctl]) => {
-      // Use keymaps provided by the server/static JSON only.
-      // Do NOT fall back to hardcoded mappings here; if no JSON is served,
-      // the keymaps will be empty and no mapped-key actions will be available.
       this.keymapKeyboard = kb || {};
       this.keymapController = ctl || {};
       console.info('Keymaps loaded (keyboard/controller)', Object.keys(this.keymapKeyboard).length, Object.keys(this.keymapController).length);
@@ -323,18 +319,6 @@ class RobotComms {
         return { ok: true, mode: 'service' };
       }
 
-      if (mode === 'param') {
-        const param = b.instance; // ROSLIB.Param
-        if (!param) return { ok: false, reason: 'param client missing' };
-        if (value !== null && value !== undefined) {
-          param.set(value);
-          return { ok: true, mode: 'param_set' };
-        } else {
-          param.get((v) => console.info('param value', v));
-          return { ok: true, mode: 'param_get' };
-        }
-      }
-
       return { ok: false, reason: 'unknown mode' };
     } catch (e) {
       console.error('sendMappedKey error', e);
@@ -355,14 +339,7 @@ class RobotComms {
     }
   }
 
-  // Example helper to set/get vision camera modes parameter
-  getVisionCameraModes(callback) {
-    if (!this.visionParam) { callback(null); return; }
-    this.visionParam.get((value) => callback(value));
-  }
-
   callWebRTCService(args, callback) {
-    // Backwards-compatible: try calling a service if present, otherwise publish on the topic.
     if (this.webrtcService) {
       const request = new ROSLIB.ServiceRequest(args || {});
       this.webrtcService.callService(request, (result) => {
