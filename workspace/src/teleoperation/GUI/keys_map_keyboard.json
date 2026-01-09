@@ -14,7 +14,7 @@
   " ": {
     "type": "topic",
     "target": "/dc_motors",
-    "msg_type": "std_msgs/Int16MultiArray",
+    "msg_type": "std_msgs/Float32MultiArray",
     "payload": {"data": [0.0, 0.0]}
   },
 

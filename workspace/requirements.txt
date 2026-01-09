@@ -1,0 +1,11 @@
+aiohttp
+aiortc
+av2
+ultralytics
+pyzbar
+DateTime
+lark
+websockets
+numpy<2
+pyalsaaudio
+pyyaml
