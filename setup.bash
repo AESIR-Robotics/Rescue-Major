@@ -10,10 +10,10 @@ echo "[setup] Project dir: $WORKDIR"
 echo "[setup] Workspace dir: $WORKSPACE_DIR"
 echo "[setup] Venv dir: $VENV_DIR"
  
-#  Install tmux and rosbridge-server (apt)
+#  Install external dependencies 
 echo "[apt] Updating package lists..."
 sudo apt-get update
-sudo apt install -y libwebsocketpp-dev libboost-all-dev libssl-dev tmux ros-humble-rosbridge-server
+sudo apt install -y libwebsocketpp-dev libboost-all-dev libssl-dev tmux ros-humble-rosbridge-server ros-humble-cv-bridge 
 
 
 # Determine real user (if script run via sudo, SUDO_USER is original)
@@ -40,14 +40,14 @@ if ! python3 -c "import ensurepip" >/dev/null 2>&1; then
 fi
 
 if [ ! -d "$VENV_DIR" ]; then
-  echo "[venv] Creating isolated venv at $VENV_DIR (no system-site-packages)"
-  if ! python3 -m venv "$VENV_DIR"; then
+  echo "[venv] Creating venv at $VENV_DIR "
+  if ! python3 -m venv --system-site-packages "$VENV_DIR"; then
     echo "[venv] venv creation failed. Attempting to install python3-venv and retry..."
     sudo apt-get update
     sudo apt-get install -y python3-venv || { echo "[error] Failed to install python3-venv"; exit 1; }
-    python3 -m venv "$VENV_DIR" || { echo "[error] venv creation failed after installing python3-venv"; exit 1; }
+    python3 -m venv --system-site-packages "$VENV_DIR" || { echo "[error] venv creation failed after installing python3-venv"; exit 1; }
   fi
-  echo "[venv] created"
+  echo "[venv] created "
 else
   echo "[venv] Found existing venv at $VENV_DIR"
 fi

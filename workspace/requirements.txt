@@ -9,3 +9,4 @@ websockets
 numpy<2
 pyalsaaudio
 pyyaml
+opencv-python

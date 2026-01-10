@@ -51,7 +51,21 @@ class Intermediate(Node):
         self.last_time = time.time()
         self.fps = 30
         self.lock = threading.Lock()
-        self.placeholder_image = cv2.imread("placeholder.jpg")
+        # Load placeholder image from package share if available, otherwise fall back
+        try:
+            from ament_index_python.packages import get_package_share_directory
+            placeholder_path = os.path.join(get_package_share_directory('teleoperation'), 'GUI', 'placeholder.jpg')
+        except Exception:
+            placeholder_path = os.path.normpath(os.path.join(ROOT, '..', 'share', 'teleoperation', 'GUI', 'placeholder.jpg'))
+
+        if os.path.exists(placeholder_path):
+            self.placeholder_image = cv2.imread(placeholder_path)
+            if self.placeholder_image is None:
+                logger.warning('Found placeholder at %s but cv2 failed to read it', placeholder_path)
+                self.placeholder_image = np.zeros((480, 640, 3), dtype=np.uint8)
+        else:
+            logger.warning('Placeholder image not found at %s; using blank image', placeholder_path)
+            self.placeholder_image = np.zeros((480, 640, 3), dtype=np.uint8)
         self.new_image = None
         self.rtt = None
         self.last_rtt = None
