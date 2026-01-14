@@ -43,8 +43,9 @@ class Intermediate(Node):
     def __init__(self, mode="auto"):
         super().__init__('intermediate_node')
         self.images_subscribers = []
-        #camera_topic = ["/cam0/image_raw", "/cam1/image_raw"]
-        camera_topic = ["/cam0/image_raw", "/cam1/image_raw", "/cam2/image_raw"]
+        # Solo cam0 para testing (ajustar cuando tengas más cámaras)
+        camera_topic = ["/cam0/image_raw"]
+        # camera_topic = ["/cam0/image_raw", "/cam1/image_raw", "/cam2/image_raw"]
         self.camera_count = len(camera_topic)
         self.latest_images = [None] * self.camera_count
         self.bridge = cv_bridge.CvBridge()
@@ -90,9 +91,14 @@ class Intermediate(Node):
 
         self.preallocate_latest_images()
 
+        # FIX: Usar función factory para capturar índice correctamente
         for i, topic in enumerate(camera_topic):
             print(f"Subscribing to {topic}")
-            sub = self.create_subscription(Image, topic, lambda msg, idx=i: self.image_callback(msg, idx), 10)
+            
+            def make_callback(index):
+                return lambda msg: self.image_callback(msg, index)
+            
+            sub = self.create_subscription(Image, topic, make_callback(i), 10)
             self.images_subscribers.append(sub)
 
         # Add subscriber for WebRTC commands
