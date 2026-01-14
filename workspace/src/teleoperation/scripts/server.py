@@ -15,6 +15,7 @@ import cv_bridge
 from rclpy.node import Node
 from sensor_msgs.msg import Image
 from std_msgs.msg import String, Int16MultiArray
+from vision.srv import Command
 from aiohttp import web
 from av import VideoFrame, AudioFrame
 from fractions import Fraction
@@ -43,10 +44,18 @@ class Intermediate(Node):
     def __init__(self, mode="auto"):
         super().__init__('intermediate_node')
         self.images_subscribers = []
-        # Solo cam0 para testing (ajustar cuando tengas más cámaras)
-        camera_topic = ["/cam0/image_raw"]
-        # camera_topic = ["/cam0/image_raw", "/cam1/image_raw", "/cam2/image_raw"]
-        self.camera_count = len(camera_topic)
+        
+        self.camera_topics = [
+            "/cam0/image_raw",
+            "/cam1/image_raw",
+            "/cam2/image_raw"
+        ]
+        self.sensor_topic = "/cam_sensors/image"
+        
+        self.active_sensor_track = None
+        self.pending_sensor_track_switch = None  # Pending track switch request
+        
+        self.camera_count = len(self.camera_topics)
         self.latest_images = [None] * self.camera_count
         self.bridge = cv_bridge.CvBridge()
         self.last_time = time.time()
@@ -91,22 +100,17 @@ class Intermediate(Node):
 
         self.preallocate_latest_images()
 
-        # FIX: Usar función factory para capturar índice correctamente
-        for i, topic in enumerate(camera_topic):
-            print(f"Subscribing to {topic}")
-            
-            def make_callback(index):
-                return lambda msg: self.image_callback(msg, index)
-            
-            sub = self.create_subscription(Image, topic, make_callback(i), 10)
-            self.images_subscribers.append(sub)
+        # Suscripción inicial a cámaras
+        self._subscribe_to_cameras()
+        
+        # Timer to process pending track switches safely in main thread
+        self.create_timer(0.05, self._process_pending_switch)
 
-        # Add subscriber for WebRTC commands
-        self.webrtc_command_subscriber = self.create_subscription(
-            String, 
-            "/web_rtc_commands", 
-            self.webrtc_command_callback, 
-            10
+        # Add service for WebRTC commands
+        self.webrtc_command_service = self.create_service(
+            Command,
+            "/web_rtc_commands",
+            self.webrtc_command_callback
         )
 
         logger.info("Intermediate Node initialized in %s mode", self.mode)
@@ -160,15 +164,23 @@ class Intermediate(Node):
             #self.latest_images[index] = resized_image
             self.last_time = current_time
 
-    def webrtc_command_callback(self, msg):
+    def webrtc_command_callback(self, request, response):
         """
-        Callback function to process WebRTC commands.
+        Service callback to process WebRTC commands.
         
         Commands:
           - toggle_server_audio: Enable/disable server microphone capture (send to client)
           - toggle_client_audio: Enable/disable client audio playback (local speakers)
+          - vision:camera,N: Switch track N to sensors feed
+        
+        Args:
+            request: Command.Request with 'data' field containing command string
+            response: Command.Response with 'success' and 'message' fields
+        
+        Returns:
+            response: Service response indicating success/failure
         """
-        command = msg.data
+        command = request.data
         logger.info(f"Received WebRTC command: {command}")
     
         if command == "toggle_server_audio":
@@ -183,8 +195,12 @@ class Intermediate(Node):
                 else:
                     logger.info("Enabling server audio capture")
                     self._direct_start_audio()
+                response.success = True
+                response.message = "Server audio enabled"
             else:
                 logger.warning("No audio tracks available for server audio")
+                response.success = False
+                response.message = "No audio tracks available"
         
         elif command == "toggle_client_audio":
             # Toggle client audio playback (plays client audio locally)
@@ -200,9 +216,114 @@ class Intermediate(Node):
                     logger.info("Enabling client audio playback")
                     self.audio_reproducer_enabled = True
                     # Will start on first audio data
+                response.success = True
+                response.message = f"Client audio {'enabled' if self.audio_reproducer_enabled else 'disabled'}"
+        
+        elif command.startswith("vision:camera,"):
+            # switch track N to sensors
+            try:
+                track_index = int(command.split(',')[1])
+                logger.info(f"Request to switch track {track_index}")
+                
+                # Set pending switch flag - will be processed by timer in main thread
+                self.pending_sensor_track_switch = track_index
+                
+                response.success = True
+                response.message = f"Track {track_index} switch requested"
+            except (ValueError, IndexError) as e:
+                logger.error(f"Invalid vision:camera command format: {command}. Error: {e}")
+                response.success = False
+                response.message = f"Invalid command format: {e}"
         
         else:
             logger.warning(f"Unknown WebRTC command: {command}")
+            response.success = False
+            response.message = f"Unknown command: {command}"
+        
+        return response
+    
+    def _process_pending_switch(self):
+        """Timer callback to process pending track switches in main ROS thread."""
+        if self.pending_sensor_track_switch is not None:
+            track_index = self.pending_sensor_track_switch
+            self.pending_sensor_track_switch = None  # Clear flag
+            logger.info(f"Processing track {track_index} switch in main thread")
+            self._switch_sensor_track(track_index)
+    
+    def _subscribe_to_cameras(self):
+
+        for sub in self.images_subscribers:
+            self.destroy_subscription(sub)
+        self.images_subscribers.clear()
+        
+        for i in range(self.camera_count):
+            if i == self.active_sensor_track:
+                # Este track lee del tópico de sensores
+                topic = self.sensor_topic
+                logger.info(f"Track {i} subscribing to: {topic} (SENSORS)")
+            else:
+                # Track normal lee raw
+                topic = self.camera_topics[i]
+                logger.info(f"Track {i} subscribing to: {topic}")
+            
+            def make_callback(index):
+                return lambda msg: self.image_callback(msg, index)
+            
+            sub = self.create_subscription(
+                Image,
+                topic,
+                make_callback(i),
+                10
+            )
+            self.images_subscribers.append(sub)
+    
+    def _switch_sensor_track(self, track_index):
+        if track_index is not None and (track_index < 0 or track_index >= self.camera_count):
+            logger.error(f"Invalid track index: {track_index}. Must be between 0 and {self.camera_count-1}")
+            return
+        
+        # Toggle: if already on sensors, switch back to raw
+        if self.active_sensor_track == track_index:
+            logger.info(f"Track {track_index} toggling back to raw feed")
+            old_sensor_track = self.active_sensor_track
+            self.active_sensor_track = None  # No track reads sensors
+        else:
+            old_sensor_track = self.active_sensor_track
+            self.active_sensor_track = track_index
+            logger.info(f"Track {track_index} switching to sensors feed")
+        
+        # Reconfigure affected subscriptions
+        tracks_to_update = []
+        if old_sensor_track is not None:
+            tracks_to_update.append(old_sensor_track)
+        if track_index is not None and track_index != old_sensor_track:
+            tracks_to_update.append(track_index)
+        
+        for i in tracks_to_update:
+            if i >= len(self.images_subscribers):
+                continue
+                
+            # Destroy previous subscription
+            self.destroy_subscription(self.images_subscribers[i])
+            
+            # Create new subscription
+            if i == self.active_sensor_track:
+                topic = self.sensor_topic
+                logger.info(f"Track {i} switching to: {topic} (SENSORS)")
+            else:
+                topic = self.camera_topics[i]
+                logger.info(f"Track {i} switching to: {topic} (RAW)")
+            
+            def make_callback(index):
+                return lambda msg: self.image_callback(msg, index)
+            
+            sub = self.create_subscription(
+                Image,
+                topic,
+                make_callback(i),
+                10
+            )
+            self.images_subscribers[i] = sub
     
     def _direct_start_audio(self):
         """Start audio capture directly (thread-safe)."""

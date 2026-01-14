@@ -7,152 +7,97 @@ class RobotAPI {
     }
     
     this.ros = rosInstance;
-    
     this.topicCache = {};      // { '/target_name': ROSLIB.Topic }
     this.serviceCache = {};    // { '/target_name': ROSLIB.Service }
-    
-    this.actionMap = {};       // { 'key_id': { type, ros_object, payload } }
-    
-    this.isInitialized = false;
   }
 
-  init(configJson) {
-    if (!configJson || typeof configJson !== 'object') {
-      console.error('[RobotAPI] Invalid config: must be an object');
-      return false;
+  // Get or create a topic publisher
+  getOrCreateTopic(topicName, messageType) {
+    if (this.topicCache[topicName]) {
+      return this.topicCache[topicName];
     }
 
-    try {
-      Object.entries(configJson).forEach(([keyId, action]) => {
-        const { type, target, msg_type, srv_type, payload } = action;
-
-        if (!type || !target) {
-          console.warn(`[RobotAPI] Skipping invalid action for ${keyId}: missing type or target`);
-          return;
-        }
-
-        let rosObject = null;
-
-        // LÓGICA DE PRE-CACHING: Verifica y reutiliza conexiones existentes
-        if (type === 'topic') {
-          rosObject = this._getOrCreateTopic(target, msg_type || 'std_msgs/String');
-        } else if (type === 'service') {
-          rosObject = this._getOrCreateService(target, srv_type || 'std_srvs/Trigger');
-        } else {
-          console.warn(`[RobotAPI] Unknown action type "${type}" for key ${keyId}`);
-          return;
-        }
-
-        // MAPEO: Asocia la tecla con el objeto ROS y su payload
-        this.actionMap[keyId] = {
-          type,
-          target,
-          rosObject,
-          payload: payload || {}
-        };
-
-        console.log(`[RobotAPI] Mapped ${keyId} -> ${type}:${target}`);
-      });
-
-      this.isInitialized = true;
-      console.log(`[RobotAPI] Initialized with ${Object.keys(this.actionMap).length} actions`);
-      return true;
-    } catch (error) {
-      console.error('[RobotAPI] Init failed:', error.message);
-      return false;
-    }
-  }
-
-  _getOrCreateTopic(target, messageType) {
-
-    if (this.topicCache[target]) {
-      console.log(`[RobotAPI] Topic cache hit for ${target}`);
-      return this.topicCache[target];
-    }
-
-    console.log(`[RobotAPI] Creating new Topic for ${target}`);
     const topic = new ROSLIB.Topic({
       ros: this.ros,
-      name: target,
+      name: topicName,
       messageType: messageType,
       queue_size: 1
     });
 
-    this.topicCache[target] = topic;
+    this.topicCache[topicName] = topic;
+    console.log(`[RobotAPI] Created topic: ${topicName}`);
     return topic;
   }
 
-  _getOrCreateService(target, serviceType) {
-    if (this.serviceCache[target]) {
-      console.log(`[RobotAPI] Service cache hit for ${target}`);
-      return this.serviceCache[target];
+  // Get or create a service client
+  getOrCreateService(serviceName, serviceType) {
+    if (this.serviceCache[serviceName]) {
+      return this.serviceCache[serviceName];
     }
 
-    console.log(`[RobotAPI] Creating new Service for ${target}`);
     const service = new ROSLIB.Service({
       ros: this.ros,
-      name: target,
+      name: serviceName,
       serviceType: serviceType
     });
 
-    this.serviceCache[target] = service;
+    this.serviceCache[serviceName] = service;
+    console.log(`[RobotAPI] Created service: ${serviceName}`);
     return service;
   }
 
-  // Executes an action mapped to a key
-  executeAction(keyId) {
-    // Validar que la acción está mapeada
-    const action = this.actionMap[keyId];
-    if (!action) {
-      return { success: false, error: `Action "${keyId}" not found in map` };
+  // Send message to topic(s)
+  sendTopic(topicNames, messageType, payload) {
+    if (!Array.isArray(topicNames)) {
+      topicNames = [topicNames];
     }
 
-    try {
-      if (action.type === 'topic') {
-        return this._executeTopic(action);
-      } else if (action.type === 'service') {
-        return this._executeService(action);
-      } else {
-        return { success: false, error: `Unknown action type: ${action.type}` };
+    const results = [];
+    topicNames.forEach(topicName => {
+      try {
+        const topic = this.getOrCreateTopic(topicName, messageType);
+        const message = new ROSLIB.Message(payload);
+        topic.publish(message);
+        console.log(`[RobotAPI] Published to ${topicName}:`, payload);
+        results.push({ success: true, target: topicName });
+      } catch (error) {
+        console.error(`[RobotAPI] Failed to publish to ${topicName}:`, error.message);
+        results.push({ success: false, target: topicName, error: error.message });
       }
-    } catch (error) {
-      console.error(`[RobotAPI] Execute failed for ${keyId}:`, error.message);
-      return { success: false, error: error.message };
-    }
-  }
-
-  _executeTopic(action) {
-    const { target, rosObject, payload } = action;
-
-    const message = new ROSLIB.Message(payload);
-    rosObject.publish(message);
-
-    console.log(`[RobotAPI] Published to ${target}:`, payload);
-    return { success: true, type: 'topic', target, payload };
-  }
-
-  _executeService(action) {
-    const { target, rosObject, payload } = action;
-
-    // Crear request del servicio
-    const request = new ROSLIB.ServiceRequest(payload);
-
-    // Llamar al servicio con manejo de respuesta
-    rosObject.callService(request, (response) => {
-      console.log(`[RobotAPI] Service ${target} response:`, response);
     });
 
-    console.log(`[RobotAPI] Called service ${target} with:`, payload);
-    return { success: true, type: 'service', target, payload };
+    return results;
   }
 
+  // Call service(s)
+  sendService(serviceNames, serviceType, payload) {
+    if (!Array.isArray(serviceNames)) {
+      serviceNames = [serviceNames];
+    }
+
+    const results = [];
+    serviceNames.forEach(serviceName => {
+      try {
+        const service = this.getOrCreateService(serviceName, serviceType);
+        const request = new ROSLIB.ServiceRequest(payload);
+        service.callService(request, (response) => {
+          console.log(`[RobotAPI] Service ${serviceName} response:`, response);
+        });
+        console.log(`[RobotAPI] Called service ${serviceName} with:`, payload);
+        results.push({ success: true, target: serviceName });
+      } catch (error) {
+        console.error(`[RobotAPI] Failed to call service ${serviceName}:`, error.message);
+        results.push({ success: false, target: serviceName, error: error.message });
+      }
+    });
+
+    return results;
+  }
 
   getStats() {
     return {
       topicsCached: Object.keys(this.topicCache).length,
-      servicesCached: Object.keys(this.serviceCache).length,
-      actionsMapped: Object.keys(this.actionMap).length,
-      isInitialized: this.isInitialized
+      servicesCached: Object.keys(this.serviceCache).length
     };
   }
 
@@ -161,35 +106,138 @@ class RobotAPI {
       try {
         topic.unsubscribe && topic.unsubscribe();
       } catch (e) {
-        console.error('[RobotAPI] Error unsubscribing topic:', e.message);
+        console.error('[RobotAPI] Error unsubscribing topic:', e);
       }
     });
 
     this.topicCache = {};
     this.serviceCache = {};
-    this.actionMap = {};
-    this.isInitialized = false;
     console.log('[RobotAPI] Disposed');
-  }
-
-  // Get cached topic directly without executing an action
-  getTopicPublisher(topicName) {
-    return this.topicCache[topicName] || null;
   }
 }
 
 //______________________ Input Handler ____________________
 class InputHandler {
-  constructor({ deadzone = 0.12 } = {}) {
+  constructor({ deadzone = 0.12, robotAPI = null } = {}) {
     this.deadzone = deadzone;
     this.keys = new Set();
     this.gamepadIndex = null;
     this._rafId = null;
     this.prevButtonsByPad = {};
-    this.listeners = Object.create(null); // simple event emitter: buttonDown, buttonUp, axis, gamepadConnected, gamepadDisconnected
+    this.listeners = Object.create(null);
+    
+    this.robotAPI = robotAPI;  // Reference to RobotAPI for ROS communication
+    this.actionMap = {};       // { 'key': { type, data_type, topics, payload } }
+    this.localFunctions = {};  // { 'function_name': callback }
+    
     this._setupKeyboard();
     this._setupGamepadEvents();
     this._startGamepadPoll();
+  }
+
+  // Set RobotAPI reference
+  setRobotAPI(robotAPI) {
+    this.robotAPI = robotAPI;
+  }
+
+  // Load action configuration from JSON
+  loadActions(configJson) {
+    if (!configJson || typeof configJson !== 'object') {
+      console.error('[InputHandler] Invalid config: must be an object');
+      return false;
+    }
+
+    try {
+      Object.entries(configJson).forEach(([keyId, action]) => {
+        const { type, data_type, topics, payload, actions } = action;
+
+        if (!type) {
+          console.warn(`[InputHandler] Skipping action for ${keyId}: missing type`);
+          return;
+        }
+
+        // Validate action type
+        if (!['send_topic', 'send_service', 'local_function'].includes(type)) {
+          console.warn(`[InputHandler] Unknown action type "${type}" for key ${keyId}`);
+          return;
+        }
+
+        // For send actions, ensure topics array and data_type exist
+        if (type === 'send_topic' || type === 'send_service') {
+          if (!topics || !Array.isArray(topics) || topics.length === 0) {
+            console.warn(`[InputHandler] Action ${keyId} missing topics array`);
+            return;
+          }
+          if (!data_type) {
+            console.warn(`[InputHandler] Action ${keyId} missing data_type`);
+            return;
+          }
+        }
+
+        this.actionMap[keyId] = { type, data_type, topics, payload };
+        console.log(`[InputHandler] Mapped ${keyId} -> ${type} (${topics ? topics.length : 0} targets)`);
+      });
+
+      console.log(`[InputHandler] Loaded ${Object.keys(this.actionMap).length} actions`);
+      return true;
+    } catch (error) {
+      console.error('[InputHandler] Failed to load actions:', error.message);
+      return false;
+    }
+  }
+
+  // Register a local function that can be called by actions
+  registerLocalFunction(name, callback) {
+    this.localFunctions[name] = callback;
+    console.log(`[InputHandler] Registered local function: ${name}`);
+  }
+
+  // Execute an action for a given key
+  executeAction(keyId) {
+    const action = this.actionMap[keyId];
+    if (!action) {
+      return { success: false, error: `Action "${keyId}" not mapped` };
+    }
+
+    try {
+      switch (action.type) {
+        case 'send_topic':
+          if (!this.robotAPI) {
+            return { success: false, error: 'RobotAPI not set' };
+          }
+          return {
+            success: true,
+            type: 'send_topic',
+            count: action.topics.length,
+            results: this.robotAPI.sendTopic(action.topics, action.data_type, action.payload)
+          };
+
+        case 'send_service':
+          if (!this.robotAPI) {
+            return { success: false, error: 'RobotAPI not set' };
+          }
+          return {
+            success: true,
+            type: 'send_service',
+            count: action.topics.length,
+            results: this.robotAPI.sendService(action.topics, action.data_type, action.payload)
+          };
+
+        case 'local_function':
+          const funcName = action.payload?.function_name;
+          if (!funcName || !this.localFunctions[funcName]) {
+            return { success: false, error: `Local function "${funcName}" not found` };
+          }
+          this.localFunctions[funcName](action.payload);
+          return { success: true, type: 'local_function', function: funcName };
+
+        default:
+          return { success: false, error: `Unknown action type: ${action.type}` };
+      }
+    } catch (error) {
+      console.error(`[InputHandler] Execute failed for ${keyId}:`, error.message);
+      return { success: false, error: error.message };
+    }
   }
 
   _setupKeyboard() {
@@ -224,7 +272,6 @@ class InputHandler {
     // Use left stick by default (axes[0], axes[1])
     let x = this._applyDeadzone(gp.axes[0] || 0);
     let y = this._applyDeadzone(gp.axes[1] || 0);
-    // Some controllers use inverted y; keep raw values as requested
     const active = x !== 0 || y !== 0;
     return { x, y, active };
   }
@@ -315,12 +362,10 @@ class InputHandler {
     infoPanel.scrollTop = infoPanel.scrollHeight;
   }
 
-  // Initialize input handler
-  const inputHandler = new InputHandler();
-
-  // Setup ROS connection and RobotAPI
+  // Setup ROS connection and API
   let robotAPI = null;
-  let motorPublisher = null; // Direct publisher for joystick velocities
+  let inputHandler = null;
+  let motorTopic = null;
   let isControlEnabled = false;
   let velocityInterval = null;
 
@@ -337,22 +382,21 @@ class InputHandler {
     ros.on('connection', () => {
       log('Connected to ROS');
       
-      // Initialize RobotAPI with keymaps
+      // Create RobotAPI and InputHandler
       robotAPI = new RobotAPI(ros);
+      inputHandler = new InputHandler({ robotAPI });
       
       // Load keyboard keymaps
       fetch('static/keys_map_keyboard.json')
         .then(r => r.json())
         .then(config => {
-          robotAPI.init(config);
-          log(`RobotAPI initialized: ${robotAPI.getStats().actionsMapped} actions mapped`);
+          inputHandler.loadActions(config);
+          log(`Actions loaded: ${Object.keys(inputHandler.actionMap).length} mappings`);
           setupKeyboardBindings();
           
-          // Get motor publisher from RobotAPI cache (reuse connection)
-          motorPublisher = robotAPI.getTopicPublisher('/dc_motors');
-          if (motorPublisher) {
-            log('Motor publisher obtained from RobotAPI cache');
-          }
+          // Get motor topic for joystick control
+          motorTopic = robotAPI.getOrCreateTopic('/dc_motors', 'std_msgs/Float32MultiArray');
+          log('Motor control topic ready');
         })
         .catch(e => log(`Failed to load keymaps: ${e.message}`));
     });
@@ -372,21 +416,27 @@ class InputHandler {
 
   function setupKeyboardBindings() {
     window.addEventListener('keydown', (e) => {
-      if (!robotAPI || !robotAPI.isInitialized) return;
+      if (!inputHandler) return;
       
       const key = e.key.toLowerCase();
-      const result = robotAPI.executeAction(key);
+      const result = inputHandler.executeAction(key);
       
       if (result.success) {
-        log(`Key '${key}' executed: ${result.type} -> ${result.target}`);
-      } else if (result.error !== `Action "${key}" not found in map`) {
+        if (result.count > 1) {
+          log(`Key '${key}' -> ${result.type} (${result.count} targets)`);
+        } else if (result.type === 'local_function') {
+          log(`Key '${key}' -> ${result.function}()`);
+        } else {
+          log(`Key '${key}' -> ${result.type}`);
+        }
+      } else if (result.error !== `Action "${key}" not mapped`) {
         log(`Key '${key}' failed: ${result.error}`);
       }
     });
   }
 
   function publishJoystickVelocities() {
-    if (!motorPublisher) return;
+    if (!motorTopic || !inputHandler) return;
     
     const { x, y } = inputHandler.readJoystick();
     const message = new ROSLIB.Message({
@@ -394,7 +444,7 @@ class InputHandler {
     });
     
     try {
-      motorPublisher.publish(message);
+      motorTopic.publish(message);
     } catch (e) {
       console.error('Joystick velocity publish error:', e);
     }
@@ -414,9 +464,9 @@ class InputHandler {
           velocityInterval = null;
         }
         // Send stop command
-        if (motorPublisher) {
+        if (motorTopic) {
           const stopMsg = new ROSLIB.Message({ data: [0.0, 0.0] });
-          motorPublisher.publish(stopMsg);
+          motorTopic.publish(stopMsg);
         }
       } else {
         // Start publishing joystick velocities at 10Hz
@@ -431,9 +481,9 @@ class InputHandler {
 
   // Emergency stop on page unload
   window.addEventListener('beforeunload', () => {
-    if (motorPublisher) {
+    if (motorTopic) {
       try {
-        motorPublisher.publish(new ROSLIB.Message({ data: [0.0, 0.0] }));
+        motorTopic.publish(new ROSLIB.Message({ data: [0.0, 0.0] }));
       } catch (e) {
         console.error('Error publishing emergency stop:', e);
       }

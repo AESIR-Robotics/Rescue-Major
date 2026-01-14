@@ -1,83 +1,83 @@
 {
   "o": {
-    "type": "topic",
-    "target": "/web_rtc_commands",
-    "msg_type": "std_msgs/String",
+    "type": "send_service",
+    "data_type": "vision/srv/Command",
+    "topics": ["/web_rtc_commands"],
     "payload": {"data": "toggle_client_audio"}
   },
   "p": {
-    "type": "topic",
-    "target": "/web_rtc_commands",
-    "msg_type": "std_msgs/String",
+    "type": "send_service",
+    "data_type": "vision/srv/Command",
+    "topics": ["/web_rtc_commands"],
     "payload": {"data": "toggle_server_audio"}
   }, 
   " ": {
-    "type": "topic",
-    "target": "/dc_motors",
-    "msg_type": "std_msgs/Float32MultiArray",
+    "type": "send_topic",
+    "data_type": "std_msgs/Float32MultiArray",
+    "topics": ["/dc_motors"],
     "payload": {"data": [0.0, 0.0]}
   },
 
   "r": {
-    "type": "service",
-    "target": "/command_vision_videoStream",
-    "srv_type": "vision/srv/Command",
+    "type": "send_service",
+    "data_type": "vision/srv/Command",
+    "topics": ["/command_vision_videoStream", "/web_rtc_commands"],
     "payload": {"data": "vision:camera,0"}
   },
   "t": {
-    "type": "service",
-    "target": "/command_vision_videoStream",
-    "srv_type": "vision/srv/Command",
+    "type": "send_service",
+    "data_type": "vision/srv/Command",
+    "topics": ["/command_vision_videoStream", "/web_rtc_commands"],
     "payload": {"data": "vision:camera,1"}
   },
   "y": {
-    "type": "service",
-    "target": "/command_vision_videoStream",
-    "srv_type": "vision/srv/Command",
+    "type": "send_service",
+    "data_type": "vision/srv/Command",
+    "topics": ["/command_vision_videoStream", "/web_rtc_commands"],
     "payload": {"data": "vision:camera,2"}
   },
   "u": {
-    "type": "service",
-    "target": "/command_vision_videoStream",
-    "srv_type": "vision/srv/Command",
+    "type": "send_service",
+    "data_type": "vision/srv/Command",
+    "topics": ["/command_vision_videoStream", "/web_rtc_commands"],
     "payload": {"data": "vision:camera,3"}
   },
 
   "i": {
-    "type": "service",
-    "target": "/command_vision_videoStream",
-    "srv_type": "vision/srv/Command",
+    "type": "send_service",
+    "data_type": "vision/srv/Command",
+    "topics": ["/command_vision_videoStream"],
     "payload": {"data": "vision:thermal,on"}
   },
   "f": {
-    "type": "service",
-    "target": "/command_vision_videoStream",
-    "srv_type": "vision/srv/Command",
+    "type": "send_service",
+    "data_type": "vision/srv/Command",
+    "topics": ["/command_vision_videoStream"],
     "payload": {"data": "vision:thermal,off"}
   },
 
   "g": {
-    "type": "service",
-    "target": "/command_vision_sensors",
-    "srv_type": "vision/srv/Command",
+    "type": "send_service",
+    "data_type": "vision/srv/Command",
+    "topics": ["/command_vision_sensors"],
     "payload": {"data": "vision:mode,0"}
   },
   "h": {
-    "type": "service",
-    "target": "/command_vision_sensors",
-    "srv_type": "vision/srv/Command",
+    "type": "send_service",
+    "data_type": "vision/srv/Command",
+    "topics": ["/command_vision_sensors"],
     "payload": {"data": "vision:mode,1"}
   },
   "j": {
-    "type": "service",
-    "target": "/command_vision_sensors",
-    "srv_type": "vision/srv/Command",
+    "type": "send_service",
+    "data_type": "vision/srv/Command",
+    "topics": ["/command_vision_sensors"],
     "payload": {"data": "vision:mode,2"}
   },
   "k": {
-    "type": "service",
-    "target": "/command_vision_sensors",
-    "srv_type": "vision/srv/Command",
+    "type": "send_service",
+    "data_type": "vision/srv/Command",
+    "topics": ["/command_vision_sensors"],
     "payload": {"data": "vision:mode,3"}
   }
 }

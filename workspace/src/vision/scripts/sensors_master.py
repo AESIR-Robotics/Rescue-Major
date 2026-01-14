@@ -61,7 +61,7 @@ class MultiDetectionNode(Node):
         # Suscripción para recibir comandos
         self.srv = self.create_service(
             Command,
-            'command_vision_sensors',
+            '/command_vision_sensors',
             self.command_callback
         )
 
