@@ -197,14 +197,24 @@ private:
                 size_t comma_pos = cmd.find(',');
                 int idx = stoi(cmd.substr(comma_pos + 1));
                 
-                // Validación de índice simple
-                if (idx >= -1 && idx < static_cast<int>(cameras_.size())) {
-                    num_cam_s_ = idx;
-                    response->success = true;
-                    response->message = "Active camera set to index " + to_string(idx);
+                // Validación de índice
+                if (idx >= 0 && idx < static_cast<int>(cameras_.size())) {
+                    // Toggle: si la cámara ya está activa para sensors, desactivarla
+                    if (num_cam_s_ == idx) {
+                        num_cam_s_ = -1;  // Ninguna cámara va a sensors
+                        response->success = true;
+                        response->message = "Camera " + to_string(idx) + " returned to raw (sensors disabled)";
+                        RCLCPP_INFO(this->get_logger(), "Camera %d toggled OFF from sensors", idx);
+                    } else {
+                        // Activar esta cámara para sensors
+                        num_cam_s_ = idx;
+                        response->success = true;
+                        response->message = "Camera " + to_string(idx) + " now publishing to sensors";
+                        RCLCPP_INFO(this->get_logger(), "Camera %d toggled ON for sensors", idx);
+                    }
                 } else {
                     response->success = false;
-                    response->message = "Camera index out of range";
+                    response->message = "Camera index out of range (0-" + to_string(cameras_.size() - 1) + ")";
                 }
             } catch (...) {
                 response->success = false;

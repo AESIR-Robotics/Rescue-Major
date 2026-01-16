@@ -25,7 +25,7 @@ import subprocess
 import signal
 from av import VideoFrame, AudioFrame
 import av
-
+from ament_index_python.packages import get_package_share_directory
 from audio_reproducer import AudioReproducer
 
 # Setting up logging and global variables
@@ -61,9 +61,9 @@ class Intermediate(Node):
         self.last_time = time.time()
         self.fps = 30
         self.lock = threading.Lock()
+        self.subscription_lock = threading.Lock()  # Protect subscription operations
         # Load placeholder image from package share if available, otherwise fall back
         try:
-            from ament_index_python.packages import get_package_share_directory
             placeholder_path = os.path.join(get_package_share_directory('teleoperation'), 'GUI', 'placeholder.jpg')
         except Exception:
             placeholder_path = os.path.normpath(os.path.join(ROOT, '..', 'share', 'teleoperation', 'GUI', 'placeholder.jpg'))
@@ -148,21 +148,25 @@ class Intermediate(Node):
         
         current_time = time.time()
         if current_time - self.last_time >= 1.0 / self.fps:
-            cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
-            if self.mode == "manual":
-                resized_image = cv2.resize(cv_image, self.manual_resolution)
-            else:
-                resized_image = self.resize_image(cv_image)
+            try:
+                cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
+                if self.mode == "manual":
+                    resized_image = cv2.resize(cv_image, self.manual_resolution)
+                else:
+                    resized_image = self.resize_image(cv_image)
 
-            # Instead of replacing reference, copy data into preallocated buffer:
-            if self.latest_images[index].shape == resized_image.shape:
-                np.copyto(self.latest_images[index], resized_image)
-            else:
-                # Fallback (should not happen if you keep resolution consistent)
-                self.latest_images[index] = resized_image
-
-            #self.latest_images[index] = resized_image
-            self.last_time = current_time
+                # Thread-safe buffer update
+                with self.subscription_lock:
+                    # Check if buffer needs reallocation due to size change
+                    if self.latest_images[index].shape != resized_image.shape:
+                        logger.info(f"Track {index}: Reallocating buffer from {self.latest_images[index].shape} to {resized_image.shape}")
+                        self.latest_images[index] = np.zeros(resized_image.shape, dtype=np.uint8)
+                    
+                    np.copyto(self.latest_images[index], resized_image)
+                
+                self.last_time = current_time
+            except Exception as e:
+                logger.error(f"Error in image_callback for track {index}: {e}")
 
     def webrtc_command_callback(self, request, response):
         """
@@ -223,13 +227,20 @@ class Intermediate(Node):
             # switch track N to sensors
             try:
                 track_index = int(command.split(',')[1])
-                logger.info(f"Request to switch track {track_index}")
                 
-                # Set pending switch flag - will be processed by timer in main thread
-                self.pending_sensor_track_switch = track_index
-                
-                response.success = True
-                response.message = f"Track {track_index} switch requested"
+                # Validate before setting flag
+                if track_index < 0 or track_index >= self.camera_count:
+                    logger.error(f"Invalid track index: {track_index}. Must be 0-{self.camera_count-1}")
+                    response.success = False
+                    response.message = f"Invalid track index: {track_index}"
+                else:
+                    logger.info(f"Request to switch track {track_index} to {'raw' if self.active_sensor_track == track_index else 'sensors'}")
+                    
+                    # Set pending switch flag - will be processed by timer in main thread
+                    self.pending_sensor_track_switch = track_index
+                    
+                    response.success = True
+                    response.message = f"Track {track_index} switch requested"
             except (ValueError, IndexError) as e:
                 logger.error(f"Invalid vision:camera command format: {command}. Error: {e}")
                 response.success = False
@@ -251,79 +262,89 @@ class Intermediate(Node):
             self._switch_sensor_track(track_index)
     
     def _subscribe_to_cameras(self):
-
-        for sub in self.images_subscribers:
-            self.destroy_subscription(sub)
-        self.images_subscribers.clear()
-        
-        for i in range(self.camera_count):
-            if i == self.active_sensor_track:
-                # Este track lee del tópico de sensores
-                topic = self.sensor_topic
-                logger.info(f"Track {i} subscribing to: {topic} (SENSORS)")
-            else:
-                # Track normal lee raw
-                topic = self.camera_topics[i]
-                logger.info(f"Track {i} subscribing to: {topic}")
+        """Initialize all camera subscriptions. Thread-safe."""
+        with self.subscription_lock:
+            for sub in self.images_subscribers:
+                self.destroy_subscription(sub)
+            self.images_subscribers.clear()
             
-            def make_callback(index):
-                return lambda msg: self.image_callback(msg, index)
-            
-            sub = self.create_subscription(
-                Image,
-                topic,
-                make_callback(i),
-                10
-            )
-            self.images_subscribers.append(sub)
+            for i in range(self.camera_count):
+                topic = self.sensor_topic if i == self.active_sensor_track else self.camera_topics[i]
+                logger.info(f"Track {i} subscribing to: {topic} {'(SENSORS)' if i == self.active_sensor_track else ''}")
+                
+                # Use functools.partial to avoid closure issues
+                from functools import partial
+                callback = partial(self.image_callback, index=i)
+                
+                sub = self.create_subscription(
+                    Image,
+                    topic,
+                    callback,
+                    10
+                )
+                self.images_subscribers.append(sub)
+                
+                # Clear image buffer for this track to avoid showing stale data
+                self.latest_images[i] = np.zeros(self.resolution[::-1] + (3,), dtype=np.uint8)
     
     def _switch_sensor_track(self, track_index):
         if track_index is not None and (track_index < 0 or track_index >= self.camera_count):
             logger.error(f"Invalid track index: {track_index}. Must be between 0 and {self.camera_count-1}")
             return
         
-        # Toggle: if already on sensors, switch back to raw
-        if self.active_sensor_track == track_index:
-            logger.info(f"Track {track_index} toggling back to raw feed")
-            old_sensor_track = self.active_sensor_track
-            self.active_sensor_track = None  # No track reads sensors
-        else:
-            old_sensor_track = self.active_sensor_track
-            self.active_sensor_track = track_index
-            logger.info(f"Track {track_index} switching to sensors feed")
-        
-        # Reconfigure affected subscriptions
-        tracks_to_update = []
-        if old_sensor_track is not None:
-            tracks_to_update.append(old_sensor_track)
-        if track_index is not None and track_index != old_sensor_track:
-            tracks_to_update.append(track_index)
-        
-        for i in tracks_to_update:
-            if i >= len(self.images_subscribers):
-                continue
-                
-            # Destroy previous subscription
-            self.destroy_subscription(self.images_subscribers[i])
-            
-            # Create new subscription
-            if i == self.active_sensor_track:
-                topic = self.sensor_topic
-                logger.info(f"Track {i} switching to: {topic} (SENSORS)")
+        with self.subscription_lock:
+            # Toggle: if already on sensors, switch back to raw
+            if self.active_sensor_track == track_index:
+                logger.info(f"Track {track_index} toggling back to raw feed")
+                old_sensor_track = self.active_sensor_track
+                self.active_sensor_track = None  # No track reads sensors
             else:
-                topic = self.camera_topics[i]
-                logger.info(f"Track {i} switching to: {topic} (RAW)")
+                old_sensor_track = self.active_sensor_track
+                self.active_sensor_track = track_index
+                logger.info(f"Track {track_index} switching to sensors feed")
             
-            def make_callback(index):
-                return lambda msg: self.image_callback(msg, index)
+            # Determine which tracks need updating
+            tracks_to_update = set()
+            if old_sensor_track is not None:
+                tracks_to_update.add(old_sensor_track)
+            if track_index is not None:
+                tracks_to_update.add(track_index)
             
-            sub = self.create_subscription(
-                Image,
-                topic,
-                make_callback(i),
-                10
-            )
-            self.images_subscribers[i] = sub
+            # Update only affected subscriptions
+            from functools import partial
+            for i in tracks_to_update:
+                if i >= len(self.images_subscribers):
+                    logger.warning(f"Track {i} subscription index out of range")
+                    continue
+                
+                # Destroy previous subscription
+                try:
+                    self.destroy_subscription(self.images_subscribers[i])
+                except Exception as e:
+                    logger.error(f"Error destroying subscription for track {i}: {e}")
+                
+                # Determine new topic
+                topic = self.sensor_topic if i == self.active_sensor_track else self.camera_topics[i]
+                logger.info(f"Track {i} switching to: {topic} {'(SENSORS)' if i == self.active_sensor_track else '(RAW)'}")
+                
+                # Create new subscription with proper closure handling
+                callback = partial(self.image_callback, index=i)
+                
+                try:
+                    sub = self.create_subscription(
+                        Image,
+                        topic,
+                        callback,
+                        10
+                    )
+                    self.images_subscribers[i] = sub
+                    
+                    # Clear image buffer to avoid showing stale frames from previous source
+                    self.latest_images[i] = np.zeros(self.resolution[::-1] + (3,), dtype=np.uint8)
+                    logger.info(f"Track {i} buffer cleared")
+                    
+                except Exception as e:
+                    logger.error(f"Error creating subscription for track {i}: {e}")
     
     def _direct_start_audio(self):
         """Start audio capture directly (thread-safe)."""
@@ -1089,8 +1110,6 @@ def main(args=None):
     app.router.add_static("/static/", gui_path)
     app.router.add_get("/", index)  # Serve the main HTML page
     app.router.add_post("/offer", offer)  # Handle WebRTC offers
-
-    # -  - - - -- -- - - -  - - - --  -----------------
 
     rclpy.init()
     global intermediate_node
