@@ -37,7 +37,7 @@ class MultiDetectionNode(Node):
             self.get_logger().info(f"Modelo cargado desde: {model_path}")
 
         # Carpeta para guardar imágenes
-        self.image_path = os.path.join(script_dir, "../../../saves/vision")
+        self.image_path = os.path.join(script_dir, "../../../../saves/vision")
         os.makedirs(self.image_path, exist_ok=True)
         self.get_logger().info(f"Carpeta de imágenes: {self.image_path}")
 
