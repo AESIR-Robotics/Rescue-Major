@@ -1,0 +1,546 @@
+/* =========================================== */
+/* ESTILOS GENERALES DE LA PÁGINA */
+/* =========================================== */
+
+/* Estilo del cuerpo de la página */
+body {
+    font-family: Georgia, serif;
+    background: #000123;  /* Fondo azul oscuro */
+    color: #ddd;          /* Texto gris claro */
+    margin: 0;
+    padding: 20px;
+    overflow-x: hidden;   /* Evitar scroll horizontal */
+}
+
+/* Título principal de la aplicación */
+.big-title {
+    font-size: 300%;
+    font-family: Georgia, serif;
+    text-align: center;
+    margin-bottom: 30px;
+    color: #fff;
+}
+
+/* =========================================== */
+/* LAYOUT PRINCIPAL DE DOS COLUMNAS */
+/* =========================================== */
+
+/* Contenedor horizontal principal que divide la pantalla en dos secciones */
+.contenedor-horizontal {
+    display: flex;            /* Usa flexbox para layout horizontal */
+    gap: 30px;                /* Espacio entre columnas */
+    max-width: 1800px;        /* Ancho máximo del contenido */
+    margin: 0 auto;           /* Centra el contenedor horizontalmente */
+}
+
+/* Columna izquierda: Controles y configuración */
+.elemento-izquierda {
+    flex: 1;                  /* Ocupa 1 parte del espacio disponible */
+    background-color: #20202d; /* Fondo gris azulado oscuro */
+    border-radius: 8px;       /* Bordes redondeados */
+    padding: 20px;            /* Espaciado interno */
+    min-width: 400px;         /* Ancho mínimo para mantener legibilidad */
+    max-height: 90vh;         /* Altura máxima */
+    overflow-y: auto;         /* Scroll vertical si es necesario */
+}
+
+/* Columna derecha: Configuración de controles simplificada */
+.elemento-derecha {
+    flex: 1;                  /* Ocupa 1 parte del espacio */
+    background-color: #20202d; /* Mismo fondo que las otras columnas */
+    border-radius: 8px;       /* Bordes redondeados */
+    padding: 20px;            /* Espaciado interno */
+    min-width: 450px;         /* Ancho mínimo para la configuración */
+    max-height: 90vh;         /* Altura máxima */
+    overflow-y: auto;         /* Scroll vertical si es necesario */
+}
+
+/* =========================================== */
+/* ORGANIZACIÓN VERTICAL DENTRO DE LAS COLUMNAS */
+/* =========================================== */
+
+/* Contenedor para organizar elementos verticalmente */
+.contenedor-vertical {
+    display: flex;
+    flex-direction: column;   /* Elementos apilados verticalmente */
+}
+
+/* =========================================== */
+/* ESTILOS DE BOTONES */
+/* =========================================== */
+
+/* Estilo base para todos los botones */
+button {
+    padding: 10px 20px;       /* Espaciado interno */
+    margin: 10px;             /* Margen exterior */
+    cursor: pointer;          /* Cursor de mano al pasar sobre el botón */
+    border: none;             /* Sin bordes */
+    border-radius: 4px;       /* Bordes ligeramente redondeados */
+    background-color: #007bff; /* Azul brillante */
+    color: white;             /* Texto blanco */
+    font-size: 1rem;          /* Tamaño de fuente estándar */
+    transition: background-color 0.2s ease-in-out; /* Transición suave al cambiar color */
+}
+
+/* Efecto hover para botones */
+button:hover {
+    background-color: deeppink; /* Cambia a rosa brillante al pasar el mouse */
+}
+
+/* =========================================== */
+/* FORMULARIOS Y CONTROLES */
+/* =========================================== */
+
+/* Estilo para etiquetas de formulario */
+label {
+    font-size: 0.9rem;        /* Texto ligeramente más pequeño */
+    margin-right: 16px;       /* Margen a la derecha */
+    margin-left: 16px;        /* Margen a la izquierda */
+    font-family: 'Courier New', monospace; /* Fuente monoespaciada */
+}
+
+/* Contenedor para opciones de configuración */
+.option {
+    margin: 16px 0;           /* Margen vertical */
+    display: flex;            /* Layout horizontal */
+    flex-direction: row;      /* Elementos en fila */
+    align-items: center;      /* Centra verticalmente */
+    font-family: 'Courier New', monospace; /* Fuente monoespaciada */
+    border-radius: 3px;       /* Bordes redondeados */
+}
+
+/* Estilo para elementos select (listas desplegables) */
+.option select {
+    margin: 8px;              /* Margen alrededor */
+    padding: 4px 8px;         /* Espaciado interno */
+    border-radius: 4px;       /* Bordes redondeados */
+    border: 1px solid #007bff; /* Borde azul */
+    background-color: #007bff; /* Fondo azul */
+    color: white;             /* Texto blanco */
+}
+
+/* =========================================== */
+/* SECCIÓN DE ESTADOS DE CONEXIÓN */
+/* =========================================== */
+
+/* Etiquetas que muestran el estado de la conexión WebRTC */
+.state-labels {
+    font-family: 'Courier New', monospace; /* Fuente monoespaciada */
+    font-size: 80%;           /* Texto más pequeño */
+    margin-left: 10px;        /* Margen izquierdo */
+    margin-top: 10px;         /* Margen superior */
+}
+
+/* Contenedor principal para la sección de estados */
+.state-container {
+    justify-content: space-between; /* Distribuye espacio entre elementos */
+    background-color: #4D4949; /* Fondo gris oscuro */
+    padding: 15px;            /* Espaciado interno */
+    border-radius: 4px;       /* Bordes redondeados */
+    margin-top: 20px;         /* Separación de elementos anteriores */
+}
+
+/* =========================================== */
+/* SECCIÓN DE INFORMACIÓN DEL ROBOT */
+/* =========================================== */
+
+/* Contenedor para mensajes del robot */
+.robot-info-container {
+    background-color: #2a2a38; /* Fondo gris azulado */
+    margin-top: 10px;         /* Separación de elementos anteriores */
+    padding: 10px;            /* Espaciado interno */
+    border-radius: 4px;       /* Bordes redondeados */
+}
+
+/* Área de texto para mensajes del robot */
+#info-messages {
+    font-family: 'Courier New', monospace; /* Fuente monoespaciada */
+    font-size: 80%;           /* Texto más pequeño */
+    margin-left: 10px;        /* Margen izquierdo */
+    white-space: pre-wrap;    /* Mantiene saltos de línea y espacios */
+}
+
+/* Estilo para texto preformateado (usado en mensajes) */
+pre {
+    overflow-x: hidden;       /* Oculta scroll horizontal */
+    overflow-y: auto;         /* Permite scroll vertical si es necesario */
+    margin-left: 15px;        /* Margen izquierdo */
+    font-family: 'Courier New', monospace; /* Fuente monoespaciada */
+    font-size: 80%;           /* Texto más pequeño */
+}
+
+/* =========================================== */
+/* VENTANAS FLOTANTES DE CÁMARA */
+/* =========================================== */
+
+/* Ventana flotante que puede moverse por la pantalla */
+.camera-floating-window {
+    position: fixed;          /* Posición fija en la pantalla */
+    background-color: #000123; /* Fondo igual al de la página */
+    border: 2px solid #007bff; /* Borde azul brillante */
+    border-radius: 8px;       /* Bordes redondeados */
+    box-shadow: 0 4px 15px rgba(0, 123, 255, 0.3); /* Sombra azul */
+    min-width: 320px;         /* Ancho mínimo */
+    min-height: 240px;        /* Altura mínima */
+    z-index: 1000;            /* Se coloca sobre otros elementos */
+    overflow: hidden;         /* Oculta contenido que sobresalga */
+    resize: both;             /* Permite redimensionar la ventana */
+    display: none;            /* Oculto por defecto */
+}
+
+/* Mostrar ventana cuando está activa */
+.camera-floating-window.active {
+    display: block;           /* Cambia a display block para mostrar */
+}
+
+/* Cabecera de la ventana flotante (área para arrastrar) */
+.floating-window-header {
+    background-color: #007bff; /* Fondo azul */
+    color: white;             /* Texto blanco */
+    padding: 10px 15px;       /* Espaciado interno */
+    cursor: move;             /* Cursor de mover indicando que se puede arrastrar */
+    display: flex;            /* Layout flexible */
+    justify-content: space-between; /* Separa título y controles */
+    align-items: center;      /* Centra verticalmente */
+    font-family: 'Courier New', monospace; /* Fuente monoespaciada */
+    font-weight: bold;        /* Texto en negrita */
+    user-select: none;        /* Evita que el texto se seleccione */
+}
+
+/* Contenedor para botones de control de la ventana */
+.floating-window-controls {
+    display: flex;            /* Layout horizontal */
+    gap: 5px;                 /* Espacio entre botones */
+}
+
+/* Botones individuales en la ventana flotante */
+.floating-window-btn {
+    background: rgba(255, 255, 255, 0.2); /* Fondo blanco semitransparente */
+    border: none;             /* Sin bordes */
+    color: white;             /* Texto blanco */
+    width: 24px;              /* Ancho fijo */
+    height: 24px;             /* Altura fija (botón cuadrado) */
+    border-radius: 3px;       /* Bordes ligeramente redondeados */
+    cursor: pointer;          /* Cursor de mano */
+    display: flex;            /* Layout flexible para centrar contenido */
+    align-items: center;      /* Centra verticalmente */
+    justify-content: center;  /* Centra horizontalmente */
+    font-size: 14px;          /* Tamaño de fuente */
+}
+
+/* Efecto hover para botones de ventana flotante */
+.floating-window-btn:hover {
+    background: rgba(255, 255, 255, 0.3); /* Fondo más blanco al pasar mouse */
+}
+
+/* Contenido principal de la ventana flotante */
+.floating-window-content {
+    padding: 5px;             /* Espaciado interno mínimo */
+    height: calc(100% - 40px); /* Altura completa menos la cabecera */
+    overflow: hidden;         /* Oculta contenido que sobresalga */
+}
+
+/* Contenedor para el video dentro de la ventana flotante */
+.floating-video-container {
+    width: 100%;              /* Ancho completo */
+    height: 100%;             /* Altura completa */
+    background-color: #000;   /* Fondo negro */
+    display: flex;            /* Layout flexible */
+    align-items: center;      /* Centra verticalmente */
+    justify-content: center;  /* Centra horizontalmente */
+}
+
+/* Video dentro de la ventana flotante */
+.camera-floating-window video {
+    width: 100%;              /* Ancho completo */
+    height: 100%;             /* Altura completo */
+    object-fit: contain;      /* Mantiene proporción sin recortar */
+    background-color: #000;   /* Fondo negro */
+}
+
+/* =========================================== */
+/* CONTROLES PARA LA VENTANA FLOTANTE EN LA INTERFAZ PRINCIPAL */
+/* =========================================== */
+
+/* Contenedor para controles de ventana flotante */
+.floating-window-controls-panel {
+    background-color: rgba(0, 123, 255, 0.1); /* Fondo azul muy transparente */
+    padding: 15px;            /* Espaciado interno */
+    border-radius: 4px;       /* Bordes redondeados */
+    margin-top: 20px;         /* Separación de elementos anteriores */
+    border: 1px dashed #007bff; /* Borde azul discontinuo */
+}
+
+/* Botones específicos para controlar la ventana flotante */
+.floating-control-btn {
+    padding: 8px 15px;        /* Espaciado interno más compacto */
+    background-color: #2196F3; /* Azul diferente al principal */
+    color: white;             /* Texto blanco */
+    border: none;             /* Sin bordes */
+    border-radius: 4px;       /* Bordes redondeados */
+    cursor: pointer;          /* Cursor de mano */
+    font-family: 'Courier New', monospace; /* Fuente monoespaciada */
+    font-size: 0.9rem;        /* Texto ligeramente más pequeño */
+    margin: 5px;              /* Margen pequeño alrededor */
+}
+
+/* Efecto hover para botones de control flotante */
+.floating-control-btn:hover {
+    background-color: deeppink; /* Cambia a rosa brillante */
+}
+
+/* =========================================== */
+/* ESTILOS PARA LA CONFIGURACIÓN DE CONTROLES SIMPLIFICADA */
+/* =========================================== */
+
+/* Panel de configuración de controles */
+.control-config-panel {
+    background-color: rgba(255, 255, 255, 0.05); /* Fondo blanco muy transparente */
+    padding: 20px;            /* Espaciado interno */
+    border-radius: 8px;       /* Bordes redondeados */
+    margin-top: 20px;         /* Separación de elementos anteriores */
+    border: 1px solid rgba(255, 255, 255, 0.1); /* Borde sutil */
+}
+
+/* Título de la sección de controles */
+.control-config-title {
+    font-family: 'Courier New', monospace; /* Fuente monoespaciada */
+    font-size: 180%;          /* Texto más grande */
+    color: #fff;              /* Texto blanco */
+    margin-bottom: 20px;      /* Margen inferior */
+    text-align: center;       /* Centrado */
+    background: linear-gradient(45deg, #007bff, #00bfff); /* Gradiente azul */
+    padding: 10px;            /* Espaciado interno */
+    border-radius: 4px;       /* Bordes redondeados */
+}
+
+/* Contenedor para cada fila de configuración de control */
+.control-row {
+    display: flex;            /* Layout horizontal */
+    align-items: center;      /* Centra verticalmente */
+    justify-content: space-between; /* Separa acción y tecla */
+    background-color: rgba(0, 0, 0, 0.3); /* Fondo oscuro semitransparente */
+    padding: 12px 15px;       /* Espaciado interno */
+    margin-bottom: 10px;      /* Separación entre filas */
+    border-radius: 6px;       /* Bordes redondeados */
+    transition: background-color 0.2s; /* Transición suave */
+    border-left: 4px solid #007bff; /* Borde lateral azul */
+}
+
+/* Efecto hover para filas de control */
+.control-row:hover {
+    background-color: rgba(0, 123, 255, 0.1); /* Fondo azul al pasar mouse */
+}
+
+/* Etiqueta de la acción (ej: "Avanzar") */
+.control-label {
+    font-family: 'Courier New', monospace; /* Fuente monoespaciada */
+    font-size: 1.1rem;        /* Tamaño de fuente */
+    color: #fff;              /* Texto blanco */
+    font-weight: bold;        /* Negrita */
+    flex: 1;                  /* Ocupa espacio disponible */
+}
+
+/* Contenedor para el campo de entrada de tecla */
+.control-input-container {
+    position: relative;       /* Posicionamiento relativo */
+    flex: 0 0 200px;          /* Ancho fijo */
+    display: flex;            /* Layout flexible */
+    align-items: center;      /* Centra verticalmente */
+    justify-content: flex-end; /* Alinea a la derecha */
+}
+
+/* Campo de entrada para asignar teclas */
+.control-input {
+    background-color: rgba(0, 0, 0, 0.5); /* Fondo oscuro semitransparente */
+    border: 2px solid #007bff; /* Borde azul */
+    border-radius: 6px;       /* Bordes redondeados */
+    color: #fff;              /* Texto blanco */
+    padding: 8px 12px;        /* Espaciado interno */
+    font-family: 'Courier New', monospace; /* Fuente monoespaciada */
+    font-size: 1.1rem;        /* Tamaño de fuente */
+    text-align: center;       /* Texto centrado */
+    width: 80px;              /* Ancho fijo */
+    cursor: pointer;          /* Cursor de mano */
+    transition: all 0.2s;     /* Transición suave */
+    outline: none;            /* Sin contorno */
+}
+
+/* Efecto hover para campo de entrada */
+.control-input:hover {
+    background-color: rgba(0, 123, 255, 0.2); /* Fondo azul al pasar mouse */
+}
+
+/* Efecto cuando el campo está en modo de grabación */
+.control-input.recording {
+    background-color: rgba(255, 20, 147, 0.3); /* Fondo rosa brillante */
+    border-color: deeppink;   /* Borde rosa */
+    animation: pulse 1s infinite; /* Animación de pulsación */
+}
+
+/* Animación de pulsación para modo de grabación */
+@keyframes pulse {
+    0% { box-shadow: 0 0 5px rgba(255, 20, 147, 0.5); }
+    50% { box-shadow: 0 0 20px rgba(255, 20, 147, 0.8); }
+    100% { box-shadow: 0 0 5px rgba(255, 20, 147, 0.5); }
+}
+
+/* Botones de acción para la configuración de controles */
+.control-action-btn {
+    padding: 8px 16px;        /* Espaciado interno */
+    background-color: #28a745; /* Verde */
+    color: white;             /* Texto blanco */
+    border: none;             /* Sin bordes */
+    border-radius: 6px;       /* Bordes redondeados */
+    cursor: pointer;          /* Cursor de mano */
+    font-family: 'Courier New', monospace; /* Fuente monoespaciada */
+    font-size: 1rem;          /* Tamaño de fuente */
+    margin: 5px;              /* Margen pequeño alrededor */
+    transition: background-color 0.2s; /* Transición suave */
+}
+
+/* Efecto hover para botones de acción de controles */
+.control-action-btn:hover {
+    background-color: #218838; /* Verde más oscuro */
+}
+
+/* Botón especial para exportar */
+.export-btn {
+    background-color: #ff9800; /* Naranja */
+}
+
+/* Efecto hover para botón de exportar */
+.export-btn:hover {
+    background-color: #e68900; /* Naranja más oscuro */
+}
+
+/* Botón especial para restablecer */
+.reset-btn {
+    background-color: #dc3545; /* Rojo */
+}
+
+/* Efecto hover para botón de restablecer */
+.reset-btn:hover {
+    background-color: #c82333; /* Rojo más oscuro */
+}
+
+/* Contenedor para botones de acción */
+.control-buttons-container {
+    display: flex;            /* Layout horizontal */
+    justify-content: center;  /* Centra los botones */
+    gap: 15px;                /* Espacio entre botones */
+    margin-top: 25px;         /* Margen superior */
+    padding-top: 20px;        /* Espaciado superior */
+    border-top: 1px solid rgba(255, 255, 255, 0.1); /* Línea divisoria */
+}
+
+/* Contenedor para mensajes de estado */
+.control-status-message {
+    background-color: rgba(0, 123, 255, 0.1); /* Fondo azul muy transparente */
+    padding: 10px 15px;       /* Espaciado interno */
+    border-radius: 4px;       /* Bordes redondeados */
+    margin-top: 15px;         /* Margen superior */
+    font-family: 'Courier New', monospace; /* Fuente monoespaciada */
+    font-size: 0.9rem;        /* Texto pequeño */
+    text-align: center;       /* Texto centrado */
+    color: #4CAF50;           /* Color verde para mensajes positivos */
+    min-height: 20px;         /* Altura mínima */
+}
+
+/* Estado de error */
+.control-status-error {
+    color: #f44336;           /* Color rojo para errores */
+}
+
+/* Mensaje de instrucciones */
+.instructions {
+    font-family: 'Courier New', monospace; /* Fuente monoespaciada */
+    font-size: 0.8rem;        /* Texto pequeño */
+    color: #aaa;              /* Color gris claro */
+    text-align: center;       /* Texto centrado */
+    margin-top: 10px;         /* Margen superior */
+    padding: 10px;            /* Espaciado interno */
+    background-color: rgba(255, 255, 255, 0.05); /* Fondo muy transparente */
+    border-radius: 4px;       /* Bordes redondeados */
+}
+
+/* =========================================== */
+/* CONTROLES PARA LAS VENTANAS DE CÁMARA */
+/* =========================================== */
+
+/* Panel de control para ventanas de cámara */
+.camera-controls-panel {
+    background-color: rgba(0, 123, 255, 0.1); /* Fondo azul muy transparente */
+    padding: 15px;            /* Espaciado interno */
+    border-radius: 4px;       /* Bordes redondeados */
+    margin-top: 20px;         /* Separación de elementos anteriores */
+    border: 1px dashed #007bff; /* Borde azul discontinuo */
+}
+
+/* Botones específicos para controlar las cámaras */
+.camera-control-btn {
+    padding: 8px 15px;        /* Espaciado interno más compacto */
+    background-color: #9C27B0; /* Púrpura */
+    color: white;             /* Texto blanco */
+    border: none;             /* Sin bordes */
+    border-radius: 4px;       /* Bordes redondeados */
+    cursor: pointer;          /* Cursor de mano */
+    font-family: 'Courier New', monospace; /* Fuente monoespaciada */
+    font-size: 0.9rem;        /* Texto ligeramente más pequeño */
+    margin: 5px;              /* Margen pequeño alrededor */
+}
+
+/* Efecto hover para botones de control de cámara */
+.camera-control-btn:hover {
+    background-color: deeppink; /* Cambia a rosa brillante */
+}
+
+/* Contenedor para estado de las cámaras */
+.camera-status-container {
+    display: flex;            /* Layout horizontal */
+    flex-wrap: wrap;          /* Permite que los elementos se envuelvan */
+    gap: 10px;                /* Espacio entre elementos */
+    margin-top: 15px;         /* Margen superior */
+}
+
+/* Estado individual de cámara */
+.camera-status {
+    background-color: rgba(0, 123, 255, 0.2); /* Fondo azul semitransparente */
+    padding: 8px 12px;        /* Espaciado interno */
+    border-radius: 4px;       /* Bordes redondeados */
+    font-family: 'Courier New', monospace; /* Fuente monoespaciada */
+    font-size: 0.8rem;        /* Texto pequeño */
+    flex: 1;                  /* Ocupa espacio disponible */
+    min-width: 150px;         /* Ancho mínimo */
+}
+
+/* Color para cámara abierta */
+.camera-open {
+    color: #4CAF50;           /* Verde */
+}
+
+/* Color para cámara cerrada */
+.camera-closed {
+    color: #f44336;           /* Rojo */
+}
+
+/* =========================================== */
+/* TÍTULOS DE SECCIÓN */
+/* =========================================== */
+
+/* Títulos de secciones */
+.title {
+    font-family: 'Courier New', monospace; /* Fuente monoespaciada */
+    font-size: 150%;          /* Texto más grande */
+    margin-left: 10px;        /* Margen izquierdo */
+    margin-top: 10px;         /* Margen superior */
+    margin-bottom: 10px;      /* Margen inferior */
+    color: #fff;              /* Texto blanco */
+}
+
+/* Imagen de placeholder cuando la cámara no está disponible */
+.placeholder {
+    width: 100%;              /* Ancho completo del contenedor */
+    height: auto;             /* Altura automática manteniendo proporción */
+    display: block;           /* Display de bloque */
+}
