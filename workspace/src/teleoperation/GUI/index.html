@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WebRTC streaming</title>
+    <!-- Vincular archivo CSS externo -->
+    <link rel="stylesheet" href="estilos.css">
+</head>
+
+<body>
+    <!-- =========================================== -->
+    <!-- TÍTULO PRINCIPAL DE LA APLICACIÓN -->
+    <!-- =========================================== -->
+    <div class="big-title">AESIR Interfaz</div>
+
+    <!-- =========================================== -->
+    <!-- LAYOUT PRINCIPAL DE DOS COLUMNAS -->
+    <!-- =========================================== -->
+    <div class="contenedor-horizontal">
+        <!-- COLUMNA IZQUIERDA: CONTROLES Y CONFIGURACIÓN -->
+        <div class="elemento-izquierda">
+            <div class="contenedor-vertical">
+                <!-- Título de la sección de opciones -->
+                <div class="title">Options</div>
+
+                <!-- Opción 1: Configuración del DataChannel de WebRTC -->
+                <div class="option">
+                    <label for="use-datachannel">Datachannel</label>
+                    <!-- Selector para parámetros del canal de datos -->
+                    <select id="datachannel-parameters">
+                        <option value='{"ordered": true}'>Ordered, reliable</option>
+                        <option value='{"ordered": false, "maxRetransmits": 0}'>Unordered, no retransmissions</option>
+                        <option value='{"ordered": false, "maxPacketLifetime": 500}'>Unordered, 500ms lifetime</option>
+                    </select>
+                </div>
+
+                <!-- Opción 2: Configuración de resolución de video -->
+                <div class="option">
+                    <label for="use-video">Video</label>
+                    <!-- Selector para resolución de video -->
+                    <select id="video-resolution">
+                        <option value="" selected>Default resolution</option>
+                        <option value="320x240">320x240</option>
+                        <option value="640x480">640x480</option>
+                        <option value="960x540">960x540</option>
+                        <option value="1280x720">1280x720</option>
+                    </select>
+                </div>
+
+                <!-- Contenedor para botones de control principales -->
+                <div class="option">
+                    <!-- Botón para iniciar la transmisión WebRTC -->
+                    <button id="start" onclick="start()">Start transmission</button>
+                    <!-- Botón para detener la transmisión (inicialmente oculto) -->
+                    <button id="stop" style="display: none" onclick="stop()">Stop</button>
+                    <!-- Botón para iniciar la comunicación (función específica de la aplicación) -->
+                    <button id="start-communication" onclick="toggleCommunication()">Start Communication</button>
+                    <!-- Botón para cambiar el modo de entrada (ej: controlador vs teclado) -->
+                    <button id="toggle-input" onclick="toggleInputMode()">Use Controller</button>
+                </div>
+
+                <!-- =========================================== -->
+                <!-- PANEL DE CONTROL DE VENTANAS DE CÁMARA -->
+                <!-- =========================================== -->
+                <div class="camera-controls-panel">
+                    <!-- Título del panel de control de cámaras -->
+                    <div class="title" style="font-size: 1.2rem;">Ventanas de Cámara</div>
+                    
+                    <!-- Contenedor para botones de control de cámaras -->
+                    <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-top: 15px;">
+                        <!-- Botón para mostrar/ocultar todas las cámaras -->
+                        <button class="camera-control-btn" onclick="toggleAllCameras()">Mostrar/Ocultar Todas</button>
+                        <!-- Botón para organizar cámaras automáticamente -->
+                        <button class="camera-control-btn" onclick="arrangeCameras()">Organizar Cámaras</button>
+                        <!-- Botón para resetear posiciones de cámaras -->
+                        <button class="camera-control-btn" onclick="resetCameraPositions()">Resetear Posiciones</button>
+                        <!-- Botón para siempre al frente todas -->
+                        <button class="camera-control-btn" onclick="toggleAllAlwaysOnTop()">Siempre al Frente Todas</button>
+                    </div>
+                    
+                    <!-- Estado de las cámaras -->
+                    <div class="camera-status-container">
+                        <div class="camera-status">
+                            Cámara 1: <span id="camera1-status" class="camera-closed">Cerrada</span>
+                        </div>
+                        <div class="camera-status">
+                            Cámara 2: <span id="camera2-status" class="camera-closed">Cerrada</span>
+                        </div>
+                        <div class="camera-status">
+                            Cámara 3: <span id="camera3-status" class="camera-closed">Cerrada</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- =========================================== -->
+                <!-- SECCIÓN DE ESTADOS DE CONEXIÓN WEBRTC -->
+                <!-- =========================================== -->
+                <div class="state-container">
+                    <!-- Título de la sección de estados -->
+                    <div class="title">WebRTC Connection State</div>
+                    
+                    <!-- Estado de recolección ICE (Interactive Connectivity Establishment) -->
+                    <div class="state-labels">ICE gathering state: 
+                        <span id="ice-gathering-state">-</span>
+                    </div>
+                    
+                    <!-- Estado de conexión ICE -->
+                    <div class="state-labels">ICE connection state: 
+                        <span id="ice-connection-state">-</span>
+                    </div>
+                    
+                    <!-- Estado de señalización (protocolo de establecimiento de conexión) -->
+                    <div class="state-labels">Signaling state: 
+                        <span id="signaling-state">-</span>
+                    </div>
+
+                    <!-- Título del canal de datos -->
+                    <div class="title">Data Channel</div>
+                    <!-- Información del canal de datos (se actualiza dinámicamente) -->
+                    <pre id="data-channel" style="height: 40px;">Not connected</pre>
+                </div>
+            </div>
+        </div>
+
+        <!-- COLUMNA DERECHA: CONFIGURACIÓN DE CONTROLES SIMPLIFICADA -->
+        <div class="elemento-derecha">
+            <div class="contenedor-vertical">
+                <!-- Título de la sección de configuración de controles -->
+                <div class="control-config-title">CONTROLES DEL TECLADO</div>
+                
+                <!-- Panel de configuración de controles -->
+                <div class="control-config-panel">
+                    <!-- Subtítulo de la sección -->
+                    <div class="title" style="text-align: center; font-size: 1.3rem; margin-bottom: 25px;">
+                        CONFIGURACIÓN SIMPLIFICADA - 5 ACCIONES
+                    </div>
+                    
+                    <!-- =========================================== -->
+                    <!-- SECCIÓN DE MOVIMIENTO BÁSICO -->
+                    <!-- =========================================== -->
+                    <div style="margin-bottom: 30px;">
+                        <div class="title" style="font-size: 1.2rem; margin-left: 0;">MOVIMIENTO</div>
+                        
+                        <!-- Fila 1: Avanzar -->
+                        <div class="control-row">
+                            <div class="control-label">AVANZAR</div>
+                            <div class="control-input-container">
+                                <input type="text" class="control-input" id="key-forward" value="W" readonly data-action="forward">
+                            </div>
+                        </div>
+                        
+                        <!-- Fila 2: Retroceder -->
+                        <div class="control-row">
+                            <div class="control-label">RETROCEDER</div>
+                            <div class="control-input-container">
+                                <input type="text" class="control-input" id="key-backward" value="S" readonly data-action="backward">
+                            </div>
+                        </div>
+                        
+                        <!-- Fila 3: Izquierda -->
+                        <div class="control-row">
+                            <div class="control-label">IZQUIERDA</div>
+                            <div class="control-input-container">
+                                <input type="text" class="control-input" id="key-left" value="A" readonly data-action="left">
+                            </div>
+                        </div>
+                        
+                        <!-- Fila 4: Derecha -->
+                        <div class="control-row">
+                            <div class="control-label">DERECHA</div>
+                            <div class="control-input-container">
+                                <input type="text" class="control-input" id="key-right" value="D" readonly data-action="right">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- =========================================== -->
+                    <!-- SECCIÓN DE ACCIONES PRINCIPALES (SOLO 1 ACCIÓN) -->
+                    <!-- =========================================== -->
+                    <div style="margin-bottom: 30px;">
+                        <div class="title" style="font-size: 1.2rem; margin-left: 0;">ACCIÓN PRINCIPAL</div>
+                        
+                        <!-- Única acción: Saltar -->
+                        <div class="control-row">
+                            <div class="control-label">SALTAR</div>
+                            <div class="control-input-container">
+                                <input type="text" class="control-input" id="key-jump" value="ESPACIO" readonly data-action="jump">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- =========================================== -->
+                    <!-- BOTONES DE ACCIÓN PARA LA CONFIGURACIÓN -->
+                    <!-- =========================================== -->
+                    <div class="control-buttons-container">
+                        <!-- Botón para guardar configuración -->
+                        <button class="control-action-btn" onclick="saveControlConfig()">GUARDAR CONFIGURACIÓN</button>
+                        <!-- Botón para exportar configuración como JSON -->
+                        <button class="control-action-btn export-btn" onclick="exportControlConfig()">EXPORTAR COMO JSON</button>
+                        <!-- Botón para restablecer a valores predeterminados -->
+                        <button class="control-action-btn reset-btn" onclick="resetControlConfig()">RESTABLECER PREDETERMINADOS</button>
+                    </div>
+                    
+                    <!-- Mensaje de estado para la configuración de controles -->
+                    <div id="control-status-message" class="control-status-message">
+                        <!-- Mensaje de estado se actualizará aquí -->
+                    </div>
+                    
+                    <!-- Instrucciones para el usuario -->
+                    <div class="instructions">
+                        Haz clic en cualquier campo de tecla y luego presiona la tecla que deseas asignar.<br>
+                        Solo 5 acciones configurables: Movimiento (4 direcciones) + Acción principal.
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- =========================================== -->
+    <!-- VENTANAS FLOTANTES DE CÁMARA (FUERA DEL LAYOUT PRINCIPAL) -->
+    <!-- =========================================== -->
+    
+    <!-- Ventana flotante para Cámara 1 -->
+    <div id="camera-window-1" class="camera-floating-window">
+        <!-- Cabecera de la ventana (área para arrastrar) -->
+        <div class="floating-window-header">
+            <!-- Título de la ventana -->
+            <span>Cámara 1</span>
+            <!-- Controles de la ventana -->
+            <div class="floating-window-controls">
+                <!-- Botón para minimizar la ventana -->
+                <button class="floating-window-btn" onclick="minimizeCameraWindow(1)">−</button>
+                <!-- Botón para cerrar la ventana -->
+                <button class="floating-window-btn" onclick="toggleCameraWindow(1)">×</button>
+            </div>
+        </div>
+        <!-- Contenido principal de la ventana -->
+        <div class="floating-window-content">
+            <!-- Contenedor para el video -->
+            <div class="floating-video-container">
+                <!-- Elemento de video que muestra el stream de la Cámara 1 -->
+                <video id="floating-video1" autoplay playsinline></video>
+                <!-- Placeholder que se muestra si no hay video disponible -->
+                <img class="placeholder" src="/static/placeholder.jpg" alt="Cámara 1 no disponible">
+            </div>
+        </div>
+    </div>
+    
+    <!-- Ventana flotante para Cámara 2 -->
+    <div id="camera-window-2" class="camera-floating-window">
+        <!-- Cabecera de la ventana (área para arrastrar) -->
+        <div class="floating-window-header">
+            <!-- Título de la ventana -->
+            <span>Cámara 2</span>
+            <!-- Controles de la ventana -->
+            <div class="floating-window-controls">
+                <!-- Botón para minimizar la ventana -->
+                <button class="floating-window-btn" onclick="minimizeCameraWindow(2)">−</button>
+                <!-- Botón para cerrar la ventana -->
+                <button class="floating-window-btn" onclick="toggleCameraWindow(2)">×</button>
+            </div>
+        </div>
+        <!-- Contenido principal de la ventana -->
+        <div class="floating-window-content">
+            <!-- Contenedor para el video -->
+            <div class="floating-video-container">
+                <!-- Elemento de video que muestra el stream de la Cámara 2 -->
+                <video id="floating-video2" autoplay playsinline></video>
+                <!-- Placeholder que se muestra si no hay video disponible -->
+                <img class="placeholder" src="/static/placeholder.jpg" alt="Cámara 2 no disponible">
+            </div>
+        </div>
+    </div>
+    
+    <!-- Ventana flotante para Cámara 3 -->
+    <div id="camera-window-3" class="camera-floating-window">
+        <!-- Cabecera de la ventana (área para arrastrar) -->
+        <div class="floating-window-header">
+            <!-- Título de la ventana -->
+            <span>Cámara 3</span>
+            <!-- Controles de la ventana -->
+            <div class="floating-window-controls">
+                <!-- Botón para minimizar la ventana -->
+                <button class="floating-window-btn" onclick="minimizeCameraWindow(3)">−</button>
+                <!-- Botón para cerrar la ventana -->
+                <button class="floating-window-btn" onclick="toggleCameraWindow(3)">×</button>
+            </div>
+        </div>
+        <!-- Contenido principal de la ventana -->
+        <div class="floating-window-content">
+            <!-- Contenedor para el video -->
+            <div class="floating-video-container">
+                <!-- Elemento de video que muestra el stream de la Cámara 3 -->
+                <video id="floating-video3" autoplay playsinline></video>
+                <!-- Placeholder que se muestra si no hay video disponible -->
+                <img class="placeholder" src="/static/placeholder.jpg" alt="Cámara 3 no disponible">
+            </div>
+        </div>
+    </div>
+
+    <!-- =========================================== -->
+    <!-- VINCULAR ARCHIVOS EXTERNOS -->
+    <!-- =========================================== -->
+    
+    <!-- Script externo WebRTC (si lo tienes) -->
+    <!-- <script src="/static/client.js"></script> -->
+    <!-- <script src="/static/com_client.js"></script> -->
+    
+    <!-- Vincular archivo JavaScript principal -->
+    <script src="codigo.js"></script>
+</body>
+</html>
