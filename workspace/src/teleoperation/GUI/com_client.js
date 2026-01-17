@@ -1,153 +1,498 @@
-let communicationEnabled = false;  
-let inputMode = "keyboard"; 
 
-function toggleCommunication() {
-  communicationEnabled = !communicationEnabled; 
-  const button = document.getElementById("start-communication");
-  button.textContent = communicationEnabled ? "Stop Communication" : "Start Communication";
-}
-
-function toggleInputMode() {
-  const button = document.getElementById("toggle-input");
-  inputMode = (inputMode === "keyboard") ? "controller" : "keyboard";
-  button.textContent = (inputMode === "controller") ? "Use Keyboard" : "Use Controller";
-}
-
-async function init() {
-  // keymaps
-  const keyboard_keymap = await (await fetch("/static/keyboard_keymap.json")).json();
-  const controller_keymap = await (await fetch("/static/controller_keymap.json")).json();
-  
-  const messagesDiv = document.getElementById("info-messages");
-  let socket = null;
-  let isConnected = false;
-
-  function addMessage(text) { 
-    messagesDiv.textContent += text + "\n";
-    messagesDiv.scrollTop = messagesDiv.scrollHeight;
-  }
-
-  // Function to attempt WebSocket connection with retry logic
-  function connectToServer() {
-    if (isConnected) return;
-
-    const wsUrl = `ws://${location.hostname}:${8082}`;
-    addMessage("Looking for server...");
+//______________________ Rosbridge ____________________
+class RobotAPI {
+  constructor(rosInstance) {
+    if (!rosInstance) {
+      throw new Error('RobotAPI requires a valid ROSLIB.Ros instance');
+    }
     
-    socket = new WebSocket(wsUrl);
+    this.ros = rosInstance;
+    this.topicCache = {};      // { '/target_name': ROSLIB.Topic }
+    this.serviceCache = {};    // { '/target_name': ROSLIB.Service }
+  }
 
-    socket.onopen = () => {
-      isConnected = true;
-      addMessage("Connected to server!");
-    };
+  // Get or create a topic publisher
+  getOrCreateTopic(topicName, messageType) {
+    if (this.topicCache[topicName]) {
+      return this.topicCache[topicName];
+    }
 
-    socket.onmessage = (event) => {
-      addMessage(`Server: ${event.data}`);
-    };
+    const topic = new ROSLIB.Topic({
+      ros: this.ros,
+      name: topicName,
+      messageType: messageType,
+      queue_size: 1
+    });
 
-    socket.onerror = (error) => {
-      addMessage("Connection error - retrying in 5 seconds...");
-    };
+    this.topicCache[topicName] = topic;
+    console.log(`[RobotAPI] Created topic: ${topicName}`);
+    return topic;
+  }
 
-    socket.onclose = () => {
-      isConnected = false;
-      if (socket) {
-        addMessage("Connection lost - retrying in 5 seconds...");
+  // Get or create a service client
+  getOrCreateService(serviceName, serviceType) {
+    if (this.serviceCache[serviceName]) {
+      return this.serviceCache[serviceName];
+    }
+
+    const service = new ROSLIB.Service({
+      ros: this.ros,
+      name: serviceName,
+      serviceType: serviceType
+    });
+
+    this.serviceCache[serviceName] = service;
+    console.log(`[RobotAPI] Created service: ${serviceName}`);
+    return service;
+  }
+
+  // Send message to topic(s)
+  sendTopic(topicNames, messageType, payload) {
+    if (!Array.isArray(topicNames)) {
+      topicNames = [topicNames];
+    }
+
+    const results = [];
+    topicNames.forEach(topicName => {
+      try {
+        const topic = this.getOrCreateTopic(topicName, messageType);
+        const message = new ROSLIB.Message(payload);
+        topic.publish(message);
+        console.log(`[RobotAPI] Published to ${topicName}:`, payload);
+        results.push({ success: true, target: topicName });
+      } catch (error) {
+        console.error(`[RobotAPI] Failed to publish to ${topicName}:`, error.message);
+        results.push({ success: false, target: topicName, error: error.message });
       }
-      
-      setTimeout(() => {
-        if (!isConnected) {
-          connectToServer();
-        }
-      }, 5000);
+    });
+
+    return results;
+  }
+
+  // Call service(s)
+  sendService(serviceNames, serviceType, payload) {
+    if (!Array.isArray(serviceNames)) {
+      serviceNames = [serviceNames];
+    }
+
+    const results = [];
+    serviceNames.forEach(serviceName => {
+      try {
+        const service = this.getOrCreateService(serviceName, serviceType);
+        const request = new ROSLIB.ServiceRequest(payload);
+        service.callService(request, (response) => {
+          console.log(`[RobotAPI] Service ${serviceName} response:`, response);
+        });
+        console.log(`[RobotAPI] Called service ${serviceName} with:`, payload);
+        results.push({ success: true, target: serviceName });
+      } catch (error) {
+        console.error(`[RobotAPI] Failed to call service ${serviceName}:`, error.message);
+        results.push({ success: false, target: serviceName, error: error.message });
+      }
+    });
+
+    return results;
+  }
+
+  getStats() {
+    return {
+      topicsCached: Object.keys(this.topicCache).length,
+      servicesCached: Object.keys(this.serviceCache).length
     };
   }
 
-  // Start initial connection attempt
-  connectToServer();
+  dispose() {
+    Object.values(this.topicCache).forEach(topic => {
+      try {
+        topic.unsubscribe && topic.unsubscribe();
+      } catch (e) {
+        console.error('[RobotAPI] Error unsubscribing topic:', e);
+      }
+    });
 
-  // Helper function to send message safely
-  function sendMessage(message) {
-    if (socket && socket.readyState === WebSocket.OPEN) {
-      socket.send(message);
+    this.topicCache = {};
+    this.serviceCache = {};
+    console.log('[RobotAPI] Disposed');
+  }
+}
+
+//______________________ Input Handler ____________________
+class InputHandler {
+  constructor({ deadzone = 0.12, robotAPI = null } = {}) {
+    this.deadzone = deadzone;
+    this.keys = new Set();
+    this.gamepadIndex = null;
+    this._rafId = null;
+    this.prevButtonsByPad = {};
+    this.listeners = Object.create(null);
+    
+    this.robotAPI = robotAPI;  // Reference to RobotAPI for ROS communication
+    this.actionMap = {};       // { 'key': { type, data_type, topics, payload } }
+    this.localFunctions = {};  // { 'function_name': callback }
+    
+    this._setupKeyboard();
+    this._setupGamepadEvents();
+    this._startGamepadPoll();
+  }
+
+  // Set RobotAPI reference
+  setRobotAPI(robotAPI) {
+    this.robotAPI = robotAPI;
+  }
+
+  // Load action configuration from JSON
+  loadActions(configJson) {
+    if (!configJson || typeof configJson !== 'object') {
+      console.error('[InputHandler] Invalid config: must be an object');
+      return false;
+    }
+
+    try {
+      Object.entries(configJson).forEach(([keyId, action]) => {
+        const { type, data_type, topics, payload, actions } = action;
+
+        if (!type) {
+          console.warn(`[InputHandler] Skipping action for ${keyId}: missing type`);
+          return;
+        }
+
+        // Validate action type
+        if (!['send_topic', 'send_service', 'local_function'].includes(type)) {
+          console.warn(`[InputHandler] Unknown action type "${type}" for key ${keyId}`);
+          return;
+        }
+
+        // For send actions, ensure topics array and data_type exist
+        if (type === 'send_topic' || type === 'send_service') {
+          if (!topics || !Array.isArray(topics) || topics.length === 0) {
+            console.warn(`[InputHandler] Action ${keyId} missing topics array`);
+            return;
+          }
+          if (!data_type) {
+            console.warn(`[InputHandler] Action ${keyId} missing data_type`);
+            return;
+          }
+        }
+
+        this.actionMap[keyId] = { type, data_type, topics, payload };
+        console.log(`[InputHandler] Mapped ${keyId} -> ${type} (${topics ? topics.length : 0} targets)`);
+      });
+
+      console.log(`[InputHandler] Loaded ${Object.keys(this.actionMap).length} actions`);
       return true;
-    } else {
-      addMessage("Not connected to server - message not sent");
+    } catch (error) {
+      console.error('[InputHandler] Failed to load actions:', error.message);
       return false;
     }
   }
 
-  // Keyboard
-  document.addEventListener("keydown", (event) => {
-    if (!communicationEnabled || inputMode !== "keyboard") return; 
-    const key = event.key.toLowerCase(); 
-    if (key in keyboard_keymap) { 
-      const message = keyboard_keymap[key];
-      sendMessage(message);
+  // Register a local function that can be called by actions
+  registerLocalFunction(name, callback) {
+    this.localFunctions[name] = callback;
+    console.log(`[InputHandler] Registered local function: ${name}`);
+  }
+
+  // Execute an action for a given key
+  executeAction(keyId) {
+    const action = this.actionMap[keyId];
+    if (!action) {
+      return { success: false, error: `Action "${keyId}" not mapped` };
     }
-  });
 
-  pollController.lastspeed = null;
-  let visionmode = 0;
-  let current_camera = 0;
-  let prevButtons = [];
+    try {
+      switch (action.type) {
+        case 'send_topic':
+          if (!this.robotAPI) {
+            return { success: false, error: 'RobotAPI not set' };
+          }
+          return {
+            success: true,
+            type: 'send_topic',
+            count: action.topics.length,
+            results: this.robotAPI.sendTopic(action.topics, action.data_type, action.payload)
+          };
 
-  // CONTROLLER
-  function pollController() {
-    if (!communicationEnabled || inputMode !== "controller") {
-      requestAnimationFrame(pollController);
+        case 'send_service':
+          if (!this.robotAPI) {
+            return { success: false, error: 'RobotAPI not set' };
+          }
+          return {
+            success: true,
+            type: 'send_service',
+            count: action.topics.length,
+            results: this.robotAPI.sendService(action.topics, action.data_type, action.payload)
+          };
+
+        case 'local_function':
+          const funcName = action.payload?.function_name;
+          if (!funcName || !this.localFunctions[funcName]) {
+            return { success: false, error: `Local function "${funcName}" not found` };
+          }
+          this.localFunctions[funcName](action.payload);
+          return { success: true, type: 'local_function', function: funcName };
+
+        default:
+          return { success: false, error: `Unknown action type: ${action.type}` };
+      }
+    } catch (error) {
+      console.error(`[InputHandler] Execute failed for ${keyId}:`, error.message);
+      return { success: false, error: error.message };
+    }
+  }
+
+  _setupKeyboard() {
+    this._onKeyDown = (e) => { const k = (e.key || '').toLowerCase(); this.keys.add(k); };
+    this._onKeyUp = (e) => { const k = (e.key || '').toLowerCase(); this.keys.delete(k); };
+    window.addEventListener('keydown', this._onKeyDown);
+    window.addEventListener('keyup', this._onKeyUp);
+  }
+
+  _setupGamepadEvents() {
+    this._onGamepadConnected = (e) => {
+      this.gamepadIndex = e.gamepad.index;
+      this._emit('gamepadConnected', e.gamepad.index);
+    };
+    this._onGamepadDisconnected = (e) => {
+      if (this.gamepadIndex === e.gamepad.index) this.gamepadIndex = null;
+      this._emit('gamepadDisconnected', e.gamepad.index);
+    };
+    window.addEventListener('gamepadconnected', this._onGamepadConnected);
+    window.addEventListener('gamepaddisconnected', this._onGamepadDisconnected);
+  }
+
+  _applyDeadzone(v) {
+    if (Math.abs(v) < this.deadzone) return 0;
+    return Math.max(-1, Math.min(1, v));
+  }
+
+  _readGamepad() {
+    if (this.gamepadIndex == null) return { x: 0, y: 0, active: false };
+    const gp = navigator.getGamepads()[this.gamepadIndex];
+    if (!gp) return { x: 0, y: 0, active: false };
+    // Use left stick by default (axes[0], axes[1])
+    let x = this._applyDeadzone(gp.axes[0] || 0);
+    let y = this._applyDeadzone(gp.axes[1] || 0);
+    const active = x !== 0 || y !== 0;
+    return { x, y, active };
+  }
+
+  // Simple event emitter API
+  on(name, cb) {
+    if (!this.listeners[name]) this.listeners[name] = [];
+    this.listeners[name].push(cb);
+  }
+  off(name, cb) {
+    if (!this.listeners[name]) return;
+    const i = this.listeners[name].indexOf(cb);
+    if (i >= 0) this.listeners[name].splice(i, 1);
+  }
+  _emit(name, ...args) {
+    const ls = this.listeners[name];
+    if (!ls) return;
+    for (let i = 0; i < ls.length; i++) {
+      try { ls[i](...args); } catch (e) { console.error('InputHandler listener error', e); }
+    }
+  }
+
+  _startGamepadPoll() {
+    if (this._rafId != null) return;
+    const poll = () => {
+      this._pollGamepads();
+      this._rafId = requestAnimationFrame(poll);
+    };
+    this._rafId = requestAnimationFrame(poll);
+  }
+  _stopGamepadPoll() {
+    if (this._rafId != null) {
+      cancelAnimationFrame(this._rafId);
+      this._rafId = null;
+    }
+  }
+
+  _pollGamepads() {
+    const gps = navigator.getGamepads ? navigator.getGamepads() : [];
+    for (let i = 0; i < gps.length; i++) {
+      const gp = gps[i];
+      if (!gp) continue;
+      const id = String(i);
+      if (!this.prevButtonsByPad[id]) this.prevButtonsByPad[id] = [];
+      gp.buttons.forEach((b, idx) => {
+        const was = !!this.prevButtonsByPad[id][idx];
+        const now = !!b.pressed;
+        if (now && !was) {
+          this._emit('buttonDown', i, idx);
+        } else if (!now && was) {
+          this._emit('buttonUp', i, idx);
+        }
+        this.prevButtonsByPad[id][idx] = now;
+      });
+      // emit axis update per pad (left stick only)
+      const x = this._applyDeadzone(gp.axes[0] || 0);
+      const y = this._applyDeadzone(gp.axes[1] || 0);
+      this._emit('axis', { pad: i, x, y, active: x !== 0 || y !== 0 });
+    }
+  }
+
+  dispose() {
+    try {
+      window.removeEventListener('keydown', this._onKeyDown);
+      window.removeEventListener('keyup', this._onKeyUp);
+    } catch (e) { console.error('Error removing keyboard listeners', e); }
+    try {
+      window.removeEventListener('gamepadconnected', this._onGamepadConnected);
+      window.removeEventListener('gamepaddisconnected', this._onGamepadDisconnected);
+    } catch (e) { console.error('Error removing gamepad listeners', e); }
+    this._stopGamepadPoll();
+    this.listeners = Object.create(null);
+  }
+
+  // Public method to read gamepad joystick values
+  readJoystick() {
+    return this._readGamepad();
+  }
+}
+
+//______________________ Main Application ____________________
+(function initializeApp() {
+  const infoPanel = document.getElementById('info-messages');
+  
+  function log(message) {
+    if (!infoPanel) return console.log(message);
+    infoPanel.textContent += message + '\n';
+    infoPanel.scrollTop = infoPanel.scrollHeight;
+  }
+
+  // Setup ROS connection and API
+  let robotAPI = null;
+  let inputHandler = null;
+  let motorTopic = null;
+  let isControlEnabled = false;
+  let velocityInterval = null;
+
+  function initializeROS(rosbridgeHost = location.hostname, rosbridgePort = 9090) {
+    if (typeof ROSLIB === 'undefined') {
+      log('ERROR: ROSLIB not loaded');
       return;
     }
 
-    const controllers = navigator.getGamepads();
-    if (controllers[0]) {
-      const ctrl = controllers[0];
+    const ros = new ROSLIB.Ros({
+      url: `ws://${rosbridgeHost}:${rosbridgePort}`
+    });
 
-      // Left joystick, for dc motors 
-      const speedX = ctrl.axes[0];
-      const speedY = ctrl.axes[1];
-      const message = "dc_motors:" + speedX.toString() + "," + speedY.toString();
-      sendMessage(message);
+    ros.on('connection', () => {
+      log('Connected to ROS');
+      
+      // Create RobotAPI and InputHandler
+      robotAPI = new RobotAPI(ros);
+      inputHandler = new InputHandler({ robotAPI });
+      
+      // Load keyboard keymaps
+      fetch('static/keys_map_keyboard.json')
+        .then(r => r.json())
+        .then(config => {
+          inputHandler.loadActions(config);
+          log(`Actions loaded: ${Object.keys(inputHandler.actionMap).length} mappings`);
+          setupKeyboardBindings();
+          
+          // Get motor topic for joystick control
+          motorTopic = robotAPI.getOrCreateTopic('/dc_motors', 'std_msgs/Float32MultiArray');
+          log('Motor control topic ready');
+        })
+        .catch(e => log(`Failed to load keymaps: ${e.message}`));
+    });
 
-      // Botones con edge detection
-      ctrl.buttons.forEach((button, index) => {
-        const prev = prevButtons[index] || { pressed: false };
-        if (button.pressed && !prev.pressed) {
-          if (index in controller_keymap) { 
-            const msg = controller_keymap[index];
-            sendMessage(msg);
-          }
-          else if (index === 4) { // change vision mode -
-            if (visionmode === 0) visionmode = 3;
-            else visionmode -= 1;
-            const msg = "vision:mode," + current_camera.toString() + "," + visionmode.toString();
-            sendMessage(msg);
-          }
-          else if (index === 5) { // change vision mode +
-            if (visionmode === 3) visionmode = 0;
-            else visionmode += 1;
-            const msg = "vision:mode," + current_camera.toString() + "," + visionmode.toString();
-            sendMessage(msg);
-          }
-          else if (index === 9) { // select camera
-            if (current_camera === 3) current_camera = 0;
-            else current_camera += 1;
-            addMessage(`Camera selected: ${current_camera}`);
-          }
-        }
-        prevButtons[index] = { pressed: button.pressed };
-      });
-    }
+    ros.on('close', () => {
+      log('Disconnected from ROS');
+      if (velocityInterval) {
+        clearInterval(velocityInterval);
+        velocityInterval = null;
+      }
+    });
 
-    requestAnimationFrame(pollController);
+    ros.on('error', (err) => {
+      log(`ROS Error: ${err}`);
+    });
   }
 
-  window.addEventListener("gamepadconnected", (e) => {
-    pollController();
+  function setupKeyboardBindings() {
+    window.addEventListener('keydown', (e) => {
+      if (!inputHandler) return;
+      
+      const key = e.key.toLowerCase();
+      const result = inputHandler.executeAction(key);
+      
+      if (result.success) {
+        if (result.count > 1) {
+          log(`Key '${key}' -> ${result.type} (${result.count} targets)`);
+        } else if (result.type === 'local_function') {
+          log(`Key '${key}' -> ${result.function}()`);
+        } else {
+          log(`Key '${key}' -> ${result.type}`);
+        }
+      } else if (result.error !== `Action "${key}" not mapped`) {
+        log(`Key '${key}' failed: ${result.error}`);
+      }
+    });
+  }
+
+  function publishJoystickVelocities() {
+    if (!motorTopic || !inputHandler) return;
+    
+    const { x, y } = inputHandler.readJoystick();
+    const message = new ROSLIB.Message({
+      data: [Number(x) || 0.0, Number(y) || 0.0]
+    });
+    
+    try {
+      motorTopic.publish(message);
+    } catch (e) {
+      console.error('Joystick velocity publish error:', e);
+    }
+  }
+
+  // Control button to enable/disable joystick velocity publishing
+  const startButton = document.getElementById('start-btn') || document.getElementById('start-communication');
+  if (startButton) {
+    startButton.addEventListener('click', () => {
+      isControlEnabled = !isControlEnabled;
+      startButton.textContent = isControlEnabled ? 'Stop Control' : 'Start Control';
+      log('Control ' + (isControlEnabled ? 'ENABLED' : 'DISABLED'));
+      
+      if (!isControlEnabled) {
+        if (velocityInterval) {
+          clearInterval(velocityInterval);
+          velocityInterval = null;
+        }
+        // Send stop command
+        if (motorTopic) {
+          const stopMsg = new ROSLIB.Message({ data: [0.0, 0.0] });
+          motorTopic.publish(stopMsg);
+        }
+      } else {
+        // Start publishing joystick velocities at 10Hz
+        if (!velocityInterval) {
+          velocityInterval = setInterval(publishJoystickVelocities, 100);
+        }
+      }
+    });
+  } else {
+    log('Warning: Start button not found (id: start-btn or start-communication)');
+  }
+
+  // Emergency stop on page unload
+  window.addEventListener('beforeunload', () => {
+    if (motorTopic) {
+      try {
+        motorTopic.publish(new ROSLIB.Message({ data: [0.0, 0.0] }));
+      } catch (e) {
+        console.error('Error publishing emergency stop:', e);
+      }
+    }
+    if (robotAPI) robotAPI.dispose();
+    if (inputHandler) inputHandler.dispose();
   });
 
-  window.addEventListener("gamepaddisconnected", (e) => {
-  });
-}
-
-init();
+  // Initialize on load
+  log('Initializing application...');
+  initializeROS();
+})();

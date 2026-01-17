@@ -35,7 +35,7 @@ public:
 
     // Suscripción al tópico
     subscription_ = this->create_subscription<std_msgs::msg::Float32MultiArray>(
-      "commands_for_dc_motors", 10,
+      "/dc_motors", 10,
       std::bind(&MotorNode::cmd_vel_callback, this, std::placeholders::_1));
   }
 
