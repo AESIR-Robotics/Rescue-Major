@@ -13,7 +13,7 @@ echo "[setup] Venv dir: $VENV_DIR"
 #  Install external dependencies 
 echo "[apt] Updating package lists..."
 sudo apt-get update
-sudo apt install -y libwebsocketpp-dev libboost-all-dev libssl-dev tmux ros-humble-rosbridge-server ros-humble-cv-bridge 
+sudo apt install -y libwebsocketpp-dev libboost-all-dev libssl-dev tmux ros-humble-rosbridge-server ros-humble-cv-bridge portaudio19-dev
 
 
 # Determine real user (if script run via sudo, SUDO_USER is original)
@@ -79,6 +79,47 @@ else
     echo "[pip] Installing from $req"
     python -m pip install -r "$req"
   done
+fi
+
+# SSL Certificate Generation for WebRTC HTTPS
+CERT_FILE="$WORKDIR/cert.pem"
+KEY_FILE="$WORKDIR/key.pem"
+
+echo "[ssl] Checking SSL certificate..."
+if [ ! -f "$CERT_FILE" ] || [ ! -f "$KEY_FILE" ]; then
+  echo "[ssl] Generating self-signed SSL certificate (valid for 365 days)..."
+  openssl req -x509 -newkey rsa:4096 \
+    -keyout "$KEY_FILE" \
+    -out "$CERT_FILE" \
+    -days 365 -nodes \
+    -subj "/C=US/ST=State/L=City/O=Aesir/OU=Teleoperation/CN=localhost" \
+    2>/dev/null
+  
+  # Set ownership to real user (in case script run with sudo)
+  if [ "$EUID" -eq 0 ] && [ -n "${SUDO_USER:-}" ]; then
+    chown "$REAL_USER:$REAL_USER" "$CERT_FILE" "$KEY_FILE"
+  fi
+  
+  echo "[ssl] Certificate created"
+else
+  echo "[ssl] Certificate already exists"
+fi
+
+# Firewall Configuration 
+echo ""
+echo "[firewall] Configuring firewall rules..."
+if command -v ufw >/dev/null 2>&1; then
+  # Check if ufw is active
+  if sudo ufw status | grep -q "Status: active"; then
+    echo "[firewall] UFW is active, adding rules..."
+    sudo ufw allow 8081/tcp comment 'WebRTC HTTPS Server' >/dev/null 2>&1 || echo "[firewall] Rule for 8081 already exists"
+    sudo ufw allow 9090/tcp comment 'Rosbridge WebSocket' >/dev/null 2>&1 || echo "[firewall] Rule for 9090 already exists"
+    echo "[firewall] Ports 8081 (HTTPS) and 9090 (WebSocket) opened"
+  else
+    echo "[firewall] FW is inactive."
+  fi
+else
+  echo "[firewall] UFW not installed."
 fi
 
 # Final summary
