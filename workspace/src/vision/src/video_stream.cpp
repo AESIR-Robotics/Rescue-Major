@@ -1,6 +1,14 @@
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/image.hpp"
-#include "cv_bridge/cv_bridge.h"
+
+#if defined(ROS2_JAZZY)
+    #include <cv_bridge/cv_bridge.hpp>
+#elif defined(ROS2_HUMBLE)
+    #include <cv_bridge/cv_bridge.h>
+#else
+    #error "ROS2 distro no soportada"
+#endif
+
 #include <opencv2/opencv.hpp>
 #include <string>
 #include <iostream>
