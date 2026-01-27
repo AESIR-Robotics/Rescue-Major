@@ -7,6 +7,9 @@ var dataChannelLog = document.getElementById('data-channel'),
 var pc = null; // Variable for the PeerConnection
 var dc = null, dcInterval = null; // DataChannel and its interval
 let videoIndex = 0;
+let localAudioStream = null; // Local audio stream from microphone
+let remoteAudio = null; // Audio element for remote audio playback
+let microphoneEnabled = false; // Microphone state (starts disabled)
 
 const videoElements = [
     document.getElementById('video1'),
@@ -63,6 +66,25 @@ function createPeerConnection() {
                 placeholders[videoIndex].style.display = 'none';
                 videoIndex++;
             }
+        } else if (evt.track.kind === 'audio') {
+            // Handle incoming audio from server
+            console.log('Received audio track from server');
+            if (!remoteAudio) {
+                remoteAudio = document.createElement('audio');
+                remoteAudio.autoplay = true;
+                
+                // Configure for low latency
+                remoteAudio.volume = 1.0;
+                
+                // Disable buffering for minimal latency (non-standard but works in Chrome/Firefox)
+                if ('latencyHint' in remoteAudio) {
+                    remoteAudio.latencyHint = 0;
+                }
+                
+                document.body.appendChild(remoteAudio);
+            }
+            remoteAudio.srcObject = new MediaStream([evt.track]);
+            console.log('Remote audio connected and playing');
         }
     });
 
@@ -115,11 +137,83 @@ function negotiate() {
 }
 
 
+// Function to request microphone permission and get audio stream
+async function getAudioStream() {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true,
+                sampleRate: 48000,  // Native Opus sample rate
+                channelCount: 1      // Mono
+            }
+        });
+        
+        // Verify actual configuration
+        const track = stream.getAudioTracks()[0];
+        const settings = track.getSettings();
+        console.log('✅ Microphone configured:', settings);
+        
+        // Warn if not mono
+        if (settings.channelCount && settings.channelCount !== 1) {
+            console.warn(`⚠️ Expected mono but got ${settings.channelCount} channels`);
+        }
+        
+        // Warn if sample rate mismatch
+        if (settings.sampleRate && settings.sampleRate !== 48000) {
+            console.warn(`⚠️ Expected 48kHz but got ${settings.sampleRate}Hz`);
+        }
+        
+        return stream;
+    } catch (err) {
+        console.error('Microphone access denied or unavailable:', err);
+        alert('Microphone access is required for audio communication. Error: ' + err.message);
+        return null;
+    }
+}
+
+// Toggle microphone (mute/unmute local audio track)
+function toggleMicrophone() {
+    const button = document.getElementById('toggle-microphone');
+    
+    if (!localAudioStream) {
+        console.warn('No audio stream available');
+        return;
+    }
+    
+    const audioTrack = localAudioStream.getAudioTracks()[0];
+    if (!audioTrack) {
+        console.warn('No audio track found');
+        return;
+    }
+    
+    if (microphoneEnabled) {
+        // Disable microphone locally
+        audioTrack.enabled = false;
+        microphoneEnabled = false;
+        button.textContent = 'Enable Microphone';
+        button.style.backgroundColor = '#6c757d';
+        console.log('Microphone disabled ');
+    } else {
+        // Enable microphone locally
+        audioTrack.enabled = true;
+        microphoneEnabled = true;
+        button.textContent = 'Disable Microphone';
+        button.style.backgroundColor = '#28a745';
+        console.log('Microphone enabled ');
+    }
+}
+
 // Function to start the peer connection and data channel
-function start() {
+async function start() {
     videoIndex = 0;
 
     document.getElementById('start').style.display = 'none';
+    
+    // Request microphone access first
+    localAudioStream = await getAudioStream();
+    
     pc = createPeerConnection();
 
     // Reset video elements and show placeholders
@@ -132,6 +226,43 @@ function start() {
     pc.addTransceiver('video', { direction: 'recvonly' });
     pc.addTransceiver('video', { direction: 'recvonly' });
     pc.addTransceiver('video', { direction: 'recvonly' });
+
+    // Add bidirectional audio transceiver
+    if (localAudioStream) {
+        const audioTrack = localAudioStream.getAudioTracks()[0];
+        if (audioTrack) {
+            // Start with microphone disabled (muted by default)
+            audioTrack.enabled = false;
+            microphoneEnabled = false;
+            
+            const audioTransceiver = pc.addTransceiver(audioTrack, { 
+                direction: 'sendrecv',
+                streams: [localAudioStream]
+            });
+            
+            // Get sender and set Opus parameters for low latency
+            const sender = audioTransceiver.sender;
+            const parameters = sender.getParameters();
+            
+            // Configure Opus codec for low latency if available
+            if (parameters.codecs) {
+                const opusCodec = parameters.codecs.find(codec => 
+                    codec.mimeType === 'audio/opus'
+                );
+                if (opusCodec) {
+                    // Set Opus parameters for ultra-low latency
+                    opusCodec.sdpFmtpLine = 'minptime=10;useinbandfec=1;maxaveragebitrate=64000';
+                    parameters.codecs = [opusCodec]; // Prioritize Opus
+                    sender.setParameters(parameters);
+                    console.log('Opus codec configured for low latency');
+                }
+            }
+            
+            console.log('Audio transceiver added (sendrecv, initially muted)');
+        }
+    } else {
+        console.warn('No audio stream available - audio will not be enabled');
+    }
 
     var time_start = null;
 
@@ -183,6 +314,23 @@ function stop() {
         dc.close();
     }
 
+    // Stop local audio tracks
+    if (localAudioStream) {
+        localAudioStream.getTracks().forEach(track => {
+            track.stop();
+            console.log('Local audio track stopped');
+        });
+        localAudioStream = null;
+    }
+
+    // Remove remote audio element
+    if (remoteAudio) {
+        remoteAudio.srcObject = null;
+        remoteAudio.remove();
+        remoteAudio = null;
+        console.log('Remote audio removed');
+    }
+
     if (pc.getTransceivers) {
         pc.getTransceivers().forEach(function(transceiver) {
             if (transceiver.stop) {
@@ -193,8 +341,9 @@ function stop() {
     }
 
     pc.getSenders().forEach(function(sender) {
-        sender.track.stop();
-
+        if (sender.track) {
+            sender.track.stop();
+        }
     });
 
     setTimeout(function() {

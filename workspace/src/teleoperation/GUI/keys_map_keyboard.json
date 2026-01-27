@@ -1,15 +1,15 @@
 {
-  "o": {
+  "button_mute_server": {
     "type": "send_service",
     "data_type": "vision/srv/Command",
     "topics": ["/web_rtc_commands"],
-    "payload": {"data": "toggle_client_audio"}
+    "payload": {"data": "audio:mute"}
   },
-  "p": {
+  "button_unmute_server": {
     "type": "send_service",
     "data_type": "vision/srv/Command",
     "topics": ["/web_rtc_commands"],
-    "payload": {"data": "toggle_server_audio"}
+    "payload": {"data": "audio:unmute"}
   }, 
   " ": {
     "type": "send_topic",
