@@ -2,6 +2,7 @@
 set -e
 
 SOURCE_LOCAL_DIR="install/setup.bash"
+SOURCE_VENV_DIR="../.venv/bin/activate"
 # Source global ROS version helper (workspace/launch.bash lives in workspace/)
 # Compute script dir robustly (works when run with bash or sh)
 if [ -n "${BASH_SOURCE[0]:-}" ]; then
@@ -9,21 +10,6 @@ if [ -n "${BASH_SOURCE[0]:-}" ]; then
 else
 	SCRIPT_DIR="$(cd "$(dirnaS instme "$0")" && pwd)"
 fi
-
-# Try a few candidate locations for the helper
-
-#if [ -f "$SCRIPT_DIR/../setup/ros_ubuntu_version.sh" ]; then
-	# shellcheck source=/dev/null
-#	source "$SCRIPT_DIR/../setup/ros_ubuntu_version.sh"
-#elif [ -f "$SCRIPT_DIR/../..//setup/ros_ubuntu_version.sh" ]; then
-	# fallback when path layout differs
-	# shellcheck source=/dev/null
-#	source "$SCRIPT_DIR/../..//setup/ros_ubuntu_version.sh"
-#elif [ -f "./setup/ros_ubuntu_version.sh" ]; then
-	# if executed from repo root
-	# shellcheck source=/dev/null
-#	source "./setup/ros_ubuntu_version.sh"
-#fi
 
 echo "launch.bash: ROS_UBUNTU_VERSION='${ROS_UBUNTU_VERSION:-}'"
 
@@ -40,10 +26,16 @@ else
 	SOURCE_ROS_DIR="/opt/ros/jazzy/setup.bash"
 fi
 
+sudo chmod 666 /dev/ttyUSB0
 
-SOURCE_VENV_DIR="../venv/bin/activate"
+echo "launch.bash: using ROS setup: $SOURCE_ROS_DIR"
+echo "launch.bash: using venv:      $SOURCE_VENV_DIR"
+echo "launch.bash: using overlay:   $SOURCE_LOCAL_DIR"
 
-#sudo chmod 666 /dev/ttyUSB0
+# Verify key files exist
+[[ -f "$SOURCE_ROS_DIR" ]] || { echo "Missing: $SOURCE_ROS_DIR" >&2; exit 1; }
+[[ -f "$SOURCE_LOCAL_DIR" ]] || { echo "Missing: $SOURCE_LOCAL_DIR (did you colcon build?)" >&2; exit 1; }
+[[ -f "$SOURCE_VENV_DIR" ]] || { echo "Missing: $SOURCE_VENV_DIR (did you create the venv?)" >&2; exit 1; }
 
 ENV_CMD="bash -lc ' \
   source \"$SOURCE_VENV_DIR\" && \
@@ -65,25 +57,27 @@ tmux select-pane -t 2
 tmux split-window -h
 
 # Comandos
-tmux send-keys -t 0 "ros2 run teleoperation command_server.py" Enter
-tmux send-keys -t 1 "ros2 run teleoperation server.py" Enter
+tmux send-keys -t 0 "ros2 run rosbridge_server rosbridge_websocket --port 9090" Enter
+tmux send-keys -t 1 "python3 src/teleoperation/scripts/server_rtc.py" Enter
 tmux send-keys -t 2 "ros2 run hardware dc_motors" Enter
-tmux send-keys -t 3 "ros2 run vision video_stream_publisher" Enter
+tmux send-keys -t 3 "ros2 launch vision vision.launch.py" Enter
 
 # Pane 1 (bottom-left): run teleoperation command_server.py
-tmux select-pane -t 1
-tmux send-keys "ros2 run teleoperation server.py" Enter
-sleep 2
+#tmux select-pane -t 1
+#tmux send-keys "python3 /src/teleoperation/scripts/server_rtc.py" Enter
+#sleep 2
 
 # Pane 2 (bottom-right): run teleoperation server.py
-tmux select-pane -t 2
-tmux send-keys "ros2 run hardware dc_motors" Enter
-sleep 1
+#tmux select-pane -t 2
+#tmux send-keys "ros2 run hardware dc_motors" Enter
+#sleep 1
 
 # Pane 2 (bottom-right): run teleoperation server.py
-tmux select-pane -t 3
-tmux send-keys "ros2 run vision video_stream_publisher" Enter
-sleep 2
+#tmux select-pane -t 3
+#tmux send-keys "ros2 run vision video_stream_publisher" Enter
+#sleep 2
+
+sleep 3
 
 # Optional key bindings to switch panes
 tmux bind-key -n C-a select-pane -t :.+

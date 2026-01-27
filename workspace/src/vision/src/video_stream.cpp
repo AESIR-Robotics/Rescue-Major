@@ -77,12 +77,11 @@ public:
 
             cv::VideoCapture cap;
             
-            // Configurar resolución antes de abrir
-            if(i == 0) { WIDTH=640; HEIGHT=480; FPS=30; } // Config principal
-            else { WIDTH=640; HEIGHT=480; FPS=30; }       // Config secundarias
+            if(i == 0) { WIDTH=1920; HEIGHT=1080; FPS=30; } // Config principal
+            else { WIDTH=1280; HEIGHT=720; FPS=30; }       // Config secundarias
 
             if(enable_jetson_){
-                // ... (Tu código de Jetson GStreamer se queda igual) ...
+                // Configuration for jetson
                 string pipeline =
                     "v4l2src device=/dev/video" + to_string(camera_devices_[i]) + " ! "
                     "image/jpeg, width=" + to_string(WIDTH) + ", height=" + to_string(HEIGHT) + ", framerate=" + to_string(FPS) + "/1 !"
@@ -98,7 +97,6 @@ public:
                 cout << "Opening generic /dev/video" << camera_devices_[i] << endl;
                 cap.open(camera_devices_[i], cv::CAP_V4L2);
                 
-                // IMPORTANTE: Establecer propiedades solo si se abrió
                 if(cap.isOpened()){
                     cap.set(cv::CAP_PROP_FRAME_WIDTH, WIDTH);
                     cap.set(cv::CAP_PROP_FRAME_HEIGHT, HEIGHT);
@@ -108,8 +106,6 @@ public:
 
             if (!cap.isOpened()) {
                 RCLCPP_ERROR(this->get_logger(), "Could not open camera index %d", camera_devices_[i]);
-                // Continuamos aunque falle una, para no matar el nodo entero
-                // Usar %d en lugar de %ld
             } else {
                 RCLCPP_INFO(this->get_logger(), "Camera index %d opened successfully", camera_devices_[i]);
             }
@@ -121,7 +117,7 @@ public:
             bind(&VideoStreamPublisher::cameras_callback, this)
         );
         
-        // Solo iniciar timer térmico si existe la cámara térmica
+        // Initial timer of thermal cam if it exist
         if(thermal_camera_index_ != -1){
             timer_2_ = this->create_wall_timer(
                 chrono::milliseconds(33),
@@ -131,7 +127,7 @@ public:
     }
 
 private:
-    // --- CALLBACK DE VIDEO CORREGIDO ---
+    // --- CALLBACK DE VIDEO  ---
     void cameras_callback() {
         // Calcular el límite correcto para iterar
         size_t limit_index = cameras_.size();
@@ -143,11 +139,11 @@ private:
         }
 
         for (size_t i = 0; i < limit_index; ++i) {
-            // Verificación de seguridad
+
             if (!cameras_[i].isOpened()) continue;
 
             cv::Mat frame;
-            cameras_[i] >> frame; // Al ejecutar esto, el LED debería prenderse
+            cameras_[i] >> frame;
             
             if (frame.empty()) {
                 // RCLCPP_WARN_ONCE(this->get_logger(), "Empty frame on camera %ld", i);
@@ -156,7 +152,6 @@ private:
 
             auto msg = cv_bridge::CvImage(std_msgs::msg::Header(), "bgr8", frame).toImageMsg();
             
-            // Lógica de publicación
             if(static_cast<int>(i) == num_cam_s_) {
                 pub_sensors_->publish(*msg);
             }
@@ -172,7 +167,6 @@ private:
     void thermal_callback() {
         if(!thermal_enabled_ || thermal_camera_index_ == -1 || cameras_.empty()) return;
         
-        // La térmica siempre es la última
         cv::VideoCapture& cap = cameras_.back();
         
         if (!cap.isOpened()) return;

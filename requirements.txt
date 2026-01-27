@@ -5,8 +5,11 @@ ultralytics
 pyzbar
 DateTime
 lark
+em
 websockets
 numpy<2
-pyalsaaudio
+pyaudio
 pyyaml
 opencv-python
+serial
+pyzbar

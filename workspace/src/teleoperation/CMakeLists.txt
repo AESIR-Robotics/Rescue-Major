@@ -61,8 +61,9 @@ install(TARGETS
 )
 
 install(PROGRAMS
-  scripts/server.py
-  scripts/audio_reproducer.py
+  scripts/server_rtc.py
+  scripts/media_tracks.py
+  scripts/webrtc_manager.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

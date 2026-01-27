@@ -4,11 +4,12 @@
 
 ###  Topics
 
-| Topic               | Type                                  | Description                                              |
-| ------------------- | ------------------------------------- | -------------------------------------------------------- |
-| cam_ram/sensors     | **sensor_msgs/msg/Image**  | Raw feed from the selected camera sent to the detection node.       |
-| cam_sensors/image   | **sensor_msgs/msg/Image**  | Processing image from multi-detection node.                         |
-| cam[N]/image_raw    | **sensor_msgs/msg/Image**  | Individual raw streams for each connected camera (N = index).       |
+| Topic                 | Type                                  | Description                                              |
+| --------------------- | ------------------------------------- | -------------------------------------------------------- |
+| cam_ram/sensors       | **sensor_msgs/msg/Image**  | Raw feed from the selected camera sent to the detection node.       |
+| cam_sensors/image     | **sensor_msgs/msg/Image**  | Processing image from multi-detection node.                         |
+| cam[N]/image_raw      | **sensor_msgs/msg/Image**  | Individual raw streams for each connected camera (N = index).       |
+| cam_thermal/image_raw | **sensor_msgs/msg/Image**  | Raw image from thermal camera.                                      |
 
 ### Services
 ros2 service call /command_vision_sensors vision/srv/Command "{data: 'vision:mode,2'}"

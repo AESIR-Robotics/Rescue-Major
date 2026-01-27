@@ -5,12 +5,6 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
-if($ENV{ROS_DISTRO} STREQUAL "jazzy")
-    add_compile_definitions(ROS2_JAZZY)
-elseif($ENV{ROS_DISTRO} STREQUAL "humble")
-    add_compile_definitions(ROS2_HUMBLE)
-endif()
-
 # find dependencies
 find_package(ament_cmake REQUIRED)
 
@@ -27,6 +21,19 @@ find_package(std_srvs REQUIRED)
 find_package(example_interfaces REQUIRED)
 
 find_package(rosidl_default_generators REQUIRED)
+
+find_package(ament_cmake_core REQUIRED)
+
+message(STATUS "ament_cmake_core version: ${ament_cmake_core_VERSION}")
+
+if(ament_cmake_core_VERSION VERSION_GREATER_EQUAL "2.0.0")
+    # Jazzy+
+    add_compile_definitions(ROS2_JAZZY)
+else()
+    # Humble
+    add_compile_definitions(ROS2_HUMBLE)
+endif()
+
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/Command.srv"
@@ -82,10 +89,10 @@ install(DIRECTORY
   DESTINATION share/${PROJECT_NAME}/
 )
 
-#install(DIRECTORY
-#  launch
-#  DESTINATION share/${PROJECT_NAME}/
-#)
+install(DIRECTORY
+  launch
+  DESTINATION share/${PROJECT_NAME}/
+)
 
 # This command must be at the end of the file
 ament_package()
