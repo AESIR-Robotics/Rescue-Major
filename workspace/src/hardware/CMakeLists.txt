@@ -11,6 +11,20 @@ find_package(ament_cmake_python REQUIRED)
 find_package(rclpy REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(control_msgs REQUIRED)
+find_package(trajectory_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
+
+find_package(rosidl_default_generators REQUIRED)
+
+# Archivos de mensajes
+rosidl_generate_interfaces(${PROJECT_NAME}
+  "msg/JointControl.msg"
+  DEPENDENCIES std_msgs
+)
+
+ament_export_dependencies(rosidl_default_runtime)
 
 # Create executable for C++ command server
 
@@ -19,6 +33,14 @@ add_executable(dc_motors src/dc_motors.cpp)
 ament_target_dependencies(dc_motors
     rclcpp
     std_msgs
+    trajectory_msgs
+    sensor_msgs
+    geometry_msgs
+    control_msgs
+)
+
+rosidl_target_interfaces(dc_motors
+  ${PROJECT_NAME} "rosidl_typesupport_cpp"
 )
 
 if(BUILD_TESTING)

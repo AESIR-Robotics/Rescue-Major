@@ -15,8 +15,8 @@ echo "[setup] Venv dir: $VENV_DIR"
 # ------------------------------
 echo "[apt] Updating package lists..."
 sudo apt-get update
-sudo apt install -y libwebsocketpp-dev libboost-all-dev libssl-dev tmux ros-humble-rosbridge-server ros-humble-cv-bridge libzbar0
-
+sudo apt install -y libwebsocketpp-dev libboost-all-dev libssl-dev tmux ros-humble-rosbridge-server ros-humble-cv-bridge ros-humble-control-msgs libzbar0
+sudo apt install i2c-tools libi2c-dev
 
 # Determine real user (if script run via sudo, SUDO_USER is original)
 if [ "$EUID" -eq 0 ] && [ -n "${SUDO_USER:-}" ]; then

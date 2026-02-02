@@ -2,6 +2,7 @@
 /workspace/build
 /workspace/install
 /workspace/log
+/workspace/.cache
 
 #Virtual Environments
 /venv
