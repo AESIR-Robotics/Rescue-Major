@@ -1,8 +1,16 @@
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstddef>
 #include <cstdint>
 
+#include <iterator>
 #include <mutex>
+#include <rclcpp/logging.hpp>
 #include <rclcpp/rclcpp.hpp>
+#include <regex>
 #include <std_msgs/msg/float32_multi_array.hpp>
+#include <math.h>
 
 #include <linux/i2c-dev.h>
 #include <sys/ioctl.h>
@@ -15,6 +23,7 @@
 
 
 #include <type_traits>
+#include <unordered_map>
 
 #include "geometry_msgs/msg/twist.hpp"
 // #include "control_msgs/msg/joint_jog.hpp"
@@ -22,125 +31,6 @@
 #include "sensor_msgs/msg/joint_state.hpp"
 #include "hardware/msg/joint_control.hpp"
 
-/* 
-// Designed this for runtype buffer builders
-// Then remembered that messages are known at compile time making this unnecessary
-// I do not have the heart to delete it though
-// Might be useful for run time message testing
-
-class BufferBuilder{
-public:
-
-  using info_unit = std::variant<int8_t, uint8_t,int16_t,
-                              uint16_t, int32_t, uint32_t,
-                              int64_t, uint64_t, float, double, char>;
-
-  struct TypeInfo {
-    char fmt;
-    size_t size;
-    info_unit (*make_default)();
-  };
-
-  static info_unit make_i8()  { return int8_t{}; }
-  static info_unit make_u8()  { return uint8_t{}; }
-  static info_unit make_i16() { return int16_t{}; }
-  static info_unit make_u16() { return uint16_t{}; }
-  static info_unit make_i32() { return int32_t{}; }
-  static info_unit make_u32() { return uint32_t{}; }
-  static info_unit make_i64() { return int64_t{}; }
-  static info_unit make_u64() { return uint64_t{}; }
-  static info_unit make_f32() { return float{}; }
-  static info_unit make_f64() { return double{}; }
-  static info_unit make_char(){ return char{}; }
-
-  const static std::unordered_map<char, TypeInfo> type_table;
-
-  BufferBuilder(const std::string & format): fmt{format} {
-    buffer.reserve(16);
-    setFormat(fmt);
-  }
-
-  bool setFormat(const std::string & new_format){
-    if (!std::regex_match(new_format, regform)) {
-      fmt = "";
-      return false;
-    }
-    fmt = new_format;
-    elements.clear();
-    elements.reserve(fmt.size());
-    for(auto x : fmt){
-      elements.push_back(type_table.at(x).make_default());
-    }
-    buffer.clear();
-    return true;
-  }
-
-  bool pack(const std::vector<info_unit> &information){
-    if(elements.size() != information.size()){
-      return false;
-    }
-
-    for (size_t i = 0; i < information.size(); ++i) {
-      if (elements[i].index() != information[i].index()) {
-        return false;
-      }
-    }
-
-    elements = information;
-    compileBuffer();
-    return true;
-  }
-
-  const uint8_t * getBuffer() const {
-    if(fmt == ""){
-      return nullptr;
-    }
-    return buffer.data();
-  }
-
-  size_t getBufSize() const {
-    return buffer.size();
-  }
-
-  std::string getFormat(){
-    return fmt;
-  }
-
-private:
-  std::string fmt;
-  std::vector<uint8_t> buffer;
-  std::vector<info_unit> elements;
-
-  inline static std::regex regform{R"([bBhHiIqQfdc]*)"};
-
-  bool compileBuffer(){
-    buffer.clear();
-    for(const auto & elem : elements){
-      std::visit([this](auto&& arg){
-        using T = std::decay_t<decltype(arg)>;
-        const uint8_t * ptr = reinterpret_cast<const uint8_t*>(&arg);
-        buffer.insert(buffer.end(), ptr, ptr + sizeof(T));
-      }, elem);
-    }
-    return true;
-  }
-
-};
-  
-const std::unordered_map<char, BufferBuilder::TypeInfo>  BufferBuilder::type_table{
-      { 'b', {'b', 1, BufferBuilder::make_i8  } },
-      { 'B', {'B', 1, BufferBuilder::make_u8  } },
-      { 'h', {'h', 2, BufferBuilder::make_i16 } },
-      { 'H', {'H', 2, BufferBuilder::make_u16 } },
-      { 'i', {'i', 4, BufferBuilder::make_i32 } },
-      { 'I', {'I', 4, BufferBuilder::make_u32 } },
-      { 'q', {'q', 8, BufferBuilder::make_i64 } },
-      { 'Q', {'Q', 8, BufferBuilder::make_u64 } },
-      { 'f', {'f', 4, BufferBuilder::make_f32 } },
-      { 'd', {'d', 8, BufferBuilder::make_f64 } },
-      { 'c', {'c', 1, BufferBuilder::make_char} },
-  };
-*/
 
 // Compute total byte size of a tuple (sum of sizeof each element type)
 template<typename... Args>
@@ -233,12 +123,12 @@ namespace WriteCommandsNC {
 
   template<>
   struct packet<SPEED> {
-      using type = std::tuple<uint8_t, float, bool>; // motor Mask, speed, direction
+      using type = std::tuple<uint8_t, float>; // motor Mask, speed
   };
 
   template<>
   struct packet<POSITION> {
-      using type = std::tuple<uint8_t, float, bool>; // motor Mask, position, direction
+      using type = std::tuple<uint8_t, int32_t>; // motor Mask, position
   };
 
 } // namespace WriteCommands
@@ -271,11 +161,19 @@ namespace ReadCommandsNC {
     using type = std::tuple<unsigned int, unsigned int, unsigned int, unsigned int>; // motor Mask, position, direction
   };
 
+  template<ReadCommandsNC::ReadCommand ID, typename HandlerFunc>
+  void dispatch_one(const std::vector<uint8_t>& data, HandlerFunc&& handle) {
+    using payload = typename ReadCommandsNC::packet<ID>::type;
+    payload p;
+    unpack_tuple_from_buffer(p, data.data());
+    handle(std::move(p));
+  }
+
 } // namespace WriteCommands
 
 class Protocol_Handler_I2C{
   public:
-
+  
   enum class Error_State {
     NONE,
     INVALID_CONFIG,
@@ -287,10 +185,20 @@ class Protocol_Handler_I2C{
   using header = std::tuple<uint8_t, uint8_t, uint8_t>; // header, command, length
   using tail = std::tuple<uint8_t>; // checksum
 
-  explicit Protocol_Handler_I2C(const std::string & device_in, int slave_addr_in):
-  device{device_in}, slave_addr{slave_addr_in}
+  explicit Protocol_Handler_I2C(const std::string & device_in = "", int slave_addr_in = 0x00)
+    : device{device_in}, slave_addr{slave_addr_in}
   {
-    connect();
+    if (!device.empty()){
+      // Attempt connection only when a device string was provided.
+      connect();
+    }
+  }
+
+  // Initialize an existing (default-constructed) handler and attempt to connect.
+  bool init(const std::string & device_in, int slave_addr_in){
+    device = device_in;
+    slave_addr = slave_addr_in;
+    return connect();
   }
 
   ~Protocol_Handler_I2C() noexcept{
@@ -354,18 +262,18 @@ class Protocol_Handler_I2C{
 
     static_assert(!std::is_void<Packet>::value, "Invalid Read Command ID");
 
-    auto sendHeader = make_msg_from_args(header{}, 0xAA, 0x02, 0x00);
+    auto sendHeader = make_msg_from_args(header{}, 0xAA, 0x02, 0x01);
     constexpr auto headerSize = tuple_size(decltype(sendHeader){});
     
     constexpr auto tailSize = tuple_size(tail{});
-    constexpr auto msgsize = headerSize + tailSize;
+    constexpr auto msgsize = headerSize + 1 + tailSize;
 
     std::array<uint8_t, msgsize> buffer{};
 
     pack_tuple_to_buffer(sendHeader, buffer.data());
-
+    pack_tuple_to_buffer(std::make_tuple(static_cast<uint8_t>(ID)), buffer.data() + headerSize);
     auto tail_tuple = make_msg_from_args(tail{}, calcCRC(buffer.data(), msgsize - tailSize, 0));
-    pack_tuple_to_buffer(tail_tuple, buffer.data() + headerSize);
+    pack_tuple_to_buffer(tail_tuple, buffer.data() + headerSize + 1);
 
     std::lock_guard<std::mutex> lock(lock_i2c);
     return writeData(buffer.data(), buffer.size());
@@ -508,20 +416,40 @@ public:
   HardwareDriverNode()
   : Node("hardware_node")
   {
-
+    // Parameters
     this->declare_parameter<std::string>("i2c_port", "/dev/i2c-1");
     this->declare_parameter<int>("i2c_address", 0x10);
+    this->declare_parameter<int>("flipper_revolution", 400);
+    this->declare_parameter<std::vector<std::string>>("joint_names",
+      {"flipper_0", "flipper_1", "flipper_2", "flipper_3"});
+    this->declare_parameter("steppers", 4);
+
+    std::string i2c_port_;
+    int slave_addr_{};
 
     this->get_parameter("i2c_port", i2c_port_);
     this->get_parameter("i2c_address", slave_addr_);
+    this->get_parameter("flipper_revolution", steps_per_revolution);
+    this->get_parameter("joint_names", joint_names);
+    this->get_parameter("steppers", steppers);
 
-    openI2C();
+    protocol_handler_.init(i2c_port_, slave_addr_);
+    if(protocol_handler_.getErrorState() != Protocol_Handler_I2C::Error_State::NONE){
+      RCLCPP_ERROR(this->get_logger(), "Failed to connect to I2C device %s at address 0x%02X",
+                   i2c_port_.c_str(), slave_addr_);
+    } else {
+      RCLCPP_INFO(this->get_logger(), "Protocol handler created for I2C device %s at address 0x%02X",
+                  i2c_port_.c_str(), slave_addr_);
+    }
 
-    cmd_group_ = this->create_callback_group(
-      rclcpp::CallbackGroupType::MutuallyExclusive);
+    // init joint state storage from configured joint names
+    const size_t n = joint_names.size();
+    joint_positions_.assign(n, 0.0);
+    joint_velocities_.assign(n, 0.0);
+    joint_efforts_.assign(n, 0.0);
 
-    feedback_group_ = this->create_callback_group(
-      rclcpp::CallbackGroupType::MutuallyExclusive);
+    cmd_group_ = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+    feedback_group_ = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
 
     rclcpp::SubscriptionOptions cmd_opts;
     cmd_opts.callback_group = cmd_group_;
@@ -536,48 +464,165 @@ public:
       std::bind(&HardwareDriverNode::jointCommandCallback, this, std::placeholders::_1),
       cmd_opts);
 
-
     joint_state_pub_ = this->create_publisher<sensor_msgs::msg::JointState>(
       "hardware_node/joint_states", qos_feedback_);
 
+    generateCallbacks();
 
-    feedback_timer_ = this->create_wall_timer(
+    // timer to poll hardware and publish JointState
+    poll_timer = this->create_wall_timer(
       std::chrono::milliseconds(20),
       std::bind(&HardwareDriverNode::pollHardwareFeedback, this),
+      feedback_group_);
+
+    read_timer = this->create_wall_timer(
+      std::chrono::milliseconds(10),
+      std::bind(&HardwareDriverNode::readHardwareFeedback, this),
       feedback_group_);
   }
 
 private:
 
-  void openI2C() {
-    i2c_fd_ = open("/dev/i2c-1", O_RDWR);
-    if (i2c_fd_ < 0) {
-      throw std::runtime_error("No se pudo abrir I2C");
-    }
+  void generateCallbacks(){
+    read_callbacks_.emplace(ReadCommandsNC::ReadCommand::POSITION, [this](const std::vector<uint8_t>& data){
+      ReadCommandsNC::dispatch_one<ReadCommandsNC::ReadCommand::POSITION>(data, [&](const auto& info){
+        std::apply([&](const auto&... args){
+          size_t i{0};
+          ((joint_positions_[i++] = static_cast<double>(args) * steps_per_revolution / M_2_PI), ...);
+          updated_pos = true;
+        }, info);
+      });
+    });
 
-    if (ioctl(i2c_fd_, I2C_SLAVE, 0x10) < 0) {
-      throw std::runtime_error("No se pudo seleccionar esclavo");
-    }
-
-    RCLCPP_INFO(get_logger(), "I2C listo");
-  }
-
-  void closeI2C() {
-    if (i2c_fd_ >= 0) {
-      close(i2c_fd_);
-      i2c_fd_ = -1;
-    }
+    read_callbacks_.emplace(ReadCommandsNC::ReadCommand::SPEED, [this](const std::vector<uint8_t>& data){
+     ReadCommandsNC::dispatch_one<ReadCommandsNC::SPEED>(data, [&](const auto& info){
+      std::apply([&](const auto&... args){
+        size_t i{0};
+        ((joint_velocities_[i++] = static_cast<double>(args * steps_per_revolution / M_2_PI)),...);
+        updated_vel = true;
+      }, info);
+     });
+    });
   }
 
   void cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr msg){(void)msg;}
-  void jointCommandCallback(const hardware::msg::JointControl::SharedPtr msg){(void)msg;}
 
-  void pollHardwareFeedback(){}
+  void jointCommandCallback(const hardware::msg::JointControl::SharedPtr msg){
+    if(!protocol_handler_.connected()){
+      return;
+    }
 
-  std::string i2c_port_;
-  int i2c_fd_, slave_addr_;
-  std::mutex lock_i2c;
+    for(size_t i = 0; i < msg->joint_names.size(); ++i){
 
+      const std::string& name = msg->joint_names[i];
+      auto it = std::find(joint_names.begin(), joint_names.end(), name);
+
+      if(it == joint_names.end()){
+        RCLCPP_WARN(this->get_logger(), "Unknown joint name: %s", name.c_str());
+        continue;
+      }
+
+      auto joint_index = std::distance(joint_names.begin(), it);
+      if (joint_index < steppers) {
+        int32_t position = static_cast<int32_t>(msg->position[i] / M_2_PI * steps_per_revolution);
+        float speed = static_cast<float>(msg->velocity[i] / M_2_PI * steps_per_revolution);
+
+        // Send position command as example
+        bool test;
+        test = protocol_handler_.writeInfo<WriteCommandsNC::POSITION>(
+          1 << joint_index, 
+          position
+        );
+
+        if(!test){
+          RCLCPP_ERROR(this->get_logger(), "Unable to send message position to %s", name.c_str());
+          continue;
+        }
+
+        test = protocol_handler_.writeInfo<WriteCommandsNC::SPEED>(
+          1 << joint_index,
+          speed
+        );
+
+        if(!test){
+          RCLCPP_ERROR(this->get_logger(), "Unable to send message speed to %s", name.c_str());
+          continue;
+        }
+
+        continue;
+      } else {
+        RCLCPP_WARN(this->get_logger(), "Invalid joint name format: %s", msg->joint_names[i].c_str());
+      }
+
+    }
+
+  }
+
+  void pollHardwareFeedback(){
+    if(!protocol_handler_.connected()){
+      return;
+    }
+    // Request position and speed frames from device; responses will be
+    // processed by readHardwareFeedback when available.
+    if(!protocol_handler_.sendReadRequest<ReadCommandsNC::POSITION>()){
+      RCLCPP_ERROR(this->get_logger(), "Unable to ask for Position");
+      return;
+    }
+    if(!protocol_handler_.sendReadRequest<ReadCommandsNC::SPEED>()){
+      RCLCPP_ERROR(this->get_logger(), "Unable to ask for Speed");
+    }
+  }
+
+  void readHardwareFeedback(){
+    if(!protocol_handler_.connected()){
+      return;
+    }
+
+    uint8_t id = 0;
+    std::vector<uint8_t> buf;
+
+    while(protocol_handler_.readInfo(id, buf)){
+      auto incoming = static_cast<ReadCommandsNC::ReadCommand>(id);
+      auto it = read_callbacks_.find(incoming);
+      if(it != read_callbacks_.end()){
+        it->second(buf);
+      }
+    }
+
+    // Necesary due to the fact that it can fail whilst reading
+    if(!protocol_handler_.connected()){
+      RCLCPP_ERROR(this->get_logger(), "Unable to read from the microcontroler");
+      return;
+    }
+
+    if(updated_pos && updated_vel){
+      // Publish JointState with current stored values
+      sensor_msgs::msg::JointState msg;
+      msg.header.stamp = this->now();
+      msg.name = joint_names;
+      msg.position = joint_positions_;
+      msg.velocity = joint_velocities_;
+      msg.effort = joint_efforts_;
+      joint_state_pub_->publish(msg);
+    }
+  }
+
+  // I2C protocol handler (owned)
+  Protocol_Handler_I2C protocol_handler_;
+  std::unordered_map<ReadCommandsNC::ReadCommand, std::function<void(const std::vector<uint8_t>&)>> read_callbacks_;
+
+  // Steppers
+  int steps_per_revolution{400};
+  int steppers{4};
+
+  std::vector<std::string> joint_names{"flipper_0", "flipper_1", "flipper_2", "flipper_3"};
+  bool updated_pos{false};
+  std::vector<double> joint_positions_;
+  bool updated_vel{false};
+  std::vector<double> joint_velocities_;
+  std::vector<double> joint_efforts_;
+
+  // Ros configuration
   rclcpp::QoS qos_cmd_{rclcpp::QoS(1).best_effort()};
   rclcpp::QoS qos_feedback_{rclcpp::QoS(10).reliable()};
 
@@ -589,8 +634,14 @@ private:
 
   rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr joint_state_pub_;
 
-  rclcpp::TimerBase::SharedPtr feedback_timer_;
+  rclcpp::TimerBase::SharedPtr poll_timer;
+  rclcpp::TimerBase::SharedPtr read_timer;
 };
+
+// TODO: 
+// - Change CRC to CRC-8-ATM
+// - Handle Read check to the new message
+// - Beware of the instruction changes (1 por ping, 2 for write and 3 for read)
 
 int main(int argc, char ** argv)
 {

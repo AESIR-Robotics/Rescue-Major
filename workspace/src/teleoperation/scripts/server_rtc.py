@@ -13,7 +13,6 @@ import threading
 import time
 import cv2
 import numpy as np
-
 import rclpy
 import cv_bridge
 from rclpy.node import Node
@@ -128,16 +127,6 @@ class Intermediate(Node):
     def webrtc_command_callback(self, request, response):
         """
         Service callback to process WebRTC commands.
-        
-        Commands:
-          - vision:camera,N: Switch track N to sensors feed
-        
-        Args:
-            request: Command.Request with 'data' field containing command string
-            response: Command.Response with 'success' and 'message' fields
-        
-        Returns:
-            response: Service response indicating success/failure
         """
         command = request.data
         logger.info(f"Received WebRTC command: {command}")
@@ -164,6 +153,26 @@ class Intermediate(Node):
                 logger.error(f"Invalid vision:camera command format: {command}. Error: {e}")
                 response.success = False
                 response.message = f"Invalid command format: {e}"
+        
+        elif command == "audio:mute":
+            try:
+                webrtc_manager.mute_audio()
+                response.success = True
+                response.message = "Audio muted"
+            except Exception as e:
+                logger.error(f"Error muting audio: {e}")
+                response.success = False
+                response.message = f"Failed to mute audio: {e}"
+        
+        elif command == "audio:unmute":
+            try:
+                webrtc_manager.unmute_audio()
+                response.success = True
+                response.message = "Audio unmuted"
+            except Exception as e:
+                logger.error(f"Error unmuting audio: {e}")
+                response.success = False
+                response.message = f"Failed to unmute audio: {e}"
         
         else:
             logger.warning(f"Unknown WebRTC command: {command}")
@@ -267,19 +276,16 @@ class Intermediate(Node):
                     logger.error(f"Error creating subscription for track {i}: {e}")
 
     def update_bandwidth(self, msg):
-        """Updates the available bandwidth based on message data."""
         self.bandwidth = msg.data
         self.adjust_fps_and_resolution()
     
     def preallocate_latest_images(self):
-        """Preallocate image buffers for all cameras."""
         width, height = self.resolution
         shape = (height, width, 3)
         for i in range(self.camera_count):
             self.latest_images[i] = np.zeros(shape, dtype=np.uint8)
 
     def adjust_fps_and_resolution(self):
-        """Adjusts FPS and resolution based on the current round-trip time (RTT)."""
         rtt_settings = {
             (0, 40): {'resolution': (1920, 1080), 'fps': 30},
             (40, 80): {'resolution': (1280, 720), 'fps': 30},
@@ -296,7 +302,6 @@ class Intermediate(Node):
         self.preallocate_latest_images()
 
     def resize_image(self, image):
-        """Resize the image based on the current bandwidth."""
         if self.rtt is not None:
             if self.rtt is not self.last_rtt:
                 self.adjust_fps_and_resolution()
@@ -322,7 +327,6 @@ async def offer(request):
 
 
 async def on_shutdown(app):
-    """Handles the shutdown of the web application."""
     await webrtc_manager.shutdown()
 
 

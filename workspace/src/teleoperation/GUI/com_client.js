@@ -375,8 +375,14 @@ class InputHandler {
       return;
     }
 
+    // Use wss:// if page is loaded over https://, otherwise ws://
+    const protocol = location.protocol === 'https:' ? 'wss://' : 'ws://';
+    const rosbridgeUrl = `${protocol}${rosbridgeHost}:${rosbridgePort}`;
+    
+    log(`Connecting to ROS bridge at ${rosbridgeUrl}`);
+
     const ros = new ROSLIB.Ros({
-      url: `ws://${rosbridgeHost}:${rosbridgePort}`
+      url: rosbridgeUrl
     });
 
     ros.on('connection', () => {
@@ -451,7 +457,7 @@ class InputHandler {
   }
 
   // Control button to enable/disable joystick velocity publishing
-  const startButton = document.getElementById('start-btn') || document.getElementById('start-communication');
+  const startButton = document.getElementById('start-communication');
   if (startButton) {
     startButton.addEventListener('click', () => {
       isControlEnabled = !isControlEnabled;
@@ -478,6 +484,35 @@ class InputHandler {
   } else {
     log('Warning: Start button not found (id: start-btn or start-communication)');
   }
+
+  // Expose executeAction globally 
+  window.executeAction = (actionId) => {
+    if (!inputHandler) {
+      console.warn('InputHandler not initialized');
+      return { success: false, error: 'InputHandler not initialized' };
+    }
+    return inputHandler.executeAction(actionId);
+  };
+
+  // Toggle server microphone with dynamic button update
+  window.toggleServerMic = () => {
+    const button = document.getElementById('toggle-speaker');
+    if (!button) return;
+    
+    const isMuted = button.textContent === 'Unmute Server';
+    const actionId = isMuted ? 'button_unmute_server' : 'button_mute_server';
+    
+    const result = window.executeAction(actionId);
+    
+    if (result.success) {
+      // Update button appearance
+      button.textContent = isMuted ? 'Mute Server' : 'Unmute Server';
+      button.style.backgroundColor = isMuted ? '#dc3545' : '#6c757d';
+      log(`Server microphone ${isMuted ? 'unmuted' : 'muted'}`);
+    } else {
+      log(`Failed to toggle server mic: ${result.error || 'unknown error'}`);
+    }
+  };
 
   // Emergency stop on page unload
   window.addEventListener('beforeunload', () => {
