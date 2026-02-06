@@ -13,6 +13,6 @@ compile_commands.json
 **.cache/**
 __pycache__
 workspace/saves/vision
-
+workspace/src/teleoperation/GUI/assets/placeholder.jpg
 # Cerrtificates
 *.pem
