@@ -1,5 +1,4 @@
 #include <algorithm>
-#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -9,7 +8,6 @@
 #include <iterator>
 #include <memory>
 
-#include <deque>
 #include <queue>
 
 #include <rclcpp/logging.hpp>
@@ -409,18 +407,24 @@ public:
     if (!connected())
       return false;
 
-    // TODO: count bytes sent and stop it after a certain amount
-    size_t iter{0};
-    while (!sending.empty() && iter++ < 10) {
-      sendNext();
+    size_t bytes{0};
+    
+    // It can send a little more than a 100 bytes beware, im ok with this behaviour tho
+    while (!sending.empty() && bytes + sending.front()->getPckSize() < 100) {
+
+      auto sent = sendNext();
+      if(!sent){
+        return false;
+      }
+      bytes += sent;
     }
 
     return true;
   }
 
-  bool sendNext() {
+  size_t sendNext() {
     if (!connected())
-      return false;
+      return 0;
 
     auto elem = std::move(sending.front());
     sending.pop();
@@ -440,9 +444,9 @@ public:
 
     if (!writeData(buffer.data(), buffer.size())) {
       sending.push(std::move(elem));
-      return false;
+      return 0;
     }
-    return true;
+    return buffer.size();
   }
 
   bool readPending() {
@@ -507,34 +511,57 @@ public:
   int getSlaveAddress() const { return slave_addr; }
 
 private:
-  bool writeData(const uint8_t *data, size_t length) {
-
+  
+  bool writeData(const uint8_t *data, size_t length, std::chrono::milliseconds timeout = std::chrono::milliseconds{1}) {
     if (!connected())
       return false;
-    ssize_t bytes_written = ::write(i2c_fd, data, length);
-    if (bytes_written != static_cast<ssize_t>(length)) {
-      // closeI2C_nolock assumes lock is held by caller
-      closeI2C();
-      error_state = Error_State::IO_ERROR;
-      return false;
+
+    using clock = std::chrono::steady_clock;
+    auto deadline = clock::now();
+
+    size_t total{0};
+
+    while(total < length) {
+       ssize_t bytes_written = ::write(i2c_fd, data + total, length - total);
+      if (bytes_written < 0) {
+        closeI2C();
+        error_state = Error_State::IO_ERROR;
+        return false;
+      }
+      total += static_cast<size_t>(bytes_written);
+      if (clock::now() > deadline + timeout) {
+        return false;
+      }
     }
+
     return true;
   }
-
-  bool readData(uint8_t *buffer, size_t length) {
+  
+  bool readData(uint8_t *buffer, size_t length, std::chrono::milliseconds timeout = std::chrono::milliseconds{1}) {
     if (!connected())
       return false;
 
     if (!length)
       return true;
 
-    ssize_t bytes_read = ::read(i2c_fd, buffer, length);
-    if (bytes_read != static_cast<ssize_t>(length)) {
-      // closeI2C_nolock assumes lock is held by caller
-      closeI2C();
-      error_state = Error_State::IO_ERROR;
-      return false;
+    using clock = std::chrono::steady_clock;
+    auto deadline = clock::now();
+
+    size_t total{0};
+
+    while(total < length) {
+      ssize_t bytes_read = ::read(i2c_fd, buffer + total, length - total);
+      if (bytes_read < 0) {
+        closeI2C();
+        error_state = Error_State::IO_ERROR;
+        return false;
+      }
+      total += static_cast<size_t>(bytes_read);
+      if (clock::now() > deadline + timeout) {
+        return false;
+      }
     }
+
     return true;
   }
 
@@ -542,6 +569,7 @@ private:
     if (i2c_fd >= 0) {
       ::close(i2c_fd);
       i2c_fd = -1;
+      error_state = Error_State::OPEN_FAILED;
     }
   }
 
@@ -680,6 +708,8 @@ public:
     switch (tick_state_) {
     case TickState::IDLE:
       // Periodically poll even if no changes, or move to prepare when inputs
+      stepper_micro.sendQueue();
+      stepper_micro.readPending();
       // differ
       if (ticks_since_poll_++ >= poll_interval_ticks_) {
         ticks_since_poll_ = 0;
@@ -760,13 +790,18 @@ public:
         last_sent_spd_int_[i] = static_cast<int32_t>(std::llround(
             in_joint_velocities[i] / M_2_PI * steps_per_revolution));
       }
+
+      stepper_micro.addCommand(std::make_unique<ReadInst<ReadCommandsNC::POSITION>>());
+      stepper_micro.addCommand(std::make_unique<ReadInst<ReadCommandsNC::SPEED>>());
       stepper_micro.sendQueue();
+      stepper_micro.readPending();
 
       tick_state_ = TickState::SEND_COMMANDS;
     } break;
 
     case TickState::SEND_COMMANDS:
       stepper_micro.sendQueue();
+      stepper_micro.readPending();
       wait_counter_ = 0;
       tick_state_ = TickState::WAIT_RESPONSE;
       break;
@@ -841,7 +876,6 @@ private:
   }
 
   void jointCommandCallback(const hardware::msg::JointControl::SharedPtr msg) {
-
     for (size_t i = 0; i < msg->joint_names.size(); ++i) {
 
       const std::string &name = msg->joint_names[i];
@@ -867,7 +901,7 @@ private:
   }
 
   void publishJointFeedback() {
-    if (updated_pos && updated_vel) {
+    if (updated_pos || updated_vel) {
       // Publish JointState with current stored values
       sensor_msgs::msg::JointState msg;
       msg.header.stamp = this->now();
@@ -876,6 +910,8 @@ private:
       msg.velocity = feedback_joint_velocities;
       msg.effort = feedback_joint_efforts;
       joint_state_pub_->publish(msg);
+
+      updated_pos = updated_vel = false;
     }
   }
 
