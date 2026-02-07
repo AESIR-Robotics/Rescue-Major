@@ -8,8 +8,10 @@
 #include <iterator>
 #include <memory>
 
+#include <mutex>
 #include <queue>
 
+#include <ratio>
 #include <rclcpp/logging.hpp>
 #include <rclcpp/rclcpp.hpp>
 
@@ -372,6 +374,17 @@ public:
     return connect();
   }
 
+  // Attempt a reconnect: close any existing fd and try to connect again.
+  // Returns true if connection is established.
+  bool reconnect() {
+    if (device.empty()) {
+      error_state = Error_State::INVALID_CONFIG;
+      return false;
+    }
+    closeI2C();
+    return connect();
+  }
+
   ~Protocol_Handler_I2C() noexcept { closeI2C(); }
 
   bool connect() {
@@ -403,14 +416,17 @@ public:
   }
 
   // TODO: add sequencing to the protocol
-  bool sendQueue() {
+  bool sendQueue(std::chrono::milliseconds timeout = std::chrono::milliseconds(5)) {
     if (!connected())
       return false;
 
     size_t bytes{0};
+
+    using clock = std::chrono::steady_clock;
+    auto deadline = clock::now();
     
-    // It can send a little more than a 100 bytes beware, im ok with this behaviour tho
-    while (!sending.empty() && bytes + sending.front()->getPckSize() < 100) {
+    // It can send a little more than a 100 bytes beware, im ok with this behaviour tho (same with the deadline)
+    while (!sending.empty() && bytes + sending.front()->getPckSize() < 100 && clock::now() < deadline + timeout) {
 
       auto sent = sendNext();
       if(!sent){
@@ -449,57 +465,35 @@ public:
     return buffer.size();
   }
 
-  bool readPending() {
+  // Read pending messages until there are none left. Returns true if at least
+  // one message was dispatched, false on I/O error or if no messages were
+  // available.
+  bool readPending(std::chrono::milliseconds timeout = std::chrono::milliseconds(5)) {
     if (!connected())
       return false;
 
-    for (;;) {
-      uint8_t header_buf[4];
-      header_buf[0] = 0xAA;
-      if (!syncMessage()) {
-        return false;
+    using clock = std::chrono::steady_clock;
+    
+
+    bool dispatched_any = false;
+    for (auto deadline = clock::now();clock::now() < deadline + timeout;) {
+      auto res = readOneMessage();
+      if (res == ReadResult::OK_DISPATCHED) {
+        dispatched_any = true;
+        continue; // try reading more
       }
-
-      // Read Header
-      if (!readData(header_buf + 1, sizeof(header_buf) - 1)) {
-        return false;
+      if (res == ReadResult::NO_MESSAGE) {
+        break; // nothing more to read
       }
-
-      using headerScan =
-          tuple_push_back_t<header, uint8_t>; // header + possible crc
-      headerScan recv_header{};
-      unpack_tuple_from_buffer(recv_header, header_buf);
-
-      if (recv_header ==
-          headerScan{0xAA, 0x00, 0x00, calcCRC({0xAA, 0X00, 0X00}, 0)}) {
-        break;
+      if (res == ReadResult::CRC_MISMATCH) {
+        // Skip and attempt to continue reading next message
+        continue;
       }
-
-      // Read Package
-      uint8_t inst{std::get<1>(recv_header)};
-      uint8_t length = std::get<2>(recv_header);
-
-      std::vector<uint8_t> out_buffer(length);
-      out_buffer[0] = std::get<3>(recv_header);
-
-      if (!readData(out_buffer.data() + 1, length - 1)) {
-        return false;
-      }
-
-      // Calculate CRC
-      uint8_t recv_crc = 0;
-      if (!readData(&recv_crc, sizeof(recv_crc))) {
-        return false;
-      }
-
-      uint8_t header_crc = calcCRC(header_buf, sizeof(header_buf), 0);
-
-      if (recv_crc == calcCRC(out_buffer.data(), length, header_crc)) {
-        dispatchInput(inst, out_buffer.data());
-      }
+      // ERROR_IO
+      return false;
     }
 
-    return true;
+    return dispatched_any;
   }
 
   bool connected() const { return error_state == Error_State::NONE; }
@@ -511,8 +505,74 @@ public:
   int getSlaveAddress() const { return slave_addr; }
 
 private:
+  enum class ReadResult { OK_DISPATCHED, NO_MESSAGE, CRC_MISMATCH, ERROR_IO };
+
+  // Read exactly one message from the bus and dispatch it. Returns a
+  // ReadResult describing what happened.
+  ReadResult readOneMessage() {
+    if (!connected())
+      return ReadResult::ERROR_IO;
+
+    uint8_t header_buf[4];
+    header_buf[0] = 0xAA;
+
+    // Wait for sync byte; if none found within timeout, return NO_MESSAGE
+    if (!syncMessage()) {
+      return ReadResult::NO_MESSAGE;
+    }
+
+    // Read remaining header bytes
+    if (!readData(header_buf + 1, sizeof(header_buf) - 1)) {
+      error_state = Error_State::IO_ERROR;
+      closeI2C();
+      return ReadResult::ERROR_IO;
+    }
+
+    using headerScan = tuple_push_back_t<header, uint8_t>;
+    headerScan recv_header{};
+    unpack_tuple_from_buffer(recv_header, header_buf);
+
+    // Ignore heartbeat/empty packages
+    if (recv_header == headerScan{0xAA, 0x00, 0x00, calcCRC({0xAA, 0x00, 0x00}, 0)}) {
+      return ReadResult::NO_MESSAGE;
+    }
+
+    uint8_t inst = std::get<1>(recv_header);
+    uint8_t length = std::get<2>(recv_header);
+
+    if (length == 0) {
+      // malformed
+      return ReadResult::CRC_MISMATCH;
+    }
+
+    std::vector<uint8_t> out_buffer(length);
+    out_buffer[0] = std::get<3>(recv_header);
+
+    if (!readData(out_buffer.data() + 1, length - 1)) {
+      error_state = Error_State::IO_ERROR;
+      closeI2C();
+      return ReadResult::ERROR_IO;
+    }
+
+    uint8_t recv_crc = 0;
+    if (!readData(&recv_crc, sizeof(recv_crc))) {
+      error_state = Error_State::IO_ERROR;
+      closeI2C();
+      return ReadResult::ERROR_IO;
+    }
+
+    uint8_t header_crc = calcCRC(header_buf, sizeof(header_buf), 0);
+    if (recv_crc != calcCRC(out_buffer.data(), length, header_crc)) {
+      // CRC mismatch, drop message
+      return ReadResult::CRC_MISMATCH;
+    }
+
+    // Dispatch the message
+    dispatchInput(inst, out_buffer.data());
+    return ReadResult::OK_DISPATCHED;
+  }
   
-  bool writeData(const uint8_t *data, size_t length, std::chrono::milliseconds timeout = std::chrono::milliseconds{1}) {
+  bool writeData(const uint8_t *data, size_t length, std::chrono::milliseconds timeout = std::chrono::milliseconds{2}) {
     if (!connected())
       return false;
 
@@ -537,7 +597,7 @@ private:
     return true;
   }
   
-  bool readData(uint8_t *buffer, size_t length, std::chrono::milliseconds timeout = std::chrono::milliseconds{1}) {
+  bool readData(uint8_t *buffer, size_t length, std::chrono::milliseconds timeout = std::chrono::milliseconds{2}) {
     if (!connected())
       return false;
 
@@ -569,6 +629,11 @@ private:
     if (i2c_fd >= 0) {
       ::close(i2c_fd);
       i2c_fd = -1;
+
+      // Empty the queue
+      std::queue<std::unique_ptr<Command>> empty;
+      std::swap(sending, empty);
+
       error_state = Error_State::OPEN_FAILED;
     }
   }
@@ -607,7 +672,7 @@ private:
     uint8_t header;
 
     while (clock::now() < deadline) {
-      if (!readData(&header, 1)) {
+      if (!readData(&header, 1, std::chrono::milliseconds(1))) {
         return false;
       }
       if (header == 0xAA) {
@@ -642,7 +707,7 @@ public:
   HardwareDriverNode() : Node("hardware_node") {
     // Parameters
     this->declare_parameter<std::string>("i2c_port", "/dev/i2c-1");
-    this->declare_parameter<int>("i2c_address", 0x10);
+    this->declare_parameter<int>("i2c_address", 0x30);
     this->declare_parameter<int>("flipper_revolution", 400);
     this->declare_parameter<std::vector<std::string>>(
         "joint_names", {"flipper_0", "flipper_1", "flipper_2", "flipper_3"});
@@ -705,17 +770,18 @@ public:
     using positionW = WriteInst<WriteCommandsNC::POSITION>;
     using speedW = WriteInst<WriteCommandsNC::SPEED>;
 
+    stepper_micro.sendQueue();
+    stepper_micro.readPending();
+
     switch (tick_state_) {
     case TickState::IDLE:
-      // Periodically poll even if no changes, or move to prepare when inputs
-      stepper_micro.sendQueue();
-      stepper_micro.readPending();
       // differ
       if (ticks_since_poll_++ >= poll_interval_ticks_) {
         ticks_since_poll_ = 0;
         if (stepper_micro.connected()) {
           tick_state_ = TickState::PREPARE_COMMANDS;
         } else {
+          RCLCPP_WARN(this->get_logger(), "Se perdio la conexion con el I2C");
           tick_state_ = TickState::ERROR_RECOVERY;
         }
       } else {
@@ -792,31 +858,17 @@ public:
       }
 
       stepper_micro.addCommand(std::make_unique<ReadInst<ReadCommandsNC::POSITION>>());
-      stepper_micro.addCommand(std::make_unique<ReadInst<ReadCommandsNC::SPEED>>());
-      stepper_micro.sendQueue();
-      stepper_micro.readPending();
+      stepper_micro.addCommand(std::make_unique<ReadInst<ReadCommandsNC::SPEED>>());  
 
-      tick_state_ = TickState::SEND_COMMANDS;
-    } break;
-
-    case TickState::SEND_COMMANDS:
-      stepper_micro.sendQueue();
-      stepper_micro.readPending();
       wait_counter_ = 0;
       tick_state_ = TickState::WAIT_RESPONSE;
-      break;
+    } break;
 
     case TickState::WAIT_RESPONSE:
       // give device some time (a few ticks) to respond
       if (++wait_counter_ >= max_wait_ticks_) {
-        tick_state_ = TickState::READ_RESPONSE;
+        tick_state_ = TickState::PUBLISH_STATE;
       }
-      break;
-
-    case TickState::READ_RESPONSE:
-      // read any pending responses
-      stepper_micro.readPending();
-      tick_state_ = TickState::PUBLISH_STATE;
       break;
 
     case TickState::PUBLISH_STATE:
@@ -825,12 +877,18 @@ public:
       break;
 
     case TickState::ERROR_RECOVERY:
-      // For now, attempt simple reconnect if error detected
+      // Attempt reconnect using the protocol handler's reconnect method.
       if (stepper_micro.getErrorState() !=
           Protocol_Handler_I2C::Error_State::NONE) {
-        stepper_micro.connect();
+        if (++wait_counter_ >= max_wait_ticks_ && stepper_micro.reconnect()) {
+          tick_state_ = TickState::IDLE;
+          
+        } else if (wait_counter_ >= max_wait_ticks_){
+          wait_counter_ = 0;
+        }
+      } else {
+        tick_state_ = TickState::IDLE;
       }
-      tick_state_ = TickState::IDLE;
       break;
     }
   }
@@ -876,6 +934,7 @@ private:
   }
 
   void jointCommandCallback(const hardware::msg::JointControl::SharedPtr msg) {
+    std::lock_guard<std::mutex> lock{joints};
     for (size_t i = 0; i < msg->joint_names.size(); ++i) {
 
       const std::string &name = msg->joint_names[i];
@@ -888,7 +947,7 @@ private:
 
       auto joint_index = std::distance(joint_names.begin(), it);
       if (joint_index < steppers) {
-
+        
         in_joint_positions[joint_index] = msg->position[i];
         in_joint_velocities[joint_index] = msg->velocity[i];
 
@@ -901,7 +960,9 @@ private:
   }
 
   void publishJointFeedback() {
+    // TODO: add timeout
     if (updated_pos || updated_vel) {
+      std::lock_guard<std::mutex> lock{joints};
       // Publish JointState with current stored values
       sensor_msgs::msg::JointState msg;
       msg.header.stamp = this->now();
@@ -938,19 +999,17 @@ private:
   enum class TickState {
     IDLE,
     PREPARE_COMMANDS,
-    SEND_COMMANDS,
     WAIT_RESPONSE,
-    READ_RESPONSE,
     PUBLISH_STATE,
     ERROR_RECOVERY
   };
 
   TickState tick_state_{TickState::IDLE};
   int wait_counter_{0};
-  const int max_wait_ticks_{2};
+  const int max_wait_ticks_{3};
 
   int ticks_since_poll_{0};
-  const int poll_interval_ticks_{5};
+  const int poll_interval_ticks_{3};
 
   std::vector<int32_t> last_sent_pos_int_;
   std::vector<int32_t> last_sent_spd_int_;
@@ -963,6 +1022,8 @@ private:
   rclcpp::Subscription<hardware::msg::JointControl>::SharedPtr joint_cmd_sub_;
 
   rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr joint_state_pub_;
+
+  std::mutex joints;
 
   // rclcpp::TimerBase::SharedPtr poll_timer;
 };
