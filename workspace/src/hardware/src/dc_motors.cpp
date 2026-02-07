@@ -4,37 +4,45 @@
 #include <cstddef>
 #include <cstdint>
 
+#include <cstring>
+#include <initializer_list>
 #include <iterator>
-#include <mutex>
+#include <memory>
+
+#include <deque>
+#include <queue>
+
 #include <rclcpp/logging.hpp>
 #include <rclcpp/rclcpp.hpp>
-#include <regex>
-#include <std_msgs/msg/float32_multi_array.hpp>
+
+#include <chrono>
+#include <limits>
+
 #include <math.h>
+#include <std_msgs/msg/float32_multi_array.hpp>
 
 #include <linux/i2c-dev.h>
 #include <sys/ioctl.h>
 
-#include <fcntl.h>      // open
+#include <fcntl.h> // open
 #include <sys/types.h>
+#include <termios.h> // termios
 #include <tuple>
-#include <unistd.h>     // write, close
-#include <termios.h>    // termios
-
+#include <unistd.h> // write, close
 
 #include <type_traits>
 #include <unordered_map>
+#include <utility>
 
 #include "geometry_msgs/msg/twist.hpp"
 // #include "control_msgs/msg/joint_jog.hpp"
 // #include "trajectory_msgs/msg/joint_trajectory.hpp"
-#include "sensor_msgs/msg/joint_state.hpp"
 #include "hardware/msg/joint_control.hpp"
-
+#include "sensor_msgs/msg/joint_state.hpp"
 
 // Compute total byte size of a tuple (sum of sizeof each element type)
-template<typename... Args>
-constexpr size_t tuple_size(const std::tuple<Args...>&) {
+template <typename... Args>
+constexpr size_t tuple_size(const std::tuple<Args...> &) {
   return (sizeof(Args) + ... + 0);
 }
 
@@ -42,13 +50,15 @@ constexpr size_t tuple_size(const std::tuple<Args...>&) {
 // Recursive tuple pack/unpack helpers (safer and easier to reason about)
 template <size_t I, typename... Args>
 std::enable_if_t<I == sizeof...(Args), void>
-pack_tuple_recursive(const std::tuple<Args...>&, uint8_t* /*buffer*/, size_t& /*offset*/) {
+pack_tuple_recursive(const std::tuple<Args...> &, uint8_t * /*buffer*/,
+                     size_t & /*offset*/) {
   // end recursion
 }
 
 template <size_t I = 0, typename... Args>
-std::enable_if_t<I < sizeof...(Args), void>
-pack_tuple_recursive(const std::tuple<Args...>& tup, uint8_t* buffer, size_t& offset) {
+    std::enable_if_t < I<sizeof...(Args), void>
+                       pack_tuple_recursive(const std::tuple<Args...> &tup,
+                                            uint8_t *buffer, size_t &offset) {
   using T = std::decay_t<decltype(std::get<I>(tup))>;
   std::memcpy(buffer + offset, &std::get<I>(tup), sizeof(T));
   offset += sizeof(T);
@@ -56,124 +66,254 @@ pack_tuple_recursive(const std::tuple<Args...>& tup, uint8_t* buffer, size_t& of
 }
 
 template <typename... Args>
-void pack_tuple_to_buffer(const std::tuple<Args...>& tuple, uint8_t* buffer) {
+void pack_tuple_to_buffer(const std::tuple<Args...> &tuple, uint8_t *buffer) {
   size_t offset = 0;
   pack_tuple_recursive<0, Args...>(tuple, buffer, offset);
 }
 
 template <size_t I, typename... Args>
 std::enable_if_t<I == sizeof...(Args), void>
-unpack_tuple_recursive(std::tuple<Args...>&, const uint8_t* /*buffer*/, size_t& /*offset*/) {
+unpack_tuple_recursive(std::tuple<Args...> &, const uint8_t * /*buffer*/,
+                       size_t & /*offset*/) {
   // end recursion
 }
 
 template <size_t I = 0, typename... Args>
-std::enable_if_t<I < sizeof...(Args), void>
-unpack_tuple_recursive(std::tuple<Args...>& tup, const uint8_t* buffer, size_t& offset) {
+    std::enable_if_t <
+    I<sizeof...(Args), void> unpack_tuple_recursive(std::tuple<Args...> &tup,
+                                                    const uint8_t *buffer,
+                                                    size_t &offset) {
   using T = std::decay_t<decltype(std::get<I>(tup))>;
   std::memcpy(&std::get<I>(tup), buffer + offset, sizeof(T));
   offset += sizeof(T);
   unpack_tuple_recursive<I + 1, Args...>(tup, buffer, offset);
 }
 
-template<typename... Args>
-void unpack_tuple_from_buffer(std::tuple<Args...>& tuple, const uint8_t* buffer) {
+template <typename... Args>
+void unpack_tuple_from_buffer(std::tuple<Args...> &tuple,
+                              const uint8_t *buffer) {
   size_t offset = 0;
   unpack_tuple_recursive<0, Args...>(tuple, buffer, offset);
 }
 
+template <typename Tuple, typename... Args> struct args_match_tuple;
 
-template<typename Tuple, typename... Args>
-struct args_match_tuple;
-
-template<typename... Ts, typename... Args>
-struct args_match_tuple<std::tuple<Ts...>, Args...>
-{
-  static constexpr bool value =
-    (sizeof...(Ts) == sizeof...(Args)) &&
-    (std::is_constructible_v<Ts, Args> && ...);
+template <typename... Ts, typename... Args>
+struct args_match_tuple<std::tuple<Ts...>, Args...> {
+  static constexpr bool value = (sizeof...(Ts) == sizeof...(Args)) &&
+                                (std::is_constructible_v<Ts, Args> && ...);
 };
 
-template<typename... TupleArgs, typename... Args>
-auto make_msg_from_args(std::tuple<TupleArgs...>, const Args &... args) {
+template <typename... TupleArgs, typename... Args>
+auto make_msg_from_args(std::tuple<TupleArgs...>, const Args &...args) {
   static_assert(args_match_tuple<std::tuple<TupleArgs...>, Args...>::value,
                 "Argument types do not match tuple types");
-  
+
   // Static cast of every compatible argument to create std::tuple<TupleArgs...>
   return std::tuple<TupleArgs...>{(static_cast<TupleArgs>(args))...};
 }
 
+template <typename Tuple, typename NewType> struct tuple_push_back;
+
+template <typename... Ts, typename NewType>
+struct tuple_push_back<std::tuple<Ts...>, NewType> {
+  using type = std::tuple<Ts..., NewType>;
+};
+
+template <typename Tuple, typename NewType>
+using tuple_push_back_t = typename tuple_push_back<Tuple, NewType>::type;
+
+template <typename Tuple, typename NewType> struct tuple_push_front;
+
+template <typename... Ts, typename NewType>
+struct tuple_push_front<std::tuple<Ts...>, NewType> {
+  using type = std::tuple<NewType, Ts...>;
+};
+
+template <typename Tuple, typename NewType>
+using tuple_push_front_t = typename tuple_push_front<Tuple, NewType>::type;
+
 namespace WriteCommandsNC {
 
-  enum WriteCommand : uint8_t {
-      DIRECTION = 0x00,
-      SPEED = 0x01,
-      POSITION = 0x02
-    };
+enum WriteCommand : uint8_t { DIRECTION = 0x00, SPEED = 0x01, POSITION = 0x02 };
 
-  template<WriteCommand CMD>
-  struct packet {
-      using type = void;
-  };
+template <WriteCommand CMD> struct packetSend {
+  using type = void;
+};
 
-  template<>
-  struct packet<DIRECTION> {
-      using type = std::tuple<uint8_t, bool>; // motor Mask, direction
-  };
+template <WriteCommand CMD> struct packetReturn {
+  using type = void;
+};
 
-  template<>
-  struct packet<SPEED> {
-      using type = std::tuple<uint8_t, float>; // motor Mask, speed
-  };
+template <> struct packetSend<DIRECTION> {
+  using type = std::tuple<uint8_t, bool>; // motor Mask, direction
+};
 
-  template<>
-  struct packet<POSITION> {
-      using type = std::tuple<uint8_t, int32_t>; // motor Mask, position
-  };
+template <> struct packetReturn<DIRECTION> {
+  using type = std::tuple<>;
+};
 
-} // namespace WriteCommands
+template <> struct packetSend<SPEED> {
+  using type = std::tuple<uint8_t, float>; // motor Mask, speed
+};
+
+template <> struct packetReturn<SPEED> {
+  using type = std::tuple<>;
+};
+
+template <> struct packetSend<POSITION> {
+  using type = std::tuple<uint8_t, int32_t>; // motor Mask, position
+};
+
+template <> struct packetReturn<POSITION> {
+  using type = std::tuple<>;
+};
+
+} // namespace WriteCommandsNC
 
 namespace ReadCommandsNC {
 
-  enum ReadCommand : uint8_t {
-    DIRECTION = 0x00,
-    SPEED = 0x01,
-    POSITION = 0x02
-  };
+// constexpr static u_int16_t a = 0x01 | (0x01 << 8);
+enum ReadCommand : uint8_t { DIRECTION = 0x00, SPEED = 0x01, POSITION = 0x02 };
 
-  template<ReadCommand CMD>
-  struct packet {
-    using type = void;
-  };
+template <ReadCommand CMD> struct packetSend {
+  using type = void;
+};
 
-  template<>
-  struct packet<DIRECTION> {
-    using type = std::tuple<bool, bool, bool, bool>; // motor Mask, direction
-  };
+template <ReadCommand CMD> struct packetReturn {
+  using type = void;
+};
 
-  template<>
-  struct packet<SPEED> {
-    using type = std::tuple<float, float, float, float>; // motor Mask, speed, direction
-  };
+template <> struct packetSend<DIRECTION> {
+  using type = std::tuple<>;
+};
 
-  template<>
-  struct packet<POSITION> {
-    using type = std::tuple<unsigned int, unsigned int, unsigned int, unsigned int>; // motor Mask, position, direction
-  };
+template <> struct packetReturn<DIRECTION> {
+  using type = std::tuple<bool, bool, bool, bool>; // motor Mask, direction
+};
 
-  template<ReadCommandsNC::ReadCommand ID, typename HandlerFunc>
-  void dispatch_one(const std::vector<uint8_t>& data, HandlerFunc&& handle) {
-    using payload = typename ReadCommandsNC::packet<ID>::type;
-    payload p;
-    unpack_tuple_from_buffer(p, data.data());
-    handle(std::move(p));
+template <> struct packetSend<SPEED> {
+  using type = std::tuple<>;
+};
+
+template <> struct packetReturn<SPEED> {
+  using type =
+      std::tuple<float, float, float, float>; // motor Mask, speed, direction
+};
+
+template <> struct packetSend<POSITION> {
+  using type = std::tuple<>;
+};
+
+template <> struct packetReturn<POSITION> {
+  using type = std::tuple<unsigned int, unsigned int, unsigned int,
+                          unsigned int>; // motor Mask, position, direction
+};
+
+template <ReadCommandsNC::ReadCommand ID, typename HandlerFunc>
+void dispatch_one(const uint8_t *data, HandlerFunc &&handle) {
+  using payload = typename ReadCommandsNC::packetReturn<ID>::type;
+  payload p;
+  unpack_tuple_from_buffer(p, data);
+  handle(std::move(p));
+}
+
+} // namespace ReadCommandsNC
+
+namespace CommandsNC {
+
+enum class StaticCommand : uint8_t {
+  Ping = 0x01,
+};
+
+template <auto u> struct CmdInter {
+  constexpr static uint8_t instruction = 0;
+  using sending = void;
+  using returning = void;
+};
+
+template <StaticCommand ID> struct CmdInter<ID> {
+  constexpr static uint8_t instruction = static_cast<uint8_t>(ID);
+  constexpr static uint8_t id = 0;
+  constexpr static bool hasID = false;
+  using sending = std::tuple<>;
+  using returning = std::tuple<>;
+};
+
+template <WriteCommandsNC::WriteCommand ID> struct CmdInter<ID> {
+  constexpr static uint8_t instruction = 2;
+  constexpr static uint8_t id = ID;
+  constexpr static bool hasID = true;
+  using sending = typename WriteCommandsNC::packetSend<ID>::type;
+  using returning = typename WriteCommandsNC::packetReturn<ID>::type;
+};
+
+template <ReadCommandsNC::ReadCommand ID> struct CmdInter<ID> {
+  constexpr static uint8_t instruction = 3;
+  constexpr static uint8_t id = ID;
+  constexpr static bool hasID = true;
+  using sending = typename ReadCommandsNC::packetSend<ID>::type;
+  using returning = typename ReadCommandsNC::packetReturn<ID>::type;
+};
+
+struct Command {
+
+  virtual void pack(uint8_t *buffer) { (void)buffer; }
+  virtual size_t getPckSize() { return 0; }
+  virtual uint8_t getInst() { return 0; }
+  virtual uint8_t getID() { return 0; }
+  virtual bool hasID() { return false; }
+  virtual ~Command() = default;
+};
+
+template <typename T> struct GeneralInstruction : Command {
+
+  using packet = typename T::sending;
+  packet info;
+  constexpr static size_t size = tuple_size(packet{});
+
+  constexpr static uint8_t id = T::id;
+
+  GeneralInstruction(packet in = packet{}) : info{in} {}
+
+  void pack(uint8_t *buffer) override {
+
+    if constexpr (T::hasID) {
+      buffer[0] = static_cast<uint8_t>(id);
+      pack_tuple_to_buffer(info, buffer + 1);
+    } else {
+      pack_tuple_to_buffer(info, buffer);
+    }
   }
 
-} // namespace WriteCommands
+  size_t getPckSize() override {
+    if constexpr (T::hasID) {
+      return size + 1;
+    } else {
+      return size;
+    }
+  }
 
-class Protocol_Handler_I2C{
-  public:
-  
+  uint8_t getID() override { return id; }
+
+  bool hasID() override { return T::hasID; }
+
+  uint8_t getInst() override { return T::instruction; }
+};
+
+template <StaticCommand T> using MiscInst = GeneralInstruction<CmdInter<T>>;
+
+template <WriteCommandsNC::WriteCommand T>
+using WriteInst = GeneralInstruction<CmdInter<T>>;
+
+template <ReadCommandsNC::ReadCommand T>
+using ReadInst = GeneralInstruction<CmdInter<T>>;
+
+} // namespace CommandsNC
+using namespace CommandsNC;
+
+class Protocol_Handler_I2C {
+public:
   enum class Error_State {
     NONE,
     INVALID_CONFIG,
@@ -182,32 +322,62 @@ class Protocol_Handler_I2C{
     IO_ERROR
   };
 
-  using header = std::tuple<uint8_t, uint8_t, uint8_t>; // header, command, length
+  using header =
+      std::tuple<uint8_t, uint8_t, uint8_t>; // header, command, length
+
   using tail = std::tuple<uint8_t>; // checksum
 
-  explicit Protocol_Handler_I2C(const std::string & device_in = "", int slave_addr_in = 0x00)
-    : device{device_in}, slave_addr{slave_addr_in}
-  {
-    if (!device.empty()){
+  std::unordered_map<ReadCommandsNC::ReadCommand,
+                     std::function<void(const uint8_t *)>>
+      read_callbacks{};
+  std::unordered_map<WriteCommandsNC::WriteCommand,
+                     std::function<void(const uint8_t *)>>
+      write_callbacks{};
+
+  explicit Protocol_Handler_I2C(const std::string &device_in = "",
+                                int slave_addr_in = 0x00)
+      : device{device_in}, slave_addr{slave_addr_in} {
+    if (!device.empty()) {
       // Attempt connection only when a device string was provided.
       connect();
     }
+
+    instruction_callback.emplace(1, [](const uint8_t *pckg) { (void)pckg; });
+
+    instruction_callback.emplace(2, [this](const uint8_t *pckg) {
+      uint8_t id = pckg[0];
+      auto it =
+          write_callbacks.find(static_cast<WriteCommandsNC::WriteCommand>(id));
+      if (it != write_callbacks.end()) {
+        it->second(pckg + 1);
+      }
+    });
+
+    // Allow default construction so this type can be used as a member-by-value
+    // (the explicit constructor has default parameters so default construction
+    // is already supported).
+    instruction_callback.emplace(3, [this](const uint8_t *pckg) {
+      uint8_t id = pckg[0];
+      auto it =
+          read_callbacks.find(static_cast<ReadCommandsNC::ReadCommand>(id));
+      if (it != read_callbacks.end()) {
+        it->second(pckg + 1);
+      }
+    });
   }
 
-  // Initialize an existing (default-constructed) handler and attempt to connect.
-  bool init(const std::string & device_in, int slave_addr_in){
+  // Initialize an existing (default-constructed) handler and attempt to
+  // connect.
+  bool init(const std::string &device_in, int slave_addr_in) {
     device = device_in;
     slave_addr = slave_addr_in;
     return connect();
   }
 
-  ~Protocol_Handler_I2C() noexcept{
-    closeI2C();
-  }
+  ~Protocol_Handler_I2C() noexcept { closeI2C(); }
 
-  bool connect(){
-    std::lock_guard<std::mutex> lock(lock_i2c);
-    closeI2C_nolock();           
+  bool connect() {
+    closeI2C();
     error_state = Error_State::NONE;
     if (!isValidConfig()) {
       error_state = Error_State::INVALID_CONFIG;
@@ -220,208 +390,234 @@ class Protocol_Handler_I2C{
     }
     if (ioctl(i2c_fd, I2C_SLAVE, slave_addr) < 0) {
       error_state = Error_State::IOCTL_FAILED;
-      closeI2C_nolock();
+      closeI2C();
       return false;
     }
     return true;
   }
 
-  template<WriteCommandsNC::WriteCommand ID, typename... Args>
-  bool writeInfo(Args... args){
-    
-    using Packet = typename WriteCommandsNC::packet<ID>::type;
+  bool addCommand(std::unique_ptr<Command> &&input) {
+    if (sending.size() < max_queue) {
+      sending.push(std::move(input));
+      return true;
+    }
+    return false;
+  }
 
-    static_assert(!std::is_void<Packet>::value, "Invalid Write Command ID");
+  // TODO: add sequencing to the protocol
+  bool sendQueue() {
+    if (!connected())
+      return false;
 
-    auto sendPacket = make_msg_from_args(Packet{}, args...);
-    constexpr auto packetSize = tuple_size(decltype(sendPacket){});
+    // TODO: count bytes sent and stop it after a certain amount
+    size_t iter{0};
+    while (!sending.empty() && iter++ < 10) {
+      sendNext();
+    }
 
-    auto sendHeader = make_msg_from_args(header{}, 0xAA, 0x01, packetSize);
-    constexpr auto headerSize = tuple_size(decltype(sendHeader){});
-    
+    return true;
+  }
+
+  bool sendNext() {
+    if (!connected())
+      return false;
+
+    auto elem = std::move(sending.front());
+    sending.pop();
+
+    auto size = elem->getPckSize();
+    constexpr auto headerSize = tuple_size(header{});
     constexpr auto tailSize = tuple_size(tail{});
-    constexpr auto msgsize = headerSize + packetSize + tailSize;
+    std::vector<uint8_t> buffer(elem->getPckSize() + headerSize + tailSize);
 
-    std::array<uint8_t, msgsize> buffer{};
+    auto headerSend = make_msg_from_args(header{}, 0xAA, elem->getInst(), size);
+    pack_tuple_to_buffer(headerSend, buffer.data());
+    elem->pack(buffer.data() + headerSize);
 
-    pack_tuple_to_buffer(sendHeader, buffer.data());
-    pack_tuple_to_buffer(sendPacket, buffer.data() + headerSize);
+    auto tail_tuple =
+        make_msg_from_args(tail{}, calcCRC(buffer.data(), size - tailSize, 0));
+    pack_tuple_to_buffer(tail_tuple, buffer.data() + headerSize + size);
 
-    // Build tail (CRC) tuple and pack it (use returned tuple, do not ignore)
-    auto tail_tuple = make_msg_from_args(tail{}, calcCRC(buffer.data(), msgsize - tailSize, 0));
-    pack_tuple_to_buffer(tail_tuple, buffer.data() + headerSize + packetSize);
-
-    std::lock_guard<std::mutex> lock(lock_i2c);
-    return writeData(buffer.data(), buffer.size());
-  }
-
-  template<ReadCommandsNC::ReadCommand ID>
-  bool sendReadRequest(){
-    
-    using Packet = typename ReadCommandsNC::packet<ID>::type;
-
-    static_assert(!std::is_void<Packet>::value, "Invalid Read Command ID");
-
-    auto sendHeader = make_msg_from_args(header{}, 0xAA, 0x02, 0x01);
-    constexpr auto headerSize = tuple_size(decltype(sendHeader){});
-    
-    constexpr auto tailSize = tuple_size(tail{});
-    constexpr auto msgsize = headerSize + 1 + tailSize;
-
-    std::array<uint8_t, msgsize> buffer{};
-
-    pack_tuple_to_buffer(sendHeader, buffer.data());
-    pack_tuple_to_buffer(std::make_tuple(static_cast<uint8_t>(ID)), buffer.data() + headerSize);
-    auto tail_tuple = make_msg_from_args(tail{}, calcCRC(buffer.data(), msgsize - tailSize, 0));
-    pack_tuple_to_buffer(tail_tuple, buffer.data() + headerSize + 1);
-
-    std::lock_guard<std::mutex> lock(lock_i2c);
-    return writeData(buffer.data(), buffer.size());
-
-  }
-
-  bool readInfo(uint8_t& id, std::vector<uint8_t> & out_buffer){
-    if(!connected()) return false;
-
-    out_buffer.clear();
-    id = 0;
-
-    std::lock_guard<std::mutex> lock(lock_i2c);
-    uint8_t header_buf[3];
-    if(!readData(header_buf, sizeof(header_buf))){
+    if (!writeData(buffer.data(), buffer.size())) {
+      sending.push(std::move(elem));
       return false;
     }
+    return true;
+  }
 
-    header recv_header{};
-    unpack_tuple_from_buffer(recv_header, header_buf);
-
-    if(recv_header == header{0xBB, 0XBB, 0XBB}){
+  bool readPending() {
+    if (!connected())
       return false;
+
+    for (;;) {
+      uint8_t header_buf[4];
+      header_buf[0] = 0xAA;
+      if (!syncMessage()) {
+        return false;
+      }
+
+      // Read Header
+      if (!readData(header_buf + 1, sizeof(header_buf) - 1)) {
+        return false;
+      }
+
+      using headerScan =
+          tuple_push_back_t<header, uint8_t>; // header + possible crc
+      headerScan recv_header{};
+      unpack_tuple_from_buffer(recv_header, header_buf);
+
+      if (recv_header ==
+          headerScan{0xAA, 0x00, 0x00, calcCRC({0xAA, 0X00, 0X00}, 0)}) {
+        break;
+      }
+
+      // Read Package
+      uint8_t inst{std::get<1>(recv_header)};
+      uint8_t length = std::get<2>(recv_header);
+
+      std::vector<uint8_t> out_buffer(length);
+      out_buffer[0] = std::get<3>(recv_header);
+
+      if (!readData(out_buffer.data() + 1, length - 1)) {
+        return false;
+      }
+
+      // Calculate CRC
+      uint8_t recv_crc = 0;
+      if (!readData(&recv_crc, sizeof(recv_crc))) {
+        return false;
+      }
+
+      uint8_t header_crc = calcCRC(header_buf, sizeof(header_buf), 0);
+
+      if (recv_crc == calcCRC(out_buffer.data(), length, header_crc)) {
+        dispatchInput(inst, out_buffer.data());
+      }
     }
 
-    if(std::get<0>(recv_header) != 0xAA){
-      // Change this to a flush of the I2C buffer later
-      // We're holding the lock in this public function, use nolock close
-      closeI2C_nolock();
-      error_state = Error_State::IO_ERROR;
+    return true;
+  }
+
+  bool connected() const { return error_state == Error_State::NONE; }
+
+  Error_State getErrorState() const { return error_state; }
+
+  const std::string &getDevice() const { return device; }
+
+  int getSlaveAddress() const { return slave_addr; }
+
+private:
+  bool writeData(const uint8_t *data, size_t length) {
+
+    if (!connected())
       return false;
-    }
-
-    id = std::get<1>(recv_header);
-    uint8_t length = std::get<2>(recv_header);
-
-    out_buffer.resize(length);
-
-    if(!readData(out_buffer.data(), length)){
-      return false;
-    }
-
-    uint8_t recv_crc = 0;
-    if(!readData(&recv_crc, sizeof(recv_crc))){
-      return false;
-    }
-
-    uint8_t header_crc = calcCRC(header_buf, sizeof(header_buf), 0);
-
-    return recv_crc == calcCRC(out_buffer.data(), length, header_crc);
-  }
-
-  bool connected() const {
-    std::lock_guard<std::mutex> lock(lock_i2c);
-    return error_state == Error_State::NONE;
-  }
-
-  Error_State getErrorState() const {
-    std::lock_guard<std::mutex> lock(lock_i2c);
-    return error_state;
-  }
-
-  const std::string & getDevice() const {
-    return device;
-  }
-
-  int getSlaveAddress() const {
-    return slave_addr;
-  }
-
-  private:
-
-  bool writeData(const uint8_t * data, size_t length) {
-    // Caller must hold lock_i2c before calling this helper.
-    if(!connected()) return false;
     ssize_t bytes_written = ::write(i2c_fd, data, length);
     if (bytes_written != static_cast<ssize_t>(length)) {
       // closeI2C_nolock assumes lock is held by caller
-      closeI2C_nolock();
+      closeI2C();
       error_state = Error_State::IO_ERROR;
       return false;
     }
     return true;
   }
 
-  bool readData(uint8_t * buffer, size_t length) {
-    // Caller must hold lock_i2c before calling this helper.
-    if(!connected()) return false;
+  bool readData(uint8_t *buffer, size_t length) {
+    if (!connected())
+      return false;
+
+    if (!length)
+      return true;
+
     ssize_t bytes_read = ::read(i2c_fd, buffer, length);
     if (bytes_read != static_cast<ssize_t>(length)) {
       // closeI2C_nolock assumes lock is held by caller
-      closeI2C_nolock();
+      closeI2C();
       error_state = Error_State::IO_ERROR;
       return false;
     }
     return true;
   }
 
-  // Close without taking the mutex; caller must hold lock_i2c
-  void closeI2C_nolock() {
+  void closeI2C() {
     if (i2c_fd >= 0) {
       ::close(i2c_fd);
       i2c_fd = -1;
     }
   }
 
-  // Public close that acquires the mutex
-  void closeI2C() {
-    std::lock_guard<std::mutex> lock(lock_i2c);
-    closeI2C_nolock();
-  }
-
   bool isValidConfig() const noexcept {
-    return !device.empty() &&
-        slave_addr >= 0x03 &&
-        slave_addr <= 0x77;
+    return !device.empty() && slave_addr >= 0x03 && slave_addr <= 0x77;
   }
 
-  uint8_t calcCRC(const uint8_t *data, size_t len, uint8_t c = 0) const {
+  // CRC-8-ATM
+  uint8_t calcCRC(uint8_t data, uint8_t crc) {
+    crc ^= data;
+    for (uint8_t i = 0; i < 8; i++) {
+      if (crc & 0x80)
+        crc = (crc << 1) ^ 0x07;
+      else
+        crc <<= 1;
+    }
+    return crc;
+  }
+
+  uint8_t calcCRC(const uint8_t *data, size_t len, uint8_t crc = 0) {
     for (size_t i = 0; i < len; i++)
-      c ^= data[i];
-    return c;
+      crc = calcCRC(data[i], crc);
+    return crc;
   }
 
-  uint8_t calcCRC(const uint8_t data, uint8_t c = 0) const {
-      return c ^= data;
+  uint8_t calcCRC(std::initializer_list<uint8_t> inputs, uint8_t crc) {
+    for (auto data : inputs)
+      crc = calcCRC(data, crc);
+    return crc;
   }
+
+  bool syncMessage() {
+    using clock = std::chrono::steady_clock;
+    auto deadline = clock::now() + std::chrono::milliseconds(1);
+    uint8_t header;
+
+    while (clock::now() < deadline) {
+      if (!readData(&header, 1)) {
+        return false;
+      }
+      if (header == 0xAA) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  void dispatchInput(uint8_t inst, uint8_t *pckg) {
+    // TODO: register time of incoming messages
+    auto it = instruction_callback.find(inst);
+    if (it != instruction_callback.end()) {
+      it->second(pckg);
+    }
+  }
+
+  constexpr static unsigned int max_queue{50};
 
   std::string device;
   int i2c_fd{-1}, slave_addr{-1};
   Error_State error_state{Error_State::OPEN_FAILED};
-  mutable std::mutex lock_i2c;
 
+  std::queue<std::unique_ptr<Command>> sending;
+
+  std::unordered_map<uint8_t, std::function<void(const uint8_t *)>>
+      instruction_callback{};
 };
 
-
-class HardwareDriverNode : public rclcpp::Node
-{
+class HardwareDriverNode : public rclcpp::Node {
 public:
-  HardwareDriverNode()
-  : Node("hardware_node")
-  {
+  HardwareDriverNode() : Node("hardware_node") {
     // Parameters
     this->declare_parameter<std::string>("i2c_port", "/dev/i2c-1");
     this->declare_parameter<int>("i2c_address", 0x10);
     this->declare_parameter<int>("flipper_revolution", 400);
-    this->declare_parameter<std::vector<std::string>>("joint_names",
-      {"flipper_0", "flipper_1", "flipper_2", "flipper_3"});
+    this->declare_parameter<std::vector<std::string>>(
+        "joint_names", {"flipper_0", "flipper_1", "flipper_2", "flipper_3"});
     this->declare_parameter("steppers", 4);
 
     std::string i2c_port_;
@@ -433,227 +629,326 @@ public:
     this->get_parameter("joint_names", joint_names);
     this->get_parameter("steppers", steppers);
 
-    protocol_handler_.init(i2c_port_, slave_addr_);
-    if(protocol_handler_.getErrorState() != Protocol_Handler_I2C::Error_State::NONE){
-      RCLCPP_ERROR(this->get_logger(), "Failed to connect to I2C device %s at address 0x%02X",
+    stepper_micro.init(i2c_port_, slave_addr_);
+    if (stepper_micro.getErrorState() !=
+        Protocol_Handler_I2C::Error_State::NONE) {
+      RCLCPP_ERROR(this->get_logger(),
+                   "Failed to connect to I2C device %s at address 0x%02X",
                    i2c_port_.c_str(), slave_addr_);
     } else {
-      RCLCPP_INFO(this->get_logger(), "Protocol handler created for I2C device %s at address 0x%02X",
-                  i2c_port_.c_str(), slave_addr_);
+      RCLCPP_INFO(
+          this->get_logger(),
+          "Protocol handler created for I2C device %s at address 0x%02X",
+          i2c_port_.c_str(), slave_addr_);
     }
 
     // init joint state storage from configured joint names
     const size_t n = joint_names.size();
-    joint_positions_.assign(n, 0.0);
-    joint_velocities_.assign(n, 0.0);
-    joint_efforts_.assign(n, 0.0);
+    feedback_joint_positions.assign(n, 0.0);
+    feedback_joint_velocities.assign(n, 0.0);
+    feedback_joint_efforts.assign(n, 0.0);
 
-    cmd_group_ = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
-    feedback_group_ = this->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+    in_joint_positions.assign(n, 0.0);
+    in_joint_velocities.assign(n, 0.0);
+    in_joint_efforts.assign(n, 0.0);
 
-    rclcpp::SubscriptionOptions cmd_opts;
-    cmd_opts.callback_group = cmd_group_;
-
-    cmd_vel_sub_ = this->create_subscription<geometry_msgs::msg::Twist>(
-      "hardware_node/cmd_vel", qos_cmd_,
-      std::bind(&HardwareDriverNode::cmdVelCallback, this, std::placeholders::_1),
-      cmd_opts);
-
-    joint_cmd_sub_ = this->create_subscription<hardware::msg::JointControl>(
-      "hardware_node/joint_command", qos_cmd_,
-      std::bind(&HardwareDriverNode::jointCommandCallback, this, std::placeholders::_1),
-      cmd_opts);
-
-    joint_state_pub_ = this->create_publisher<sensor_msgs::msg::JointState>(
-      "hardware_node/joint_states", qos_feedback_);
+    // Initialize last-sent trackers so first change is detected
+    last_sent_pos_int_.assign(n, std::numeric_limits<int32_t>::min());
+    last_sent_spd_int_.assign(n, std::numeric_limits<int32_t>::min());
 
     generateCallbacks();
 
-    // timer to poll hardware and publish JointState
-    poll_timer = this->create_wall_timer(
-      std::chrono::milliseconds(20),
-      std::bind(&HardwareDriverNode::pollHardwareFeedback, this),
-      feedback_group_);
+    cmd_vel_sub_ = this->create_subscription<geometry_msgs::msg::Twist>(
+        "hardware_node/cmd_vel", qos_cmd_,
+        std::bind(&HardwareDriverNode::cmdVelCallback, this,
+                  std::placeholders::_1));
 
-    read_timer = this->create_wall_timer(
-      std::chrono::milliseconds(10),
-      std::bind(&HardwareDriverNode::readHardwareFeedback, this),
-      feedback_group_);
+    joint_cmd_sub_ = this->create_subscription<hardware::msg::JointControl>(
+        "hardware_node/joint_command", qos_cmd_,
+        std::bind(&HardwareDriverNode::jointCommandCallback, this,
+                  std::placeholders::_1));
+
+    joint_state_pub_ = this->create_publisher<sensor_msgs::msg::JointState>(
+        "hardware_node/joint_states", qos_feedback_);
+  }
+
+  void tick() {
+
+    using positionW = WriteInst<WriteCommandsNC::POSITION>;
+    using speedW = WriteInst<WriteCommandsNC::SPEED>;
+
+    switch (tick_state_) {
+    case TickState::IDLE:
+      // Periodically poll even if no changes, or move to prepare when inputs
+      // differ
+      if (ticks_since_poll_++ >= poll_interval_ticks_) {
+        ticks_since_poll_ = 0;
+        if (stepper_micro.connected()) {
+          tick_state_ = TickState::PREPARE_COMMANDS;
+        } else {
+          tick_state_ = TickState::ERROR_RECOVERY;
+        }
+      } else {
+        // detect any change requiring immediate command
+        bool changed = false;
+        for (size_t i = 0;
+             i < static_cast<size_t>(steppers) && i < in_joint_positions.size();
+             ++i) {
+          int32_t pos_key = static_cast<int32_t>(std::llround(
+              in_joint_positions[i] / M_2_PI * steps_per_revolution));
+          int32_t spd_key = static_cast<int32_t>(std::llround(
+              in_joint_velocities[i] / M_2_PI * steps_per_revolution));
+          if (pos_key != last_sent_pos_int_[i] ||
+              spd_key != last_sent_spd_int_[i]) {
+            changed = true;
+            break;
+          }
+        }
+        if (changed && stepper_micro.connected()) {
+          tick_state_ = TickState::PREPARE_COMMANDS;
+        }
+      }
+      break;
+
+    case TickState::PREPARE_COMMANDS: {
+      // Group identical converted inputs into masks
+      std::unordered_map<int32_t, uint8_t> pos_groups; // pos_key -> mask
+      std::unordered_map<int32_t, uint8_t> spd_groups; // spd_key -> mask
+      std::unordered_map<int32_t, float>
+          spd_value; // spd_key -> representative float
+
+      for (size_t i = 0;
+           i < static_cast<size_t>(steppers) && i < in_joint_positions.size();
+           ++i) {
+        int32_t pos_key = static_cast<int32_t>(std::llround(
+            in_joint_positions[i] / M_2_PI * steps_per_revolution));
+        int32_t spd_key = static_cast<int32_t>(std::llround(
+            in_joint_velocities[i] / M_2_PI * steps_per_revolution));
+
+        uint8_t bit = static_cast<uint8_t>(1u << i);
+        pos_groups[pos_key] |= bit;
+
+        spd_groups[spd_key] |= bit;
+        // store representative float value (convert back)
+        float spd_f = static_cast<float>(in_joint_velocities[i] / M_2_PI *
+                                         steps_per_revolution);
+        spd_value.emplace(spd_key, spd_f);
+      }
+
+      // Enqueue position commands (one per unique converted value)
+      for (auto &p : pos_groups) {
+        int32_t value = p.first;
+        uint8_t mask = p.second;
+        auto pkt = positionW::packet{mask, value};
+        stepper_micro.addCommand(std::make_unique<positionW>(pkt));
+      }
+
+      // Enqueue speed commands
+      for (auto &s : spd_groups) {
+        float value = spd_value[s.first];
+        uint8_t mask = s.second;
+        auto pkt = speedW::packet{mask, value};
+        stepper_micro.addCommand(std::make_unique<speedW>(pkt));
+      }
+
+      // update last_sent keys
+      for (size_t i = 0;
+           i < static_cast<size_t>(steppers) && i < in_joint_positions.size();
+           ++i) {
+        last_sent_pos_int_[i] = static_cast<int32_t>(std::llround(
+            in_joint_positions[i] / M_2_PI * steps_per_revolution));
+        last_sent_spd_int_[i] = static_cast<int32_t>(std::llround(
+            in_joint_velocities[i] / M_2_PI * steps_per_revolution));
+      }
+      stepper_micro.sendQueue();
+
+      tick_state_ = TickState::SEND_COMMANDS;
+    } break;
+
+    case TickState::SEND_COMMANDS:
+      stepper_micro.sendQueue();
+      wait_counter_ = 0;
+      tick_state_ = TickState::WAIT_RESPONSE;
+      break;
+
+    case TickState::WAIT_RESPONSE:
+      // give device some time (a few ticks) to respond
+      if (++wait_counter_ >= max_wait_ticks_) {
+        tick_state_ = TickState::READ_RESPONSE;
+      }
+      break;
+
+    case TickState::READ_RESPONSE:
+      // read any pending responses
+      stepper_micro.readPending();
+      tick_state_ = TickState::PUBLISH_STATE;
+      break;
+
+    case TickState::PUBLISH_STATE:
+      publishJointFeedback();
+      tick_state_ = TickState::IDLE;
+      break;
+
+    case TickState::ERROR_RECOVERY:
+      // For now, attempt simple reconnect if error detected
+      if (stepper_micro.getErrorState() !=
+          Protocol_Handler_I2C::Error_State::NONE) {
+        stepper_micro.connect();
+      }
+      tick_state_ = TickState::IDLE;
+      break;
+    }
   }
 
 private:
+  void generateCallbacks() {
+    stepper_micro.read_callbacks.emplace(
+        ReadCommandsNC::ReadCommand::POSITION, [this](const uint8_t *data) {
+          ReadCommandsNC::dispatch_one<ReadCommandsNC::ReadCommand::POSITION>(
+              data, [&](const auto &info) {
+                std::apply(
+                    [&](const auto &...args) {
+                      size_t i{0};
+                      ((feedback_joint_positions[i++] =
+                            static_cast<double>(args) * steps_per_revolution /
+                            M_2_PI),
+                       ...);
+                      updated_pos = true;
+                    },
+                    info);
+              });
+        });
 
-  void generateCallbacks(){
-    read_callbacks_.emplace(ReadCommandsNC::ReadCommand::POSITION, [this](const std::vector<uint8_t>& data){
-      ReadCommandsNC::dispatch_one<ReadCommandsNC::ReadCommand::POSITION>(data, [&](const auto& info){
-        std::apply([&](const auto&... args){
-          size_t i{0};
-          ((joint_positions_[i++] = static_cast<double>(args) * steps_per_revolution / M_2_PI), ...);
-          updated_pos = true;
-        }, info);
-      });
-    });
-
-    read_callbacks_.emplace(ReadCommandsNC::ReadCommand::SPEED, [this](const std::vector<uint8_t>& data){
-     ReadCommandsNC::dispatch_one<ReadCommandsNC::SPEED>(data, [&](const auto& info){
-      std::apply([&](const auto&... args){
-        size_t i{0};
-        ((joint_velocities_[i++] = static_cast<double>(args * steps_per_revolution / M_2_PI)),...);
-        updated_vel = true;
-      }, info);
-     });
-    });
+    stepper_micro.read_callbacks.emplace(
+        ReadCommandsNC::ReadCommand::SPEED, [this](const uint8_t *data) {
+          ReadCommandsNC::dispatch_one<ReadCommandsNC::SPEED>(
+              data, [&](const auto &info) {
+                std::apply(
+                    [&](const auto &...args) {
+                      size_t i{0};
+                      ((feedback_joint_velocities[i++] = static_cast<double>(
+                            args * steps_per_revolution / M_2_PI)),
+                       ...);
+                      updated_vel = true;
+                    },
+                    info);
+              });
+        });
   }
 
-  void cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr msg){(void)msg;}
+  void cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr msg) {
+    (void)msg;
+  }
 
-  void jointCommandCallback(const hardware::msg::JointControl::SharedPtr msg){
-    if(!protocol_handler_.connected()){
-      return;
-    }
+  void jointCommandCallback(const hardware::msg::JointControl::SharedPtr msg) {
 
-    for(size_t i = 0; i < msg->joint_names.size(); ++i){
+    for (size_t i = 0; i < msg->joint_names.size(); ++i) {
 
-      const std::string& name = msg->joint_names[i];
+      const std::string &name = msg->joint_names[i];
       auto it = std::find(joint_names.begin(), joint_names.end(), name);
 
-      if(it == joint_names.end()){
+      if (it == joint_names.end()) {
         RCLCPP_WARN(this->get_logger(), "Unknown joint name: %s", name.c_str());
         continue;
       }
 
       auto joint_index = std::distance(joint_names.begin(), it);
       if (joint_index < steppers) {
-        int32_t position = static_cast<int32_t>(msg->position[i] / M_2_PI * steps_per_revolution);
-        float speed = static_cast<float>(msg->velocity[i] / M_2_PI * steps_per_revolution);
 
-        // Send position command as example
-        bool test;
-        test = protocol_handler_.writeInfo<WriteCommandsNC::POSITION>(
-          1 << joint_index, 
-          position
-        );
-
-        if(!test){
-          RCLCPP_ERROR(this->get_logger(), "Unable to send message position to %s", name.c_str());
-          continue;
-        }
-
-        test = protocol_handler_.writeInfo<WriteCommandsNC::SPEED>(
-          1 << joint_index,
-          speed
-        );
-
-        if(!test){
-          RCLCPP_ERROR(this->get_logger(), "Unable to send message speed to %s", name.c_str());
-          continue;
-        }
+        in_joint_positions[joint_index] = msg->position[i];
+        in_joint_velocities[joint_index] = msg->velocity[i];
 
         continue;
       } else {
-        RCLCPP_WARN(this->get_logger(), "Invalid joint name format: %s", msg->joint_names[i].c_str());
+        RCLCPP_WARN(this->get_logger(), "Invalid joint name format: %s",
+                    msg->joint_names[i].c_str());
       }
-
-    }
-
-  }
-
-  void pollHardwareFeedback(){
-    if(!protocol_handler_.connected()){
-      return;
-    }
-    // Request position and speed frames from device; responses will be
-    // processed by readHardwareFeedback when available.
-    if(!protocol_handler_.sendReadRequest<ReadCommandsNC::POSITION>()){
-      RCLCPP_ERROR(this->get_logger(), "Unable to ask for Position");
-      return;
-    }
-    if(!protocol_handler_.sendReadRequest<ReadCommandsNC::SPEED>()){
-      RCLCPP_ERROR(this->get_logger(), "Unable to ask for Speed");
     }
   }
 
-  void readHardwareFeedback(){
-    if(!protocol_handler_.connected()){
-      return;
-    }
-
-    uint8_t id = 0;
-    std::vector<uint8_t> buf;
-
-    while(protocol_handler_.readInfo(id, buf)){
-      auto incoming = static_cast<ReadCommandsNC::ReadCommand>(id);
-      auto it = read_callbacks_.find(incoming);
-      if(it != read_callbacks_.end()){
-        it->second(buf);
-      }
-    }
-
-    // Necesary due to the fact that it can fail whilst reading
-    if(!protocol_handler_.connected()){
-      RCLCPP_ERROR(this->get_logger(), "Unable to read from the microcontroler");
-      return;
-    }
-
-    if(updated_pos && updated_vel){
+  void publishJointFeedback() {
+    if (updated_pos && updated_vel) {
       // Publish JointState with current stored values
       sensor_msgs::msg::JointState msg;
       msg.header.stamp = this->now();
       msg.name = joint_names;
-      msg.position = joint_positions_;
-      msg.velocity = joint_velocities_;
-      msg.effort = joint_efforts_;
+      msg.position = feedback_joint_positions;
+      msg.velocity = feedback_joint_velocities;
+      msg.effort = feedback_joint_efforts;
       joint_state_pub_->publish(msg);
     }
   }
 
   // I2C protocol handler (owned)
-  Protocol_Handler_I2C protocol_handler_;
-  std::unordered_map<ReadCommandsNC::ReadCommand, std::function<void(const std::vector<uint8_t>&)>> read_callbacks_;
+  Protocol_Handler_I2C stepper_micro;
 
   // Steppers
   int steps_per_revolution{400};
   int steppers{4};
 
-  std::vector<std::string> joint_names{"flipper_0", "flipper_1", "flipper_2", "flipper_3"};
+  std::vector<std::string> joint_names{"flipper_0", "flipper_1", "flipper_2",
+                                       "flipper_3"};
   bool updated_pos{false};
-  std::vector<double> joint_positions_;
+  std::vector<double> feedback_joint_positions;
   bool updated_vel{false};
-  std::vector<double> joint_velocities_;
-  std::vector<double> joint_efforts_;
+  std::vector<double> feedback_joint_velocities;
+  std::vector<double> feedback_joint_efforts;
+
+  std::vector<double> in_joint_positions;
+  std::vector<double> in_joint_velocities;
+  std::vector<double> in_joint_efforts;
+
+  // Tick state machine
+  enum class TickState {
+    IDLE,
+    PREPARE_COMMANDS,
+    SEND_COMMANDS,
+    WAIT_RESPONSE,
+    READ_RESPONSE,
+    PUBLISH_STATE,
+    ERROR_RECOVERY
+  };
+
+  TickState tick_state_{TickState::IDLE};
+  int wait_counter_{0};
+  const int max_wait_ticks_{2};
+
+  int ticks_since_poll_{0};
+  const int poll_interval_ticks_{5};
+
+  std::vector<int32_t> last_sent_pos_int_;
+  std::vector<int32_t> last_sent_spd_int_;
 
   // Ros configuration
   rclcpp::QoS qos_cmd_{rclcpp::QoS(1).best_effort()};
   rclcpp::QoS qos_feedback_{rclcpp::QoS(10).reliable()};
-
-  rclcpp::CallbackGroup::SharedPtr cmd_group_;
-  rclcpp::CallbackGroup::SharedPtr feedback_group_;
 
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_sub_;
   rclcpp::Subscription<hardware::msg::JointControl>::SharedPtr joint_cmd_sub_;
 
   rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr joint_state_pub_;
 
-  rclcpp::TimerBase::SharedPtr poll_timer;
-  rclcpp::TimerBase::SharedPtr read_timer;
+  // rclcpp::TimerBase::SharedPtr poll_timer;
 };
 
-// TODO: 
-// - Change CRC to CRC-8-ATM
-// - Handle Read check to the new message
-// - Beware of the instruction changes (1 por ping, 2 for write and 3 for read)
-
-int main(int argc, char ** argv)
-{
+int main(int argc, char **argv) {
   rclcpp::init(argc, argv);
 
   auto node = std::make_shared<HardwareDriverNode>();
 
-  rclcpp::executors::MultiThreadedExecutor exec(
-    rclcpp::ExecutorOptions(), 4); 
-  
-  exec.add_node(node);
-  exec.spin();
+  // Rate del loop principal (controla TODO el bus)
+  constexpr int LOOP_HZ = 500;
+  rclcpp::Rate rate(LOOP_HZ);
+
+  RCLCPP_INFO(node->get_logger(), "DC Motors node started");
+
+  while (rclcpp::ok()) {
+    rclcpp::spin_some(node);
+
+    node->tick();
+
+    rate.sleep();
+  }
 
   rclcpp::shutdown();
   return 0;
