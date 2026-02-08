@@ -15,8 +15,9 @@ echo "[setup] Venv dir: $VENV_DIR"
 # ------------------------------
 echo "[apt] Updating package lists..."
 sudo apt-get update
-sudo apt install -y libwebsocketpp-dev libboost-all-dev libssl-dev tmux ros-humble-rosbridge-server ros-humble-cv-bridge ros-humble-control-msgs libzbar0
-sudo apt install i2c-tools libi2c-dev
+
+sudo apt install -y libwebsocketpp-dev libboost-all-dev libssl-dev tmux ros-humble-rosbridge-server ros-humble-cv-bridge ros-humble-control-msgs libzbar0 portaudio19-dev
+sudo apt install -y i2c-tools libi2c-dev
 
 # Determine real user (if script run via sudo, SUDO_USER is original)
 if [ "$EUID" -eq 0 ] && [ -n "${SUDO_USER:-}" ]; then
@@ -86,10 +87,6 @@ else
   done
 fi
 
-# ------------------------------
-# Build / compile ROS workspace
-# ------------------------------
-
 COMPILE_SCRIPT=""
 
 if [ -f "$WORKSPACE_DIR/compile.sh" ]; then
@@ -113,9 +110,7 @@ else
   echo "[build] Skipping build step."
 fi
 
-# --------------------------------------------
 # SSL Certificate Generation for WebRTC HTTPS
-# --------------------------------------------
 CERT_FILE="$WORKDIR/cert.pem"
 KEY_FILE="$WORKDIR/key.pem"
 

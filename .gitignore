@@ -2,10 +2,11 @@
 /workspace/build
 /workspace/install
 /workspace/log
+<<<<<<< HEAD
 /workspace/.cache
 
 #Virtual Environments
-venv
+/venv
 .venv
 
 # IDEs
@@ -14,6 +15,7 @@ compile_commands.json
 **.cache/**
 __pycache__
 workspace/saves/vision
+workspace/src/teleoperation/GUI/assets/placeholder.jpg
 
 # Cerrtificates
 *.pem

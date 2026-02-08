@@ -63,9 +63,9 @@ class Intermediate(Node):
         
         # Load placeholder image from package share if available, otherwise fall back
         try:
-            placeholder_path = os.path.join(get_package_share_directory('teleoperation'), 'GUI', 'placeholder.jpg')
+            placeholder_path = os.path.join(get_package_share_directory('teleoperation'), 'GUI', 'assets/placeholder.jpg')
         except Exception:
-            placeholder_path = os.path.normpath(os.path.join(ROOT, '..', 'share', 'teleoperation', 'GUI', 'placeholder.jpg'))
+            placeholder_path = os.path.normpath(os.path.join(ROOT, '..', 'share', 'teleoperation', 'GUI', 'assets', 'placeholder.jpg'))
 
         if os.path.exists(placeholder_path):
             self.placeholder_image = cv2.imread(placeholder_path)
