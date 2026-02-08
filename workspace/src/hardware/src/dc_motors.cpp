@@ -706,7 +706,7 @@ class HardwareDriverNode : public rclcpp::Node {
 public:
   HardwareDriverNode() : Node("hardware_node") {
     // Parameters
-    this->declare_parameter<std::string>("i2c_port", "/dev/i2c-1");
+    this->declare_parameter<std::string>("i2c_port", "/dev/i2c-7");
     this->declare_parameter<int>("i2c_address", 0x30);
     this->declare_parameter<int>("flipper_revolution", 400);
     this->declare_parameter<std::vector<std::string>>(
