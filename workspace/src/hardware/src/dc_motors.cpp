@@ -11,7 +11,6 @@
 #include <mutex>
 #include <queue>
 
-#include <ratio>
 #include <rclcpp/logging.hpp>
 #include <rclcpp/rclcpp.hpp>
 

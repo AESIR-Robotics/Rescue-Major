@@ -26,7 +26,9 @@ else
 	SOURCE_ROS_DIR="/opt/ros/jazzy/setup.bash"
 fi
 
-sudo chmod 666 /dev/ttyUSB0
+if [ -f "/dev/ttyUSB0" ]; then
+	sudo chmod 666 /dev/ttyUSB0
+fi
 
 echo "launch.bash: using ROS setup: $SOURCE_ROS_DIR"
 echo "launch.bash: using venv:      $SOURCE_VENV_DIR"
