@@ -5,7 +5,7 @@
 /workspace/.cache
 
 #Virtual Environments
-/venv
+venv
 .venv
 
 # IDEs

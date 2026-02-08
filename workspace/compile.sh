@@ -9,7 +9,7 @@ else
 fi
 
 # Debug output
-echo "compile.sh: ROS_UBUNTU_VERSION='${ROS_UBUNTU_VERSION:-}'"
+echo "compile.sh: ROS_UBUNTU_VERSION='${ROS_UBsourceUNTU_VERSION:-}'"
 
 try_source_ros() {
   local distro="$1"
@@ -42,6 +42,8 @@ else
     fi
   }
 fi
+
+source ../.venv/bin/activate
 
 colcon build --cmake-args -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 

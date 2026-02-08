@@ -5,7 +5,7 @@ ultralytics
 pyzbar
 DateTime
 lark
-em
+empy==3.3.4
 websockets
 numpy<2
 pyaudio

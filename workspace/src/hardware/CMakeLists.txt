@@ -62,6 +62,7 @@ install(TARGETS
 
 install(PROGRAMS
   scripts/motor_node.py
+  scripts/jointjog_mux.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
