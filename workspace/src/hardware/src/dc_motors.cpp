@@ -11,6 +11,7 @@
 #include <mutex>
 #include <queue>
 
+#include <rclcpp/logger.hpp>
 #include <rclcpp/logging.hpp>
 #include <rclcpp/rclcpp.hpp>
 
@@ -333,9 +334,9 @@ public:
                      std::function<void(const uint8_t *)>>
       write_callbacks{};
 
-  explicit Protocol_Handler_I2C(const std::string &device_in = "",
+  explicit Protocol_Handler_I2C(rclcpp::Logger log, const std::string &device_in = "",
                                 int slave_addr_in = 0x00)
-      : device{device_in}, slave_addr{slave_addr_in} {
+      : device{device_in}, slave_addr{slave_addr_in}, logger{log} {
     if (!device.empty()) {
       // Attempt connection only when a device string was provided.
       connect();
@@ -403,6 +404,7 @@ public:
       closeI2C();
       return false;
     }
+    RCLCPP_INFO(logger, "Managed to connect %s at %d", device.c_str(), slave_addr);
     return true;
   }
 
@@ -428,7 +430,8 @@ public:
     while (!sending.empty() && bytes + sending.front()->getPckSize() < 100 && clock::now() < deadline + timeout) {
 
       auto sent = sendNext();
-      if(!sent){
+      if(sent < sending.front()->getPckSize()) {
+
         return false;
       }
       bytes += sent;
@@ -436,6 +439,52 @@ public:
 
     return true;
   }
+
+  // Read pending messages until there are none left. Returns true if at least
+  // one message was dispatched, false on I/O error or if no messages were
+  // available.
+  bool readPending(std::chrono::milliseconds timeout = std::chrono::milliseconds(5)) {
+    if (!connected())
+      return false;
+
+    using clock = std::chrono::steady_clock;
+    
+
+    bool dispatched_any = false;
+    for (auto deadline = clock::now();clock::now() < deadline + timeout;) {
+      auto res = readOneMessage();
+      if (res == ReadResult::OK_DISPATCHED) {
+        RCLCPP_DEBUG(logger, "Message dispatched successfully");
+        dispatched_any = true;
+        continue; // try reading more
+      }
+      if (res == ReadResult::NO_MESSAGE) {
+        RCLCPP_DEBUG(logger, "No message available to read");
+        break; // nothing more to read
+      }
+      if (res == ReadResult::CRC_MISMATCH) {
+        RCLCPP_WARN(logger, "CRC mismatch for received message, dropping it");
+        // Skip and attempt to continue reading next message
+        continue;
+      }
+      // ERROR_IO
+      RCLCPP_ERROR(logger, "I/O error occurred while reading message");
+      return false;
+    }
+
+    return dispatched_any;
+  }
+
+  bool connected() const { return error_state == Error_State::NONE; }
+
+  //Error_State getErrorState() const { return error_state; }
+
+  const std::string &getDevice() const { return device; }
+
+  int getSlaveAddress() const { return slave_addr; }
+
+private:
+  enum class ReadResult { OK_DISPATCHED, NO_MESSAGE, CRC_MISMATCH, ERROR_IO };
 
   size_t sendNext() {
     if (!connected())
@@ -457,57 +506,16 @@ public:
         make_msg_from_args(tail{}, calcCRC(buffer.data(), size - tailSize, 0));
     pack_tuple_to_buffer(tail_tuple, buffer.data() + headerSize + size);
 
-    if (!writeData(buffer.data(), buffer.size())) {
+    RCLCPP_DEBUG(logger, "Sending instruction 0x%02X with payload size %zu (total packet size %zu)",
+                elem->getInst(), size, buffer.size());
+
+    auto sent = writeData(buffer.data(), buffer.size());
+    if (sent == buffer.size()) {
       sending.push(std::move(elem));
-      return 0;
     }
-    return buffer.size();
+    return sent;
   }
 
-  // Read pending messages until there are none left. Returns true if at least
-  // one message was dispatched, false on I/O error or if no messages were
-  // available.
-  bool readPending(std::chrono::milliseconds timeout = std::chrono::milliseconds(5)) {
-    if (!connected())
-      return false;
-
-    using clock = std::chrono::steady_clock;
-    
-
-    bool dispatched_any = false;
-    for (auto deadline = clock::now();clock::now() < deadline + timeout;) {
-      auto res = readOneMessage();
-      if (res == ReadResult::OK_DISPATCHED) {
-        dispatched_any = true;
-        continue; // try reading more
-      }
-      if (res == ReadResult::NO_MESSAGE) {
-        break; // nothing more to read
-      }
-      if (res == ReadResult::CRC_MISMATCH) {
-        // Skip and attempt to continue reading next message
-        continue;
-      }
-      // ERROR_IO
-      return false;
-    }
-
-    return dispatched_any;
-  }
-
-  bool connected() const { return error_state == Error_State::NONE; }
-
-  Error_State getErrorState() const { return error_state; }
-
-  const std::string &getDevice() const { return device; }
-
-  int getSlaveAddress() const { return slave_addr; }
-
-private:
-  enum class ReadResult { OK_DISPATCHED, NO_MESSAGE, CRC_MISMATCH, ERROR_IO };
-
-  // Read exactly one message from the bus and dispatch it. Returns a
-  // ReadResult describing what happened.
   ReadResult readOneMessage() {
     if (!connected())
       return ReadResult::ERROR_IO;
@@ -519,13 +527,17 @@ private:
     if (!syncMessage()) {
       return ReadResult::NO_MESSAGE;
     }
+    RCLCPP_DEBUG(logger, "Sync byte found, reading header...");
 
     // Read remaining header bytes
-    if (!readData(header_buf + 1, sizeof(header_buf) - 1)) {
+    if (readData(header_buf + 1, sizeof(header_buf) - 1) != sizeof(header_buf) - 1) {
       error_state = Error_State::IO_ERROR;
       closeI2C();
       return ReadResult::ERROR_IO;
     }
+
+    RCLCPP_DEBUG(logger, "Header read: 0x%02X 0x%02X 0x%02X 0x%02X",
+                header_buf[0], header_buf[1], header_buf[2], header_buf[3]);
 
     using headerScan = tuple_push_back_t<header, uint8_t>;
     headerScan recv_header{};
@@ -539,26 +551,32 @@ private:
     uint8_t inst = std::get<1>(recv_header);
     uint8_t length = std::get<2>(recv_header);
 
-    if (length == 0) {
-      // malformed
-      return ReadResult::CRC_MISMATCH;
-    }
-
+    
     std::vector<uint8_t> out_buffer(length);
-    out_buffer[0] = std::get<3>(recv_header);
-
-    if (!readData(out_buffer.data() + 1, length - 1)) {
-      error_state = Error_State::IO_ERROR;
-      closeI2C();
-      return ReadResult::ERROR_IO;
+    
+    if(length > 0){
+      out_buffer[0] = std::get<3>(recv_header);
+      if (readData(out_buffer.data() + 1, length - 1) != static_cast<size_t>(length - 1)) {
+        error_state = Error_State::IO_ERROR;
+        closeI2C();
+        return ReadResult::ERROR_IO;
+      }
+      RCLCPP_DEBUG(logger, "Payload read for instruction 0x%02X: first 4 bytes (or full payload if smaller) 0x%02X 0x%02X 0x%02X 0x%02X",
+                  inst, out_buffer[0], out_buffer.size() > 1 ? out_buffer[1] : 0,
+                  out_buffer.size() > 2 ? out_buffer[2] : 0, out_buffer.size() > 3 ? out_buffer[3] : 0);
+    }else{
+      RCLCPP_DEBUG(logger, "Payload read for instruction 0x%02X: no payload",
+                  inst);
     }
 
     uint8_t recv_crc = 0;
-    if (!readData(&recv_crc, sizeof(recv_crc))) {
+    if (readData(&recv_crc, sizeof(recv_crc)) != sizeof(recv_crc)) {
       error_state = Error_State::IO_ERROR;
       closeI2C();
       return ReadResult::ERROR_IO;
     }
+
+    RCLCPP_DEBUG(logger, "Received CRC: 0x%02X", recv_crc);
 
     uint8_t header_crc = calcCRC(header_buf, sizeof(header_buf), 0);
     if (recv_crc != calcCRC(out_buffer.data(), length, header_crc)) {
@@ -566,14 +584,16 @@ private:
       return ReadResult::CRC_MISMATCH;
     }
 
+    RCLCPP_DEBUG(logger, "Received instruction 0x%02X with payload size %d",
+                inst, length);
     // Dispatch the message
     dispatchInput(inst, out_buffer.data());
     return ReadResult::OK_DISPATCHED;
   }
   
-  bool writeData(const uint8_t *data, size_t length, std::chrono::milliseconds timeout = std::chrono::milliseconds{2}) {
+  size_t writeData(const uint8_t *data, size_t length, std::chrono::milliseconds timeout = std::chrono::milliseconds{2}) {
     if (!connected())
-      return false;
+      return 0;
 
     using clock = std::chrono::steady_clock;
     auto deadline = clock::now();
@@ -585,23 +605,25 @@ private:
       if (bytes_written < 0) {
         closeI2C();
         error_state = Error_State::IO_ERROR;
-        return false;
+        return total;
       }
       total += static_cast<size_t>(bytes_written);
       if (clock::now() > deadline + timeout) {
-        return false;
+        RCLCPP_WARN(logger, "Write timeout to device %s at address %d: expected to write %zu bytes, actually wrote %zu bytes",
+                    device.c_str(), slave_addr, length, total);
+        return total;
       }
     }
 
-    return true;
+    return total;
   }
   
-  bool readData(uint8_t *buffer, size_t length, std::chrono::milliseconds timeout = std::chrono::milliseconds{2}) {
+  size_t readData(uint8_t *buffer, size_t length, std::chrono::milliseconds timeout = std::chrono::milliseconds{2}) {
     if (!connected())
-      return false;
+      return 0;
 
     if (!length)
-      return true;
+      return 0;
 
     using clock = std::chrono::steady_clock;
     auto deadline = clock::now();
@@ -613,15 +635,17 @@ private:
       if (bytes_read < 0) {
         closeI2C();
         error_state = Error_State::IO_ERROR;
-        return false;
+        return total;
       }
       total += static_cast<size_t>(bytes_read);
       if (clock::now() > deadline + timeout) {
-        return false;
+        RCLCPP_WARN(logger, "Read timeout from device %s at address %d: expected to read %zu bytes, actually read %zu bytes",
+                    device.c_str(), slave_addr, length, total);
+        return total;
       }
     }
 
-    return true;
+    return total;
   }
 
   void closeI2C() {
@@ -632,6 +656,8 @@ private:
       // Empty the queue
       std::queue<std::unique_ptr<Command>> empty;
       std::swap(sending, empty);
+
+      RCLCPP_INFO(logger, "Closed connection to %s at %d", device.c_str(), slave_addr);
 
       error_state = Error_State::OPEN_FAILED;
     }
@@ -665,19 +691,20 @@ private:
     return crc;
   }
 
-  bool syncMessage() {
+  bool syncMessage(std::chrono::milliseconds time = std::chrono::milliseconds(3)) {
     using clock = std::chrono::steady_clock;
-    auto deadline = clock::now() + std::chrono::milliseconds(1);
+    auto deadline = clock::now() + time;
     uint8_t header;
 
     while (clock::now() < deadline) {
-      if (!readData(&header, 1, std::chrono::milliseconds(1))) {
+      if (readData(&header, 1, std::chrono::milliseconds(1)) != 1) {
         return false;
       }
       if (header == 0xAA) {
         return true;
       }
     }
+    RCLCPP_INFO(logger, "Sync byte not found within timeout");
     return false;
   }
 
@@ -699,6 +726,8 @@ private:
 
   std::unordered_map<uint8_t, std::function<void(const uint8_t *)>>
       instruction_callback{};
+
+  rclcpp::Logger logger;
 };
 
 class HardwareDriverNode : public rclcpp::Node {
@@ -722,17 +751,6 @@ public:
     this->get_parameter("steppers", steppers);
 
     stepper_micro.init(i2c_port_, slave_addr_);
-    if (stepper_micro.getErrorState() !=
-        Protocol_Handler_I2C::Error_State::NONE) {
-      RCLCPP_ERROR(this->get_logger(),
-                   "Failed to connect to I2C device %s at address 0x%02X",
-                   i2c_port_.c_str(), slave_addr_);
-    } else {
-      RCLCPP_INFO(
-          this->get_logger(),
-          "Protocol handler created for I2C device %s at address 0x%02X",
-          i2c_port_.c_str(), slave_addr_);
-    }
 
     // init joint state storage from configured joint names
     const size_t n = joint_names.size();
@@ -774,15 +792,14 @@ public:
 
     switch (tick_state_) {
     case TickState::IDLE:
-      // differ
+      
+      if(!stepper_micro.connected()){
+        tick_state_ = TickState::ERROR_RECOVERY;
+      }
+
       if (ticks_since_poll_++ >= poll_interval_ticks_) {
         ticks_since_poll_ = 0;
-        if (stepper_micro.connected()) {
-          tick_state_ = TickState::PREPARE_COMMANDS;
-        } else {
-          RCLCPP_WARN(this->get_logger(), "Se perdio la conexion con el I2C");
-          tick_state_ = TickState::ERROR_RECOVERY;
-        }
+        tick_state_ = TickState::PREPARE_COMMANDS;
       } else {
         // detect any change requiring immediate command
         bool changed = false;
@@ -799,7 +816,7 @@ public:
             break;
           }
         }
-        if (changed && stepper_micro.connected()) {
+        if (changed) {
           tick_state_ = TickState::PREPARE_COMMANDS;
         }
       }
@@ -876,18 +893,17 @@ public:
       break;
 
     case TickState::ERROR_RECOVERY:
-      // Attempt reconnect using the protocol handler's reconnect method.
-      if (stepper_micro.getErrorState() !=
-          Protocol_Handler_I2C::Error_State::NONE) {
-        if (++wait_counter_ >= max_wait_ticks_ && stepper_micro.reconnect()) {
-          tick_state_ = TickState::IDLE;
-          
-        } else if (wait_counter_ >= max_wait_ticks_){
-          wait_counter_ = 0;
-        }
-      } else {
+      if(stepper_micro.connected()){
         tick_state_ = TickState::IDLE;
       }
+      
+      if (wait_counter_ >= max_wait_ticks_) {
+        if(stepper_micro.reconnect()){
+          tick_state_ = TickState::IDLE;
+        }
+        wait_counter_ = 0;
+      } 
+
       break;
     }
   }
@@ -976,7 +992,7 @@ private:
   }
 
   // I2C protocol handler (owned)
-  Protocol_Handler_I2C stepper_micro;
+  Protocol_Handler_I2C stepper_micro{this->get_logger()};
 
   // Steppers
   int steps_per_revolution{400};
