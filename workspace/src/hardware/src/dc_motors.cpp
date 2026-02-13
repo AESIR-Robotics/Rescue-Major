@@ -503,6 +503,7 @@ private:
     if(sending.empty())
       return 0;
 
+    // TODO: get rid of std::vector from this function (and maybe also read)
     auto size = sending.front()->getPckSize();
     constexpr auto headerSize = std::tuple_size<header>::value;
     constexpr auto tailSize = std::tuple_size<tail>::value;
@@ -515,7 +516,7 @@ private:
     sending.front()->pack(buffer.data() + headerSize);
 
     auto tail_tuple =
-        make_msg_from_args(tail{}, calcCRC(buffer.data(), size - tailSize, 0));
+        make_msg_from_args(tail{}, calcCRC(buffer.data(), headerSize + size, 0));
     pack_tuple_to_buffer(tail_tuple, buffer.data() + headerSize + size);
 
     // RCLCPP_DEBUG(logger, "Sending instruction 0x%02X with payload size %zu
