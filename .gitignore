@@ -16,6 +16,7 @@ compile_commands.json
 __pycache__
 workspace/saves/vision
 workspace/src/teleoperation/GUI/assets/placeholder.jpg
+.DS_Store
 
 # Cerrtificates
 *.pem
