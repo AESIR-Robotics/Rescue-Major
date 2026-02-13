@@ -1,321 +1,468 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="es" data-theme="dark" data-color="blue">
+
 <head>
-    <meta charset="UTF-8"/>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="icon" type="image/png" href="/static/assets/favicon.png">
-    <title>WebRTC streaming</title>
-    <!-- Vincular archivo CSS externo -->
-    <link rel="stylesheet" href="static/estilos.css">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/png" href="./assets/favicon.png">
+    <title>AESIR Interface</title>
+    <link rel="stylesheet" href="./themes.css">
 </head>
 
 <body>
-    <!-- =========================================== -->
-    <!-- TÍTULO PRINCIPAL DE LA APLICACIÓN -->
-    <!-- =========================================== -->
-    <div class="big-title">AESIR Interfaz</div>
-
-    <!-- =========================================== -->
-    <!-- LAYOUT PRINCIPAL DE DOS COLUMNAS -->
-    <!-- =========================================== -->
-    <div class="contenedor-horizontal">
-        <!-- COLUMNA IZQUIERDA: CONTROLES Y CONFIGURACIÓN -->
-        <div class="elemento-izquierda">
-            <div class="contenedor-vertical">
-                <!-- Título de la sección de opciones -->
-                <div class="title">Options</div>
-
-                <!-- Opción 1: Configuración del DataChannel de WebRTC -->
-                <div class="option">
-                    <label for="use-datachannel">Datachannel</label>
-                    <!-- Selector para parámetros del canal de datos -->
-                    <select id="datachannel-parameters">
-                        <option value='{"ordered": true}'>Ordered, reliable</option>
-                        <option value='{"ordered": false, "maxRetransmits": 0}'>Unordered, no retransmissions</option>
-                        <option value='{"ordered": false, "maxPacketLifetime": 500}'>Unordered, 500ms lifetime</option>
-                    </select>
-                </div>
-
-                <!-- Opción 2: Configuración de resolución de video -->
-                <div class="option">
-                    <label for="use-video">Video</label>
-                    <!-- Selector para resolución de video -->
-                    <select id="video-resolution">
-                        <option value="" selected>Default resolution</option>
-                        <option value="320x240">320x240</option>
-                        <option value="640x480">640x480</option>
-                        <option value="960x540">960x540</option>
-                        <option value="1280x720">1280x720</option>
-                    </select>
-                </div>
-
-                <!-- Contenedor para botones de control principales -->
-                <div class="option">
-                    <!-- Botón para iniciar la transmisión WebRTC -->
-                    <button id="start" onclick="start()">Start transmission</button>
-                    <!-- Botón para detener la transmisión (inicialmente oculto) -->
-                    <button id="stop" style="display: none" onclick="stop()">Stop</button>
-                    <button id="start-communication">Start Communication</button>
-                </div>
-
-                <div class="option">
-                    <button id="toggle-microphone" onclick="toggleMicrophone()">Enable Microphone</button>
-                    <button id="toggle-speaker" onclick="toggleServerMic()">Unmute Server</button>
-                </div>
-
-                <!-- =========================================== -->
-                <!-- PANEL DE CONTROL DE VENTANAS DE CÁMARA -->
-                <!-- =========================================== -->
-                <div class="camera-controls-panel">
-                    <!-- Título del panel de control de cámaras -->
-                    <div class="title" style="font-size: 1.2rem;">Ventanas de Cámara</div>
-                    
-                    <!-- Contenedor para botones de control de cámaras -->
-                    <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-top: 15px;">
-                        <!-- Botón para mostrar/ocultar todas las cámaras -->
-                        <button class="camera-control-btn" onclick="toggleAllCameras()">Mostrar/Ocultar Todas</button>
-                        <!-- Botón para organizar cámaras automáticamente -->
-                        <button class="camera-control-btn" onclick="arrangeCameras()">Organizar Cámaras</button>
-                        <!-- Botón para resetear posiciones de cámaras -->
-                        <button class="camera-control-btn" onclick="resetCameraPositions()">Resetear Posiciones</button>
-                        <!-- Botón para siempre al frente todas -->
-                        <button class="camera-control-btn" onclick="toggleAllAlwaysOnTop()">Siempre al Frente Todas</button>
-                    </div>
-                    
-                    <!-- Estado de las cámaras -->
-                    <div class="camera-status-container">
-                        <div class="camera-status">
-                            Cámara 1: <span id="camera1-status" class="camera-closed">Cerrada</span>
-                        </div>
-                        <div class="camera-status">
-                            Cámara 2: <span id="camera2-status" class="camera-closed">Cerrada</span>
-                        </div>
-                        <div class="camera-status">
-                            Cámara 3: <span id="camera3-status" class="camera-closed">Cerrada</span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- =========================================== -->
-                <!-- SECCIÓN DE ESTADOS DE CONEXIÓN WEBRTC -->
-                <!-- =========================================== -->
-                <div class="state-container">
-                    <!-- Título de la sección de estados -->
-                    <div class="title">WebRTC Connection State</div>
-                    
-                    <!-- Estado de recolección ICE (Interactive Connectivity Establishment) -->
-                    <div class="state-labels">ICE gathering state: 
-                        <span id="ice-gathering-state">-</span>
-                    </div>
-                    
-                    <!-- Estado de conexión ICE -->
-                    <div class="state-labels">ICE connection state: 
-                        <span id="ice-connection-state">-</span>
-                    </div>
-                    
-                    <!-- Estado de señalización (protocolo de establecimiento de conexión) -->
-                    <div class="state-labels">Signaling state: 
-                        <span id="signaling-state">-</span>
-                    </div>
-
-                    <!-- Título del canal de datos -->
-                    <div class="title">Data Channel</div>
-                    <!-- Información del canal de datos (se actualiza dinámicamente) -->
-                    <pre id="data-channel" style="height: 40px;">Not connected</pre>
-                </div>
-
-                <div id="robot-info-container" class="info-container">
-                    <div class="title">Robot Messages</div>
-                    <pre id="info-messages" style="height:150px; overflow-y:auto;"></pre>
-                </div>
-            </div>
+    <div class="config-modal">
+        <div class="config-modal-options">
+            <button onclick="" class="config-option">
+                <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 -960 960 960"
+                    fill="currentColor" style="vertical-align:middle;">
+                    <path
+                        d="M146-560q0 58 19.5 111.25T221-350.5q8.5 10.5 8.75 24t-9.25 23q-9.5 9.5-23 9t-22-11q-45-54-69.25-119T82-560q0-70.5 24.25-135.5t69.25-119q8.5-10.5 22-11t23 9q9.5 9.5 9.25 23t-8.75 24q-36 45-55.5 98.25T146-560Zm141.25 61.75q9.25 29.75 27.25 55.75 8 11 7.75 24.25t-9.75 22.75q-9.5 9.5-22.5 9.25T269-397q-26.5-35-40.75-76.5T214-560q0-45 14.25-86.5T269-723q8-10.5 21-10.75t22.5 9.25q9.5 9.5 9.75 22.75t-7.75 24.25q-18 26-27.25 55.75T278-560q0 32 9.25 61.75ZM442.5-160v-310q-27-11.5-43.5-36t-16.5-54q0-40.5 28.5-69t69-28.5q40.5 0 69 28.5t28.5 69q0 29.5-16.5 54t-43.5 36v310q0 15.5-11 26.5t-26.5 11q-15.5 0-26.5-11t-11-26.5Zm230.25-461.75q-9.25-29.75-27.25-55.75-8-11-7.75-24.25t9.75-22.75q9.5-9.5 22.5-9.25T691-723q26.5 35 40.75 76.5T746-560q0 45-14.25 86.5T691-397q-8 10.5-21 10.75t-22.5-9.25q-9.5-9.5-9.75-22.75t7.75-24.25q18-26 27.25-55.75T682-560q0-32-9.25-61.75ZM814-560q0-58-19.5-111.25T739-769.5q-8.5-10.5-8.75-24t9.25-23q9.5-9.5 23-9t22 11q45 54 69.25 119T878-560q0 70.5-24.25 135.5t-69.25 119q-8.5 10.5-22 11t-23-9q-9.5-9.5-9.25-23t8.75-24q36-45 55.5-98.25T814-560Z" />
+                </svg>
+                Transmisión WebRTC
+            </button>
+            <button onclick="" class="config-option">
+                <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 -960 960 960"
+                    fill="currentColor" style="vertical-align:middle;">
+                    <path
+                        d="M453.5-571.5 377-648q-5.5-5.5-8.25-12.25T366-674.5v-158q0-15.5 11-26.5t26.5-11h153q15.5 0 26.5 11t11 26.5v158q0 7.5-2.75 14.25T583-648l-76.5 76.5q-5.5 5.5-12.25 8.25T480-560.5q-7.5 0-14.25-2.75t-12.25-8.25Zm118 118q-5.5-5.5-8.25-12.25T560.5-480q0-7.5 2.75-14.25t8.25-12.25L648-583q5.5-5.5 12.25-8.25T674.5-594h158q15.5 0 26.5 11t11 26.5v153q0 15.5-11 26.5t-26.5 11h-158q-7.5 0-14.25-2.75T648-377l-76.5-76.5ZM90-403.5v-153q0-15.5 11-26.5t26.5-11h158q7.5 0 14.25 2.75T312-583l76.5 76.5q5.5 5.5 8.25 12.25T399.5-480q0 7.5-2.75 14.25t-8.25 12.25L312-377q-5.5 5.5-12.25 8.25T285.5-366h-158q-15.5 0-26.5-11t-11-26.5Zm276 276v-158q0-7.5 2.75-14.25T377-312l76.5-76.5q5.5-5.5 12.25-8.25T480-399.5q7.5 0 14.25 2.75t12.25 8.25L583-312q5.5 5.5 8.25 12.25T594-285.5v158q0 15.5-11 26.5t-26.5 11h-153Q388-90 377-101t-11-26.5ZM480-652l39-39v-104h-78v104l39 39ZM165-441h104l39-39-39-39H165v78Zm526 0h104v-78H691l-39 39 39 39Z" />
+                </svg>
+                Controles del Robot
+            </button>
         </div>
-
-        <!-- COLUMNA DERECHA: CONFIGURACIÓN DE CONTROLES SIMPLIFICADA -->
-        <div class="elemento-derecha">
-            <div class="contenedor-vertical">
-                <!-- Título de la sección de configuración de controles -->
-                <div class="control-config-title">CONTROLES DEL TECLADO</div>
-                
-                <!-- Panel de configuración de controles -->
-                <div class="control-config-panel">
-                    <!-- Subtítulo de la sección -->
-                    <div class="title" style="text-align: center; font-size: 1.3rem; margin-bottom: 25px;">
-                        CONFIGURACIÓN SIMPLIFICADA - 5 ACCIONES
-                    </div>
-                    
-                    <!-- =========================================== -->
-                    <!-- SECCIÓN DE MOVIMIENTO BÁSICO -->
-                    <!-- =========================================== -->
-                    <div style="margin-bottom: 30px;">
-                        <div class="title" style="font-size: 1.2rem; margin-left: 0;">MOVIMIENTO</div>
-                        
-                        <!-- Fila 1: Avanzar -->
-                        <div class="control-row">
-                            <div class="control-label">AVANZAR</div>
-                            <div class="control-input-container">
-                                <input type="text" class="control-input" id="key-forward" value="W" readonly data-action="forward">
-                            </div>
-                        </div>
-                        
-                        <!-- Fila 2: Retroceder -->
-                        <div class="control-row">
-                            <div class="control-label">RETROCEDER</div>
-                            <div class="control-input-container">
-                                <input type="text" class="control-input" id="key-backward" value="S" readonly data-action="backward">
-                            </div>
-                        </div>
-                        
-                        <!-- Fila 3: Izquierda -->
-                        <div class="control-row">
-                            <div class="control-label">IZQUIERDA</div>
-                            <div class="control-input-container">
-                                <input type="text" class="control-input" id="key-left" value="A" readonly data-action="left">
-                            </div>
-                        </div>
-                        
-                        <!-- Fila 4: Derecha -->
-                        <div class="control-row">
-                            <div class="control-label">DERECHA</div>
-                            <div class="control-input-container">
-                                <input type="text" class="control-input" id="key-right" value="D" readonly data-action="right">
-                            </div>
+        <div class="config-option-content" style="display: none;" id="config-option-content">
+            <div class="settings-content-modal" hidden>
+                <label class="settings-label">DataChannel</label>
+                <select id="datachannel-parameters" class="settings-select">
+                    <option value='{"ordered": true}'>Ordered, reliable</option>
+                    <option value='{"ordered": false, "maxRetransmits": 0}'>Unordered, no retransmissions</option>
+                    <option value='{"ordered": false, "maxPacketLifetime": 500}'>Unordered, 500ms lifetime</option>
+                </select>
+                <label class="settings-label">Resolución de Video</label>
+                <select id="video-resolution" class="settings-select">
+                    <option value="" selected>Resolución por defecto</option>
+                    <option value="320x240">320x240</option>
+                    <option value="640x480">640x480</option>
+                    <option value="960x540">960x540</option>
+                    <option value="1280x720">1280x720</option>
+                </select>
+                <label class="settings-label">Modo de imagen</label>
+                <select id="video-fit-mode" class="settings-select">
+                    <option value="scale-down" selected>Scale Down (por defecto)</option>
+                    <option value="cover">Cover (recortar para llenar)</option>
+                    <option value="contain">Contain (encajar completo)</option>
+                    <option value="fill">Fill (estirar)</option>
+                </select>
+            </div>
+            <div class="settings-content-modal" hidden>
+                <div>
+                    <label class="settings-label">Configura las teclas para controlar el robot</label>
+                </div>
+                <div class="wasd-pyramid">
+                    <div class="wasd-row wasd-row-top">
+                        <div class="control-row wasd-key">
+                            <span class="control-label">AVANZAR</span>
+                            <input type="text" class="control-input" id="key-forward" value="W" readonly
+                                data-action="forward">
                         </div>
                     </div>
-                    
-                    <!-- =========================================== -->
-                    <!-- SECCIÓN DE ACCIONES PRINCIPALES (SOLO 1 ACCIÓN) -->
-                    <!-- =========================================== -->
-                    <div style="margin-bottom: 30px;">
-                        <div class="title" style="font-size: 1.2rem; margin-left: 0;">ACCIÓN PRINCIPAL</div>
-                        
-                        <!-- Única acción: Saltar -->
-                        <div class="control-row">
-                            <div class="control-label">SALTAR</div>
-                            <div class="control-input-container">
-                                <input type="text" class="control-input" id="key-jump" value="ESPACIO" readonly data-action="jump">
-                            </div>
+                    <div class="wasd-row wasd-row-bottom">
+                        <div class="control-row wasd-key">
+                            <span class="control-label">IZQ</span>
+                            <input type="text" class="control-input" id="key-left" value="A" readonly
+                                data-action="left">
+                        </div>
+                        <div class="control-row wasd-key">
+                            <span class="control-label">RETRO</span>
+                            <input type="text" class="control-input" id="key-backward" value="S" readonly
+                                data-action="backward">
+                        </div>
+                        <div class="control-row wasd-key">
+                            <span class="control-label">DER</span>
+                            <input type="text" class="control-input" id="key-right" value="D" readonly
+                                data-action="right">
                         </div>
                     </div>
-                    
-                    <!-- =========================================== -->
-                    <!-- BOTONES DE ACCIÓN PARA LA CONFIGURACIÓN -->
-                    <!-- =========================================== -->
-                    <div class="control-buttons-container">
-                        <!-- Botón para guardar configuración -->
-                        <button class="control-action-btn" onclick="saveControlConfig()">GUARDAR CONFIGURACIÓN</button>
-                        <!-- Botón para exportar configuración como JSON -->
-                        <button class="control-action-btn export-btn" onclick="exportControlConfig()">EXPORTAR COMO JSON</button>
-                        <!-- Botón para restablecer a valores predeterminados -->
-                        <button class="control-action-btn reset-btn" onclick="resetControlConfig()">RESTABLECER PREDETERMINADOS</button>
+                    <div class="wasd-row wasd-row-space">
+                        <div class="control-row wasd-key wasd-space">
+                            <span class="control-label">SALTAR</span>
+                            <input type="text" class="control-input" id="key-jump" value="ESPACIO" readonly
+                                data-action="jump">
+                        </div>
                     </div>
-                    
-                    <!-- Mensaje de estado para la configuración de controles -->
-                    <div id="control-status-message" class="control-status-message">
-                        <!-- Mensaje de estado se actualizará aquí -->
-                    </div>
-                    
-                    <!-- Instrucciones para el usuario -->
-                    <div class="instructions">
-                        Haz clic en cualquier campo de tecla y luego presiona la tecla que deseas asignar.<br>
-                        Solo 5 acciones configurables: Movimiento (4 direcciones) + Acción principal.
-                    </div>
+                </div>
+                <div class="control-buttons">
+                    <button class="btn btn-sm btn-success" onclick="saveControlConfig()">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 -960 960 960"
+                            fill="currentColor" style="vertical-align:middle;margin-right:6px;display:inline-block;">
+                            <path
+                                d="M184.15-118.52q-26.57 0-46.1-19.53t-19.53-46.1v-591.7q0-26.66 19.53-46.27 19.53-19.6 46.1-19.6h471.39q13.65 0 26.01 5.46 12.37 5.46 21.47 14.67l118.57 118.57q9.21 9.1 14.67 21.47 5.46 12.36 5.46 26.01v471.39q0 26.57-19.6 46.1-19.61 19.53-46.27 19.53h-591.7Zm591.7-535.71L654.23-775.85H184.15v591.7h591.7v-470.08ZM551.5-279.92q29.5-29.26 29.5-71.5 0-42.23-29.26-71.73-29.27-29.5-71.5-29.5-42.24 0-71.74 29.26-29.5 29.27-29.5 71.5 0 42.24 29.26 71.74 29.27 29.5 71.5 29.5 42.24 0 71.74-29.27ZM270.72-582.35h287.87q13.35 0 22.95-9.57 9.61-9.57 9.61-23.49v-74.37q0-13.35-9.61-22.96-9.6-9.61-22.95-9.61H270.72q-13.93 0-23.5 9.61t-9.57 22.96v74.37q0 13.92 9.57 23.49 9.57 9.57 23.5 9.57Zm-86.57-71.88v470.08-591.7 121.62Z" />
+                        </svg>
+                        Guardar</button>
+                    <button class="btn btn-sm btn-warning" onclick="exportControlConfig()">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 -960 960 960"
+                            fill="currentColor" style="vertical-align:middle;margin-right:6px;display:inline-block;">
+                            <path
+                                d="M480-480ZM320-183l-90 90q-12 12-28 11.5T174-94q-11-12-11.5-28t11.5-28l90-90h-50q-17 0-28.5-11.5T174-280q0-17 11.5-28.5T214-320h146q17 0 28.5 11.5T400-280v146q0 17-11.5 28.5T360-94q-17 0-28.5-11.5T320-134v-49ZM171.5-411.5Q160-423 160-440v-360q0-33 23.5-56.5T240-880h320l240 240v480q0 33-23.5 56.5T720-80H520q-17 0-28.5-11.5T480-120q0-17 11.5-28.5T520-160h200v-440H560q-17 0-28.5-11.5T520-640v-160H240v360q0 17-11.5 28.5T200-400q-17 0-28.5-11.5Z" />
+                        </svg>
+                        Exportar</button>
+                    <button class="btn btn-sm btn-danger" onclick="resetControlConfig()">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 -960 960 960"
+                            fill="currentColor" style="vertical-align:middle;margin-right:6px;display:inline-block;">
+                            <path
+                                d="M399-140q-101.5-27-165.75-110T169-441q0-57 19.75-108.75T245-643.5q10.5-11.5 25.75-11.5T298-643q10.5 10.5 10.75 25.5T298-590q-26.5 31-40.25 69T244-441q0 80 47.25 143t122.25 85q12.5 3.5 20.75 14t8.25 23q0 18.5-13 29.5T399-140Zm162 0q-17.5 4.5-30.5-6.75t-13-29.75q0-11.5 8.25-22.25T546.5-213q75-22.5 122.5-85.25T716.5-441q0-98.5-69-167.5t-167.5-69h-5l20 20q10.5 10.5 10.5 26t-10.5 26q-11 11-26.5 11t-26-11l-84-83.5q-5.5-5.5-8-12t-2.5-14q0-7.5 2.5-14t8-12l84-84q10.5-10.5 26-10.5T495-825q10.5 11 10.5 26.5t-10.5 26l-20 20h5q130 0 220.75 90.75T791.5-441q0 107.5-64.5 190.75T561-140Z" />
+                        </svg>
+                        Reset</button>
+                </div>
+                <div id="control-status-message" class="control-status-message"></div>
+                <div class="instructions">
+                    Haz clic en cualquier campo de tecla y presiona la tecla que deseas asignar.
                 </div>
             </div>
         </div>
     </div>
+    <!-- ====== TOP BAR ====== -->
+    <header class="top-bar">
+        <div class="top-bar-brand">
+            <span class="logo">AESIR</span>
+            <span class="logo-sub">Interface</span>
+        </div>
 
-    <!-- =========================================== -->
-    <!-- VENTANAS FLOTANTES DE CÁMARA (FUERA DEL LAYOUT PRINCIPAL) -->
-    <!-- =========================================== -->
-    
-    <!-- Ventana flotante para Cámara 1 -->
-    <div id="camera-window-1" class="camera-floating-window">
-        <!-- Cabecera de la ventana (área para arrastrar) -->
-        <div class="floating-window-header">
-            <!-- Título de la ventana -->
-            <span>Cámara 1</span>
-            <!-- Controles de la ventana -->
-            <div class="floating-window-controls">
-                <!-- Botón para minimizar la ventana -->
-                <button class="floating-window-btn" onclick="minimizeCameraWindow(1)">−</button>
-                <!-- Botón para cerrar la ventana -->
-                <button class="floating-window-btn" onclick="toggleCameraWindow(1)">×</button>
+        <div class="top-bar-indicators">
+            <div class="indicator" id="ind-ice" data-state="inactive">
+                <span class="indicator-dot"></span>
+                <span class="indicator-label">ICE</span>
+            </div>
+            <div class="indicator" id="ind-signal" data-state="inactive">
+                <span class="indicator-dot"></span>
+                <span class="indicator-label">Signal</span>
+            </div>
+            <div class="indicator" id="ind-data" data-state="inactive">
+                <span class="indicator-dot"></span>
+                <span class="indicator-label">Data</span>
             </div>
         </div>
-        <!-- Contenido principal de la ventana -->
-        <div class="floating-window-content">
-            <!-- Contenedor para el video -->
+
+        <div class="top-bar-actions">
+            <div class="btn-group">
+                <button id="start" onclick="start()" class="btn btn-primary">▶ Iniciar</button>
+                <button id="stop" style="display:none" onclick="stop()" class="btn btn-danger">⏹ Detener</button>
+                <button id="start-communication" class="btn btn-secondary">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 -960 960 960"
+                        fill="currentColor" style="vertical-align:middle;margin-right:6px;display:inline-block;">
+                        <path
+                            d="M146-560q0 55.5 18.75 109.75T220-350q8.5 11 8.75 24.5t-9.25 23q-9.5 9.5-23.25 8.5T174-305.5q-46.5-56-69.25-120.5T82-560q0-69.5 22.75-134T174-814.5q8.5-10.5 22.25-11.5t23.25 8.5q9.5 9.5 9.25 23T220-770q-36.5 46-55.25 100.25T146-560Zm132 0q0 29 9 59.5t28.5 57.5q8 11 7.75 24t-9.75 22.5q-9.5 9.5-22.25 9.25T270-398q-28-35.5-42-77.25T214-560q0-43 14-84.75T270-722q8.5-10.5 21.25-10.75t22.25 9.25q9.5 9.5 9.25 22.5t-8.25 24q-19 25.5-27.75 55.75T278-560Zm107 397.5-19 56q-3.5 10.5-12.75 17.25T332.5-82.5q-18.5 0-28.75-14.5T299-129l119-356q-16-14-25.75-33t-9.75-42q0-41 28.25-69.25T480-657.5q41 0 69.25 28.25T577.5-560q0 23-9.75 42T542-485l119 356q5.5 17-4.5 31.75T628-82.5q-11.5 0-21-6.5t-13-18l-18-55.5H385Zm24.5-75h141L480-448l-70.5 210.5ZM682-560q0-29-9-59.5T644.5-677q-8-11-7.75-24t9.75-22.5q9.5-9.5 22.5-9.25T690-722q27.5 35.5 41.25 77.25T746-560q0 43-14 84.75T690-398q-8.5 10.5-21.25 10.75t-22.25-9.25q-9.5-9.5-9.25-22.5t8.25-24q19-25.5 27.75-55.75T682-560Zm113.25-109.75Q776.5-724 740-770q-8.5-11-8.75-24.5t9.25-23q9.5-9.5 23-8.5t22 11.5q46 56 69.25 120.5T878-560q0 69.5-21.75 134T786.5-305.5q-9 10.5-22.5 11.75t-23.5-8.75q-9.5-9.5-9.25-23T740-350q36.5-46 55.25-100.25T814-560q0-55.5-18.75-109.75Z" />
+                    </svg>
+                    Comunicación
+                </button>
+            </div>
+            <div class="btn-group">
+                <button id="toggle-microphone" onclick="toggleMicrophone()" class="btn btn-icon-text">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 -960 960 960"
+                        fill="currentColor" style="vertical-align:middle;margin-right:6px;display:inline-block;">
+                        <path
+                            d="M399.25-438.75Q366-472.5 366-520v-236q0-47.5 33.25-80.75T480-870q47.5 0 80.75 33.25T594-756v236q0 47.5-33.25 81.25T480-405q-47.5 0-80.75-33.75ZM442.5-165.5v-85q-90.5-12-154.75-76.25T210.5-482q-2-15.5 8.5-26.75T245.5-520q15.5 0 26.5 10.75t14.5 26.75Q300-413 354.75-368T480-323q71.5 0 125.75-45.25T673.5-482.5q3.5-16 14.5-26.75T714.5-520q16 0 26.5 11.25t8.5 26.75q-13 89.5-76.75 154.5t-155.25 77v85q0 15.5-11 26.5T480-128q-15.5 0-26.5-11t-11-26.5Z" />
+                    </svg>
+                    Micrófono
+                </button>
+                <button id="toggle-speaker" onclick="toggleServerMic()" class="btn btn-icon-text">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 -960 960 960"
+                        fill="currentColor" style="vertical-align:middle;margin-right:6px;display:inline-block;">
+                        <path
+                            d="M303-712q-24 0-41 16.5T245-655q0 24 17 41t41 17q24 0 40.5-17t16.5-41q0-24-16.5-40.5T303-712Zm0 389q-24 0-41 17t-17 41q0 24 17 40.5t41 16.5q24 0 40.5-16.5T360-265q0-24-16.5-41T303-323ZM168-828h624q16 0 27.5 11t11.5 27v270q0 17-11.5 28T792-481H168q-16 0-27.5-11T129-520v-270q0-16 11.5-27t27.5-11Zm0 389h624q16 0 27.5 11.5T831-400v269q0 17-11.5 28T792-92H168q-16 0-27.5-11T129-131v-269q0-16 11.5-27.5T168-439Z" />
+                    </svg>
+                    Servidor
+                </button>
+            </div>
+        </div>
+
+        <div class="top-bar-tools">
+            <div class="layout-switcher" id="layout-switcher">
+                <button class="layout-btn active" data-layout="primary" title="Grid (Alt+1)">
+                    <svg viewBox="0 0 24 24">
+                        <rect x="2" y="3" width="6" height="18" rx="1" />
+                        <rect x="9" y="3" width="6" height="18" rx="1" />
+                        <rect x="16" y="3" width="6" height="18" rx="1" />
+                    </svg>
+                </button>
+                <button class="layout-btn" data-layout="secondary" title="PiP (Alt+2)">
+                    <svg viewBox="0 0 24 24">
+                        <rect x="2" y="3" width="9.5" height="18" rx="1" />
+                        <rect x="12.5" y="3" width="9.5" height="18" rx="1" />
+                        <rect x="14" y="12" width="7" height="7" rx="1" fill="currentColor" opacity="0.5" />
+                    </svg>
+                </button>
+                <button class="layout-btn" data-layout="tertiary" title="Focus (Alt+3)">
+                    <svg viewBox="0 0 24 24">
+                        <rect x="2" y="3" width="20" height="18" rx="1" />
+                        <rect x="3" y="14" width="6" height="5" rx="1" fill="currentColor" opacity="0.5" />
+                        <rect x="15" y="14" width="6" height="5" rx="1" fill="currentColor" opacity="0.5" />
+                    </svg>
+                </button>
+                <button class="layout-btn" data-layout="mosaic-left" title="Mosaico Izq (Alt+4)">
+                    <svg viewBox="0 0 24 24">
+                        <rect x="2" y="3" width="12" height="18" rx="1" />
+                        <rect x="15" y="3" width="7" height="8.5" rx="1" />
+                        <rect x="15" y="12.5" width="7" height="8.5" rx="1" />
+                    </svg>
+                </button>
+                <button class="layout-btn" data-layout="mosaic-top" title="Mosaico Sup (Alt+5)">
+                    <svg viewBox="0 0 24 24">
+                        <rect x="2" y="3" width="20" height="10.5" rx="1" />
+                        <rect x="2" y="14.5" width="9.5" height="6.5" rx="1" />
+                        <rect x="12.5" y="14.5" width="9.5" height="6.5" rx="1" />
+                    </svg>
+                </button>
+                <button class="layout-btn" data-layout="mosaic-right" title="Mosaico Der (Alt+6)">
+                    <svg viewBox="0 0 24 24">
+                        <rect x="2" y="3" width="7" height="8.5" rx="1" />
+                        <rect x="2" y="12.5" width="7" height="8.5" rx="1" />
+                        <rect x="10" y="3" width="12" height="18" rx="1" />
+                    </svg>
+                </button>
+            </div>
+            <button class="tool-btn" id="theme-toggle-btn" title="Cambiar modo claro/oscuro (Alt+T)">
+                <span id="theme-icon" class="theme-icon" aria-hidden="true"
+                    style="vertical-align:middle;display:inline-block;width:25px;height:25px"></span>
+            </button>
+            <button class="tool-btn" id="settings-btn" title="Configuración (Alt,)">
+                <span id="settings-icon" class="settings-icon" aria-hidden="true"
+                    style="vertical-align:middle;display:inline-block;width:25px;height:25px"></span>
+            </button>
+        </div>
+    </header>
+
+    <!-- ====== CAMERA AREA (Main viewport) ====== -->
+    <main class="camera-area" id="camera-area">
+        <!-- Camera 1 -->
+        <div class="camera-container" id="cam-container-1" data-camera="1">
+            <div class="camera-overlay-header">
+                <span class="cam-badge">1</span>
+                <span class="cam-title">CAM 1</span>
+                <button class="cam-focus-btn" data-cam="1" title="Hacer principal">★</button>
+            </div>
+            <video id="video1" autoplay playsinline></video>
+            <img class="placeholder" src="./assets/placeholder.jpg" alt="Cámara 1">
+            <div class="cam-drag-handle" title="Arrastrar">⋮⋮</div>
+        </div>
+
+        <!-- Camera 2 -->
+        <div class="camera-container" id="cam-container-2" data-camera="2">
+            <div class="camera-overlay-header">
+                <span class="cam-badge">2</span>
+                <span class="cam-title">CAM 2</span>
+                <button class="cam-focus-btn" data-cam="2" title="Hacer principal">★</button>
+            </div>
+            <video id="video2" autoplay playsinline></video>
+            <img class="placeholder" src="./assets/placeholder.jpg" alt="Cámara 2">
+            <div class="cam-drag-handle" title="Arrastrar">⋮⋮</div>
+        </div>
+
+        <!-- Camera 3 -->
+        <div class="camera-container" id="cam-container-3" data-camera="3">
+            <div class="camera-overlay-header">
+                <span class="cam-badge">3</span>
+                <span class="cam-title">CAM 3</span>
+                <button class="cam-focus-btn" data-cam="3" title="Hacer principal">★</button>
+            </div>
+            <video id="video3" autoplay playsinline></video>
+            <img class="placeholder" src="./assets/placeholder.jpg" alt="Cámara 3">
+            <div class="cam-drag-handle" title="Arrastrar">⋮⋮</div>
+        </div>
+
+        <!-- Robot Terminal Overlay -->
+        <div class="terminal-overlay" id="robot-terminal">
+            <div class="terminal-chrome" id="terminal-drag-handle">
+                <span class="terminal-title">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                        style="vertical-align: middle; margin-right: 5px;">
+                        <path d="M12 19h8" />
+                        <path d="m4 17 6-6-6-6" />
+                    </svg>
+
+                    Robot
+                    Messages</span>
+                <div class="terminal-controls">
+                    <button class="terminal-btn" id="terminal-minimize" title="Minimizar">−</button>
+                    <button class="terminal-btn" id="terminal-close" title="Cerrar">×</button>
+                </div>
+            </div>
+            <pre id="info-messages"></pre>
+        </div>
+
+        <!-- DataChannel Overlay -->
+        <div class="dc-overlay" id="dc-overlay">
+            <div class="terminal-chrome" id="dc-drag-handle">
+                <span class="terminal-title">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 -960 960 960"
+                        fill="currentColor" style="vertical-align:middle;margin-right:6px;display:inline-block;">
+                        <path
+                            d="M146-560q0 58 19.5 111.25T221-350.5q8.5 10.5 8.75 24t-9.25 23q-9.5 9.5-23 9t-22-11q-45-54-69.25-119T82-560q0-70.5 24.25-135.5t69.25-119q8.5-10.5 22-11t23 9q9.5 9.5 9.25 23t-8.75 24q-36 45-55.5 98.25T146-560Zm141.25 61.75q9.25 29.75 27.25 55.75 8 11 7.75 24.25t-9.75 22.75q-9.5 9.5-22.5 9.25T269-397q-26.5-35-40.75-76.5T214-560q0-45 14.25-86.5T269-723q8-10.5 21-10.75t22.5 9.25q9.5 9.5 9.75 22.75t-7.75 24.25q-18 26-27.25 55.75T278-560q0 32 9.25 61.75ZM442.5-160v-310q-27-11.5-43.5-36t-16.5-54q0-40.5 28.5-69t69-28.5q40.5 0 69 28.5t28.5 69q0 29.5-16.5 54t-43.5 36v310q0 15.5-11 26.5t-26.5 11q-15.5 0-26.5-11t-11-26.5Zm230.25-461.75q-9.25-29.75-27.25-55.75-8-11-7.75-24.25t9.75-22.75q9.5-9.5 22.5-9.25T691-723q26.5 35 40.75 76.5T746-560q0 45-14.25 86.5T691-397q-8 10.5-21 10.75t-22.5-9.25q-9.5-9.5-9.75-22.75t7.75-24.25q18-26 27.25-55.75T682-560q0-32-9.25-61.75ZM814-560q0-58-19.5-111.25T739-769.5q-8.5-10.5-8.75-24t9.25-23q9.5-9.5 23-9t22 11q45 54 69.25 119T878-560q0 70.5-24.25 135.5t-69.25 119q-8.5 10.5-22 11t-23-9q-9.5-9.5-9.25-23t8.75-24q36-45 55.5-98.25T814-560Z" />
+                    </svg>
+                    DataChannel</span>
+                <div class="terminal-controls">
+                    <button class="terminal-btn" id="dc-minimize" title="Minimizar">−</button>
+                </div>
+            </div>
+            <pre id="data-channel">Not connected</pre>
+        </div>
+    </main>
+
+    <!-- ====== STATUS BAR ====== -->
+    <footer class="status-bar">
+        <div class="status-section">
+            <span class="status-item">ICE: <span id="ice-gathering-state">-</span></span>
+            <span class="status-sep">│</span>
+            <span class="status-item">Conn: <span id="ice-connection-state">-</span></span>
+            <span class="status-sep">│</span>
+            <span class="status-item">Signal: <span id="signaling-state">-</span></span>
+        </div>
+        <div class="status-section">
+            <span class="status-item" id="layout-status">Layout: Primary</span>
+            <span class="status-sep">│</span>
+            <span class="status-item" id="theme-status">Azul Oscuro</span>
+            <span class="status-sep">│</span>
+            <span class="status-hint" id="shortcuts-hint-btn">Alt+? Atajos</span>
+        </div>
+    </footer>
+
+    <!-- ====== SETTINGS PANEL ====== -->
+    <div class="settings-backdrop" id="settings-backdrop"></div>
+    <aside class="settings-panel" id="settings-panel">
+        <div class="settings-header">
+            <h2>Configuración</h2>
+            <button class="settings-close" id="settings-close">✕</button>
+        </div>
+        <div class="settings-body">
+            <!-- Theme -->
+            <summary>
+                <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 -960 960 960"
+                    fill="currentColor" style="vertical-align:middle;">
+                    <path
+                        d="M480-90q-80.5 0-151.5-30.75t-124-83.75q-53-53-83.75-124T90-480q0-81.5 31.5-152.5T207-756.25Q261-809 333.5-839.5T488-870q77.5 0 146.75 27t121.5 74.25q52.25 47.25 83 111.75T870-518q0 112-67.75 171.5T637-287h-72q-10.5 0-15.25 5.75T545-268q0 13 15 37.25T575-177q0 42.5-24.5 64.75T480-90ZM303.75-459.25Q320-475.5 320-500t-16.25-40.75Q287.5-557 263-557t-40.75 16.25Q206-524.5 206-500t16.25 40.75Q238.5-443 263-443t40.75-16.25Zm119-158Q439-633.5 439-658t-16.25-40.75Q406.5-715 382-715t-40.75 16.25Q325-682.5 325-658t16.25 40.75Q357.5-601 382-601t40.75-16.25Zm197 0Q636-633.5 636-658t-16.25-40.75Q603.5-715 579-715t-40.75 16.25Q522-682.5 522-658t16.25 40.75Q554.5-601 579-601t40.75-16.25Zm118 158Q754-475.5 754-500t-16.25-40.75Q721.5-557 697-557t-40.75 16.25Q640-524.5 640-500t16.25 40.75Q672.5-443 697-443t40.75-16.25Z" />
+                </svg>
+                Tema y Colores
+            </summary>
+            <div class="settings-content">
+                <div class="color-swatches" id="color-swatches">
+                    <button class="swatch active" data-color="blue"><span
+                            style="background:#3b82f6"></span>Azul</button>
+                    <button class="swatch" data-color="green"><span style="background:#22c55e"></span>Verde</button>
+                    <button class="swatch" data-color="pink"><span style="background:#f43f5e"></span>Rosa</button>
+                    <button class="swatch" data-color="orange"><span style="background:#f97316"></span>Naranja</button>
+                    <button class="swatch" data-color="classic"><span style="background:#737373"></span>Clásico</button>
+                </div>
+                <div class="theme-mode-toggle">
+                    <span style="display: flex;align-items: center;gap: 5px;">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 -960 960 960"
+                            fill="currentColor">
+                            <path
+                                d="M340.25-340.25Q282.5-398 282.5-480t57.75-139.75Q398-677.5 480-677.5t139.75 57.75Q677.5-562 677.5-480t-57.75 139.75Q562-282.5 480-282.5t-139.75-57.75ZM80-442.5q-15.5 0-26.5-11t-11-26.5q0-15.5 11-26.5t26.5-11h80q15.5 0 26.5 11t11 26.5q0 15.5-11 26.5t-26.5 11H80Zm720 0q-15.5 0-26.5-11t-11-26.5q0-15.5 11-26.5t26.5-11h80q15.5 0 26.5 11t11 26.5q0 15.5-11 26.5t-26.5 11h-80Zm-346.5-331q-11-11-11-26.5v-80q0-15.5 11-26.5t26.5-11q15.5 0 26.5 11t11 26.5v80q0 15.5-11 26.5t-26.5 11q-15.5 0-26.5-11Zm0 720q-11-11-11-26.5v-80q0-15.5 11-26.5t26.5-11q15.5 0 26.5 11t11 26.5v80q0 15.5-11 26.5t-26.5 11q-15.5 0-26.5-11ZM227.5-680l-43-42q-11.5-10.5-11-26t11.5-27q11-11.5 26.75-11.75T238-775.5l42 43q11 11.5 11 26.5t-11 26.5q-10.5 11.5-25.75 10.75T227.5-680ZM722-184.5l-42-43q-10.5-11.5-10.75-26.75T680-280.5q10.5-11.5 25.75-10.75T732.5-280l43 42q11.5 10.5 11 26T775-185q-11 11.5-26.75 11.75T722-184.5ZM679.5-680q-11.5-10.5-10.75-25.75T680-732.5l42-43q10.5-11.5 26-11t27 11.5q11.5 11 11.75 26.75T775.5-722l-43 42Q721-669 706-669t-26.5-11ZM185-185q-11.5-11-11.75-26.75T184.5-238l43-42q11.5-10.5 26.75-10.75T280.5-280q11.5 10.5 10.75 25.75T280-227.5l-42 43q-10.5 11.5-26 10.75T185-185Z" />
+                        </svg>
+                        Claro
+                    </span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="theme-mode-toggle" checked>
+                        <span class="toggle-slider"></span>
+                    </label>
+                    <span style="display: flex;align-items: center;gap: 5px;">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 -960 960 960"
+                            fill="currentColor">
+                            <path
+                                d="M480-122.5q-149.5 0-253.5-104T122.5-480q0-134.5 89-236.5t224-119q15-2 25.25 2.5t15.75 14q5.5 9 4.5 22.25T471-769q-14.5 24.5-22 51.75T441.5-660q0 91 63.75 154.75T660-441.5q29.5 0 57.5-7.75T769-471q14.5-8.5 27.5-9.5t22 4q10 5 14.5 15.25t2.5 25.75q-15.5 133-118 223t-237.5 90Z" />
+                        </svg>
+
+                        Oscuro</span>
+                </div>
+            </div>
+
+            <!-- Interface shortcuts -->
+            <summary>
+                <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 -960 960 960"
+                    fill="currentColor" style="vertical-align:middle;">
+                    <path
+                        d="M635.5-202.5q-20.5 0-37.25-9.75T571-240L315.5-682.5h-148q-15.5 0-26.5-11T130-720q0-15.5 11-26.5t
+                           26.5-11h148q20.5 0 37.25 9.75T380-720l255.5 442.5h157q15.5 0 26.5 11t11 26.5q0 15.5-11 26.5t-26.5 11h-157Zm4.5-480q-15.5 0-26.5-11t-11-26.5q0-15.5 11-26.5t26.5-11h152.5q15.5 0 26.5 11t11 26.5q0 15.5-11 26.5t-26.5 11H640Z" />
+                </svg>
+                Atajos de Interfaz
+            </summary>
+            <div class="settings-content" id="shortcuts-config">
+                <!-- Populated by camera_layouts.js -->
+            </div>
+        </div>
+    </aside>
+
+    <!-- ====== SHORTCUTS HELP MODAL ====== -->
+    <div class="modal-backdrop" id="shortcuts-modal-backdrop">
+        <div class="modal" id="shortcuts-modal">
+            <div class="modal-header">
+                <h3>⌨️ Atajos de Teclado</h3>
+                <button class="modal-close" id="shortcuts-modal-close">✕</button>
+            </div>
+            <div class="modal-body" id="shortcuts-list">
+                <!-- Populated by camera_layouts.js -->
+            </div>
+        </div>
+    </div>
+
+    <!-- ====== HIDDEN COMPATIBILITY LAYER ====== -->
+    <!-- These elements exist for dynamic_cameras.js and video_test.js compatibility -->
+    <div id="compat-layer" style="display:none!important;position:absolute;left:-9999px;pointer-events:none">
+        <div id="camera-window-1" class="camera-floating-window">
+            <div class="floating-window-header"><span>Cámara 1</span>
+                <div class="floating-window-controls">
+                    <button class="floating-window-btn">−</button>
+                    <button class="floating-window-btn">×</button>
+                </div>
+            </div>
+            <div class="floating-window-content">
                 <div class="floating-video-container">
-                <!-- Elemento de video que muestra el stream de la Cámara 1 -->
-                <video id="floating-video1" autoplay playsinline></video>
-                <!-- Placeholder que se muestra si no hay video disponible -->
-                <img class="placeholder" src="/static/assets/placeholder.jpg" alt="Cámara 1 no disponible">
+                    <video id="floating-video1"></video>
+                    <img class="placeholder" src="./assets/placeholder.jpg">
+                </div>
             </div>
         </div>
-    </div>
-    
-    <!-- Ventana flotante para Cámara 2 -->
-    <div id="camera-window-2" class="camera-floating-window">
-        <!-- Cabecera de la ventana (área para arrastrar) -->
-        <div class="floating-window-header">
-            <!-- Título de la ventana -->
-            <span>Cámara 2</span>
-            <!-- Controles de la ventana -->
-            <div class="floating-window-controls">
-                <!-- Botón para minimizar la ventana -->
-                <button class="floating-window-btn" onclick="minimizeCameraWindow(2)">−</button>
-                <!-- Botón para cerrar la ventana -->
-                <button class="floating-window-btn" onclick="toggleCameraWindow(2)">×</button>
+        <div id="camera-window-2" class="camera-floating-window">
+            <div class="floating-window-header"><span>Cámara 2</span>
+                <div class="floating-window-controls">
+                    <button class="floating-window-btn">−</button>
+                    <button class="floating-window-btn">×</button>
+                </div>
+            </div>
+            <div class="floating-window-content">
+                <div class="floating-video-container">
+                    <video id="floating-video2"></video>
+                    <img class="placeholder" src="./assets/placeholder.jpg">
+                </div>
             </div>
         </div>
-        <!-- Contenido principal de la ventana -->
-        <div class="floating-window-content">
-            <!-- Contenedor para el video -->
-            <div class="floating-video-container">
-                <!-- Elemento de video que muestra el stream de la Cámara 2 -->
-                <video id="floating-video2" autoplay playsinline></video>
-                <!-- Placeholder que se muestra si no hay video disponible -->
-                <img class="placeholder" src="/static/assets/placeholder.jpg" alt="Cámara 2 no disponible">
+        <div id="camera-window-3" class="camera-floating-window">
+            <div class="floating-window-header"><span>Cámara 3</span>
+                <div class="floating-window-controls">
+                    <button class="floating-window-btn">−</button>
+                    <button class="floating-window-btn">×</button>
+                </div>
+            </div>
+            <div class="floating-window-content">
+                <div class="floating-video-container">
+                    <video id="floating-video3"></video>
+                    <img class="placeholder" src="./assets/placeholder.jpg">
+                </div>
             </div>
         </div>
-    </div>
-    
-    <!-- Ventana flotante para Cámara 3 -->
-    <div id="camera-window-3" class="camera-floating-window">
-        <!-- Cabecera de la ventana (área para arrastrar) -->
-        <div class="floating-window-header">
-            <!-- Título de la ventana -->
-            <span>Cámara 3</span>
-            <!-- Controles de la ventana -->
-            <div class="floating-window-controls">
-                <!-- Botón para minimizar la ventana -->
-                <button class="floating-window-btn" onclick="minimizeCameraWindow(3)">−</button>
-                <!-- Botón para cerrar la ventana -->
-                <button class="floating-window-btn" onclick="toggleCameraWindow(3)">×</button>
-            </div>
-        </div>
-        <!-- Contenido principal de la ventana -->
-        <div class="floating-window-content">
-            <!-- Contenedor para el video -->
-            <div class="floating-video-container">
-                <!-- Elemento de video que muestra el stream de la Cámara 3 -->
-                <video id="floating-video3" autoplay playsinline></video>
-                <!-- Placeholder que se muestra si no hay video disponible -->
-                <img class="placeholder" src="/static/assets/placeholder.jpg" alt="Cámara 3 no disponible">
-            </div>
-        </div>
+        <span id="camera1-status" class="camera-closed">Cerrada</span>
+        <span id="camera2-status" class="camera-closed">Cerrada</span>
+        <span id="camera3-status" class="camera-closed">Cerrada</span>
     </div>
 
-    <!-- =========================================== -->
-    <!-- VINCULAR ARCHIVOS EXTERNOS -->
-    <!-- =========================================== -->
-    
-    <!-- Local roslib for offline use (place vendor/roslib.min.js in this folder) -->
-    <script src="static/vendor/roslib.min.js"></script>
-    <!-- Vincular archivo JavaScript principal -->
-    <script src="static/dynamic_cameras.js"></script>
-    <script src="/static/client.js"></script>
-    <script src="/static/com_client.js"></script>
+    <!-- ====== SCRIPTS ====== -->
+    <script src="./vendor/roslib.min.js"></script>
+    <script src="./dynamic_cameras.js"></script>
+    <script src="./client.js"></script>
+    <script src="./config_modal.js"></script>
+    <script src="./com_client.js"></script>
+    <script src="./theme_manager.js"></script>
+    <script src="./camera_layouts.js"></script>
 </body>
+
 </html>
