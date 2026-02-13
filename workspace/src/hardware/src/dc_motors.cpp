@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -617,24 +618,28 @@ private:
     auto deadline = clock::now() + timeout;
 
     size_t total{0};
-
+    
+    RCLCPP_DEBUG(logger, "Writing a message with %zu bytes", length);
     while (total < length) {
-      RCLCPP_DEBUG(logger, "Writing a message with %zu bytes", length);
+
       size_t available = std::min(INTERNAL_SEND_SIZE, length - total);
+
+      std::array<uint8_t, INTERNAL_SEND_SIZE> buf;
+      buf.fill(0xBB);
+      memcpy(buf.data(), data, available);
 
       struct i2c_msg msg{};
       msg.addr = slave_addr;
       msg.flags = 0;
-      msg.len = static_cast<__u16>(available);
-      // I truly hope i never in my life have to use const_cast ever again
-      msg.buf = const_cast<uint8_t*>(data + total); 
+      msg.len = static_cast<__u16>(INTERNAL_SEND_SIZE);
+      msg.buf = buf.data(); 
 
       struct i2c_rdwr_ioctl_data ioctl_data{};
       ioctl_data.msgs = &msg;
       ioctl_data.nmsgs = 1;
 
       int ret = ioctl(i2c_fd, I2C_RDWR, &ioctl_data);
-      if (ret != 1) {
+      if (ret != static_cast<int>(ioctl_data.nmsgs)) {
           closeI2C();
           error_state = Error_State::IO_ERROR;
           return total;
@@ -671,19 +676,27 @@ private:
       if (internal_pos >= INTERNAL_BUF_SIZE) {
 
         RCLCPP_DEBUG(logger, "Reading new chunk...");
+        
+        uint8_t skipmsg[4] {0xAA, 0XFF, INTERNAL_BUF_SIZE, 0x00};
+        skipmsg[3] = calcCRC(skipmsg, 3, 0);
 
-        struct i2c_msg msg {};
-        msg.addr = slave_addr;
-        msg.flags = I2C_M_RD;
-        msg.len = INTERNAL_BUF_SIZE;
-        msg.buf = internal_buf;
+        struct i2c_msg msg[2] {};
+        msg[0].addr = slave_addr;
+        msg[0].flags = I2C_M_RD;
+        msg[0].len = INTERNAL_BUF_SIZE;
+        msg[0].buf = internal_buf;
+
+        msg[1].addr = slave_addr;
+        msg[1].flags = 0;
+        msg[1].len = 4;
+        msg[1].buf = skipmsg;
 
         struct i2c_rdwr_ioctl_data ioctl_data {};
-        ioctl_data.msgs = &msg;
-        ioctl_data.nmsgs = 1;
+        ioctl_data.msgs = msg;
+        ioctl_data.nmsgs = 2;
 
         int ret = ioctl(i2c_fd, I2C_RDWR, &ioctl_data);
-        if (ret != 1) {
+        if (ret != static_cast<int>(ioctl_data.nmsgs)) {
           closeI2C();
           error_state = Error_State::IO_ERROR;
           return total;
@@ -790,6 +803,7 @@ private:
   }
 
   // Read buffer
+  // Do not set INTERNAL_SEND_SIZE to 4 or you will be subject to super rare and obscure bugs
   static constexpr size_t INTERNAL_SEND_SIZE = 16;
   static constexpr size_t INTERNAL_BUF_SIZE = 8;
 
