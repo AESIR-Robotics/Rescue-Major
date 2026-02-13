@@ -42,6 +42,10 @@
 #include "hardware/msg/joint_control.hpp"
 #include "sensor_msgs/msg/joint_state.hpp"
 
+using micros = std::chrono::microseconds;
+using millis = std::chrono::milliseconds;
+using stdclock = std::chrono::steady_clock;
+
 // Compute total byte size of a tuple (sum of sizeof each sending.front()ent
 // type)
 template <typename... Args>
@@ -214,11 +218,17 @@ template <> struct packetReturn<POSITION> {
 };
 
 template <ReadCommandsNC::ReadCommand ID, typename HandlerFunc>
-void dispatch_one(const uint8_t *data, HandlerFunc &&handle) {
+bool dispatch_one(const uint8_t *data, size_t size, HandlerFunc &&handle) {
   using payload = typename ReadCommandsNC::packetReturn<ID>::type;
+
+  if (size != tuple_size(payload{})) {
+    return false;
+  }
+
   payload p;
   unpack_tuple_from_buffer(p, data);
   handle(std::move(p));
+  return true;
 }
 
 } // namespace ReadCommandsNC
@@ -273,7 +283,7 @@ template <typename T> struct GeneralInstruction : Command {
 
   using packet = typename T::sending;
   packet info;
-  constexpr static size_t size = std::tuple_size<packet>::value;
+  constexpr static size_t size = tuple_size(packet{});
 
   constexpr static uint8_t id = T::id;
 
@@ -315,6 +325,30 @@ using ReadInst = GeneralInstruction<CmdInter<T>>;
 } // namespace CommandsNC
 using namespace CommandsNC;
 
+// CRC-8-ATM
+inline uint8_t calcCRC(uint8_t data, uint8_t crc) {
+  crc ^= data;
+  for (uint8_t i = 0; i < 8; i++) {
+    if (crc & 0x80)
+      crc = (crc << 1) ^ 0x07;
+    else
+      crc <<= 1;
+  }
+  return crc;
+}
+
+uint8_t calcCRC(const uint8_t *data, size_t len, uint8_t crc = 0) {
+  for (size_t i = 0; i < len; i++)
+    crc = calcCRC(data[i], crc);
+  return crc;
+}
+
+uint8_t calcCRC(std::initializer_list<uint8_t> inputs, uint8_t crc) {
+  for (auto data : inputs)
+    crc = calcCRC(data, crc);
+  return crc;
+}
+
 class Protocol_Handler_I2C {
 public:
   enum class Error_State {
@@ -331,10 +365,10 @@ public:
   using tail = std::tuple<uint8_t>; // checksum
 
   std::unordered_map<ReadCommandsNC::ReadCommand,
-                     std::function<void(const uint8_t *)>>
+                     std::function<void(const uint8_t *, size_t size)>>
       read_callbacks{};
   std::unordered_map<WriteCommandsNC::WriteCommand,
-                     std::function<void(const uint8_t *)>>
+                     std::function<void(const uint8_t *, size_t size)>>
       write_callbacks{};
 
   explicit Protocol_Handler_I2C(rclcpp::Logger log,
@@ -346,26 +380,29 @@ public:
       connect();
     }
 
-    instruction_callback.emplace(1, [](const uint8_t *pckg) { (void)pckg; });
+    instruction_callback.emplace(1, [](const uint8_t *pckg, size_t size) {
+      (void)pckg;
+      (void)size;
+    });
 
-    instruction_callback.emplace(2, [this](const uint8_t *pckg) {
+    instruction_callback.emplace(2, [this](const uint8_t *pckg, size_t size) {
       uint8_t id = pckg[0];
       auto it =
           write_callbacks.find(static_cast<WriteCommandsNC::WriteCommand>(id));
       if (it != write_callbacks.end()) {
-        it->second(pckg + 1);
+        it->second(pckg + 1, size - 1);
       }
     });
 
     // Allow default construction so this type can be used as a member-by-value
     // (the explicit constructor has default parameters so default construction
     // is already supported).
-    instruction_callback.emplace(3, [this](const uint8_t *pckg) {
+    instruction_callback.emplace(3, [this](const uint8_t *pckg, size_t size) {
       uint8_t id = pckg[0];
       auto it =
           read_callbacks.find(static_cast<ReadCommandsNC::ReadCommand>(id));
       if (it != read_callbacks.end()) {
-        it->second(pckg + 1);
+        it->second(pckg + 1, size - 1);
       }
     });
   }
@@ -421,28 +458,22 @@ public:
   }
 
   // TODO: add sequencing to the protocol
-  bool
-  sendQueue(std::chrono::milliseconds timeout = std::chrono::milliseconds(5)) {
+  bool sendQueue(micros timeout = micros(5000)) {
     if (!connected())
       return false;
 
     size_t bytes{0};
+    auto deadline = stdclock::now();
 
-    using clock = std::chrono::steady_clock;
-    auto deadline = clock::now();
+    size_t expectedsize{0};
 
-    // It can send a little more than a 100 bytes beware, im ok with this
-    // behaviour tho (same with the deadline)
     while (!sending.empty() &&
-           bytes + sending.front()->getPckSize() +
-                   std::tuple_size<header>::value +
-                   std::tuple_size<tail>::value <
-               100 &&
-           clock::now() < deadline + timeout) {
+           (expectedsize = sending.front()->getPckSize() +
+                           tuple_size(header{}) + tuple_size(tail{})) &&
+           bytes + expectedsize < 100 && stdclock::now() < deadline + timeout) {
 
-      auto expectedsize = sending.front()->getPckSize();
       auto sent = sendNext();
-      if (sent < expectedsize) {
+      if (sent != expectedsize) {
         return false;
       }
       bytes += sent;
@@ -454,15 +485,13 @@ public:
   // Read pending messages until there are none left. Returns true if at least
   // one message was dispatched, false on I/O error or if no messages were
   // available.
-  bool readPending(
-      std::chrono::milliseconds timeout = std::chrono::milliseconds(5)) {
+  bool readPending(micros timeout = micros(5000)) {
     if (!connected())
       return false;
 
-    using clock = std::chrono::steady_clock;
-
     bool dispatched_any = false;
-    for (auto deadline = clock::now(); clock::now() < deadline + timeout;) {
+    for (auto deadline = stdclock::now();
+         stdclock::now() < deadline + timeout;) {
       auto res = readOneMessage();
       if (res == ReadResult::OK_DISPATCHED) {
         RCLCPP_DEBUG(logger, "Message dispatched successfully");
@@ -492,8 +521,6 @@ public:
 
   bool connected() const { return i2c_fd > 0; }
 
-  // Error_State getErrorState() const { return error_state; }
-
   const std::string &getDevice() const { return device; }
 
   int getSlaveAddress() const { return slave_addr; }
@@ -515,8 +542,8 @@ private:
 
     // TODO: get rid of std::vector from this function (and maybe also read)
     auto size = sending.front()->getPckSize();
-    constexpr auto headerSize = std::tuple_size<header>::value;
-    constexpr auto tailSize = std::tuple_size<tail>::value;
+    constexpr auto headerSize = tuple_size(header{});
+    constexpr auto tailSize = tuple_size(tail{});
     std::vector<uint8_t> buffer(sending.front()->getPckSize() + headerSize +
                                 tailSize);
 
@@ -541,44 +568,25 @@ private:
   }
 
   ReadResult readOneMessage() {
-    if (!connected())
-      return ReadResult::ERROR_IO;
-
-    uint8_t header_buf[4];
-    header_buf[0] = 0xAA;
-
-    // Wait for sync byte; if none found within timeout, return NO_MESSAGE
-    if (!syncMessage()) {
-      return ReadResult::NO_SYNC;
-    }
-
-    // Read remaining header bytes
-    if (readData(header_buf + 1, sizeof(header_buf) - 1) !=
-        sizeof(header_buf) - 1) {
-      error_state = Error_State::IO_ERROR;
-      closeI2C();
+    if (!connected()) {
+      RCLCPP_DEBUG(logger, "Not connected");
       return ReadResult::ERROR_IO;
     }
 
-    using headerScan = tuple_push_back_t<header, uint8_t>;
-    headerScan recv_header{};
-    unpack_tuple_from_buffer(recv_header, header_buf);
-
-    // Ignore heartbeat/empty packages
-    if (recv_header ==
-        headerScan{0xAA, 0x00, 0x00, calcCRC({0xAA, 0x00, 0x00}, 0)}) {
-      return ReadResult::NO_MESSAGE;
+    header msg_head;
+    auto state = ReadHeader(msg_head);
+    if (state != ReadResult::OK_DISPATCHED) {
+      return state;
     }
 
-    uint8_t inst = std::get<1>(recv_header);
-    uint8_t length = std::get<2>(recv_header);
+    uint8_t inst = std::get<1>(msg_head);
+    uint8_t length = std::get<2>(msg_head);
 
     std::vector<uint8_t> out_buffer(length + 1);
 
     if (length > 0) {
-      out_buffer[0] = std::get<3>(recv_header);
-      if (readData(out_buffer.data() + 1, length) !=
-          static_cast<size_t>(length)) {
+      auto num = readData(out_buffer.data(), length + 1);
+      if (num != static_cast<size_t>(length + 1)) {
         error_state = Error_State::IO_ERROR;
         closeI2C();
         return ReadResult::ERROR_IO;
@@ -590,18 +598,15 @@ private:
                    out_buffer.size() > 1 ? out_buffer[1] : 0,
                    out_buffer.size() > 2 ? out_buffer[2] : 0,
                    out_buffer.size() > 3 ? out_buffer[3] : 0);
-    } else {
-      RCLCPP_DEBUG(logger, "Payload read for instruction 0x%02X: no payload",
-                   inst);
     }
 
-    uint8_t recv_crc =
-        out_buffer[length]; // CRC is the byte immediately following the payload
+    // CRC is the byte immediately following the payload
+    uint8_t recv_crc = out_buffer[length];
 
     RCLCPP_DEBUG(logger, "Received CRC: 0x%02X", recv_crc);
 
-    uint8_t header_crc = calcCRC(header_buf, sizeof(header_buf), 0);
-    if (recv_crc != calcCRC(out_buffer.data(), length, header_crc)) {
+    auto calculated_crc = getMsgCRC(msg_head, out_buffer.data(), length);
+    if (recv_crc != calculated_crc) {
       // CRC mismatch, drop message
       return ReadResult::CRC_MISMATCH;
     }
@@ -609,18 +614,52 @@ private:
     RCLCPP_DEBUG(logger, "Received instruction 0x%02X with payload size %d",
                  inst, length);
     // Dispatch the message
-    dispatchInput(inst, out_buffer.data());
+    dispatchInput(inst, out_buffer.data(), length);
     return ReadResult::OK_DISPATCHED;
   }
 
-  size_t
-  writeData(const uint8_t *data, size_t length,
-            std::chrono::milliseconds timeout = std::chrono::milliseconds{1}) {
+  inline uint8_t getMsgCRC(const header &msg_head, uint8_t *pckage,
+                           size_t size) {
+    uint8_t tmp[sizeof(header)];
+    pack_tuple_to_buffer(msg_head, tmp);
+    uint8_t header_crc = calcCRC(tmp, sizeof(header), 0);
+    header_crc = calcCRC(pckage, size, header_crc);
+    return header_crc;
+  }
+
+  inline ReadResult ReadHeader(header &output) {
+    if (!syncMessage()) {
+      return ReadResult::NO_SYNC;
+    }
+
+    uint8_t header_buf[sizeof(output)];
+    header_buf[0] = 0xAA;
+    // Read remaining header bytes
+    auto num = readData(header_buf + 1, sizeof(header_buf) - 1);
+    if (num != (sizeof(header_buf) - 1)) {
+      error_state = Error_State::IO_ERROR;
+      closeI2C();
+      return ReadResult::ERROR_IO;
+    }
+
+    unpack_tuple_from_buffer(output, header_buf);
+
+    if (output == header{0xAA, 0x00, calcCRC({0xAA, 0x00}, 0)}) {
+      return ReadResult::NO_MESSAGE;
+    }
+
+    return ReadResult::OK_DISPATCHED;
+  }
+
+  // Write and read deal with a lot of low level stuff
+  // All hardcode in this two functions is intentional
+  // do not touch them, there is no need to
+  size_t writeData(const uint8_t *data, size_t length,
+                   micros timeout = micros{1000}) {
     if (!connected())
       return 0;
 
-    using clock = std::chrono::steady_clock;
-    auto deadline = clock::now() + timeout;
+    auto deadline = stdclock::now() + timeout;
 
     size_t total{0};
 
@@ -630,8 +669,10 @@ private:
       size_t available = std::min(INTERNAL_SEND_SIZE, length - total);
 
       std::array<uint8_t, INTERNAL_SEND_SIZE> buf;
-      buf.fill(0xBB);
       memcpy(buf.data(), data, available);
+      for (auto i = available; i < INTERNAL_SEND_SIZE; i++) {
+        buf[i] = 0xBB;
+      }
 
       struct i2c_msg msg {};
       msg.addr = slave_addr;
@@ -652,7 +693,7 @@ private:
 
       total += available;
 
-      if (clock::now() > deadline) {
+      if (stdclock::now() > deadline) {
         RCLCPP_WARN(logger,
                     "Send timeout from device %s at address %d: expected %zu "
                     "bytes, got %zu",
@@ -665,24 +706,24 @@ private:
   }
 
   size_t readData(uint8_t *buffer, size_t length,
-                  std::chrono::milliseconds timeout = std::chrono::milliseconds{
-                      2}) {
+                  micros timeout = micros{2000}) {
     if (!connected() || !buffer || length == 0)
       return 0;
 
-    using clock = std::chrono::steady_clock;
-    auto deadline = clock::now() + timeout;
+    auto deadline = stdclock::now() + timeout;
 
     size_t total = 0;
 
     while (total < length) {
 
-      // Si el buffer interno está vacío → leer otro chunk de 8
+      // If the no message message started and ended in the same buffer then
+      // there was indeed no message, if not then it is old and means there
+      // could be another message, optimize that when you have the time
       if (internal_pos >= INTERNAL_BUF_SIZE) {
 
         RCLCPP_DEBUG(logger, "Reading new chunk...");
 
-        uint8_t skipmsg[4]{0xAA, 0XFF, INTERNAL_BUF_SIZE, 0x00};
+        uint8_t skipmsg[4]{0xBB, 0XFF, INTERNAL_BUF_SIZE, 0x00};
         skipmsg[3] = calcCRC(skipmsg, 3, 0);
 
         struct i2c_msg msg[2]{};
@@ -727,7 +768,7 @@ private:
       internal_pos += to_copy;
       total += to_copy;
 
-      if (clock::now() > deadline) {
+      if (stdclock::now() > deadline) {
         RCLCPP_WARN(logger,
                     "Read timeout from device %s at address %d: expected %zu "
                     "bytes, got %zu",
@@ -759,37 +800,12 @@ private:
     return !device.empty() && slave_addr >= 0x03 && slave_addr <= 0x77;
   }
 
-  // CRC-8-ATM
-  uint8_t calcCRC(uint8_t data, uint8_t crc) {
-    crc ^= data;
-    for (uint8_t i = 0; i < 8; i++) {
-      if (crc & 0x80)
-        crc = (crc << 1) ^ 0x07;
-      else
-        crc <<= 1;
-    }
-    return crc;
-  }
+  bool syncMessage(micros time = micros(3000)) {
 
-  uint8_t calcCRC(const uint8_t *data, size_t len, uint8_t crc = 0) {
-    for (size_t i = 0; i < len; i++)
-      crc = calcCRC(data[i], crc);
-    return crc;
-  }
-
-  uint8_t calcCRC(std::initializer_list<uint8_t> inputs, uint8_t crc) {
-    for (auto data : inputs)
-      crc = calcCRC(data, crc);
-    return crc;
-  }
-
-  bool
-  syncMessage(std::chrono::milliseconds time = std::chrono::milliseconds(3)) {
-    using clock = std::chrono::steady_clock;
-    auto deadline = clock::now() + time;
+    auto deadline = stdclock::now() + time;
     uint8_t header;
-    while (clock::now() < deadline) {
-      if (readData(&header, 1, std::chrono::milliseconds(1)) != 1) {
+    while (stdclock::now() < deadline) {
+      if (readData(&header, 1, micros(1000)) != 1) {
         return false;
       }
       if (header == 0xAA) {
@@ -800,11 +816,11 @@ private:
     return false;
   }
 
-  void dispatchInput(uint8_t inst, uint8_t *pckg) {
+  void dispatchInput(uint8_t inst, uint8_t *pckg, size_t size) {
     // TODO: register time of incoming messages
     auto it = instruction_callback.find(inst);
     if (it != instruction_callback.end()) {
-      it->second(pckg);
+      it->second(pckg, size);
     }
   }
 
@@ -826,7 +842,7 @@ private:
 
   std::queue<std::unique_ptr<Command>> sending;
 
-  std::unordered_map<uint8_t, std::function<void(const uint8_t *)>>
+  std::unordered_map<uint8_t, std::function<void(const uint8_t *, size_t)>>
       instruction_callback{};
 
   rclcpp::Logger logger;
@@ -891,7 +907,6 @@ public:
 
     stepper_micro.sendQueue();
     stepper_micro.readPending();
-    RCLCPP_DEBUG(this->get_logger(), "Passed the sendings and readings");
 
     switch (tick_state_) {
     case TickState::IDLE:
@@ -1002,7 +1017,7 @@ public:
         tick_state_ = TickState::IDLE;
       }
 
-      if (wait_counter_ >= max_wait_ticks_) {
+      if (++wait_counter_ >= max_wait_ticks_) {
         if (stepper_micro.reconnect()) {
           tick_state_ = TickState::IDLE;
         }
@@ -1016,9 +1031,11 @@ public:
 private:
   void generateCallbacks() {
     stepper_micro.read_callbacks.emplace(
-        ReadCommandsNC::ReadCommand::POSITION, [this](const uint8_t *data) {
-          ReadCommandsNC::dispatch_one<ReadCommandsNC::ReadCommand::POSITION>(
-              data, [&](const auto &info) {
+        ReadCommandsNC::ReadCommand::POSITION,
+        [this](const uint8_t *data, size_t size) {
+          bool x = ReadCommandsNC::dispatch_one<
+              ReadCommandsNC::ReadCommand::POSITION>(
+              data, size, [&](const auto &info) {
                 std::apply(
                     [&](const auto &...args) {
                       size_t i{0};
@@ -1030,12 +1047,21 @@ private:
                     },
                     info);
               });
+          if (!x) {
+            RCLCPP_WARN(this->get_logger(),
+                        "Position return info different than expected: "
+                        "expected %zu, got %zu",
+                        tuple_size(ReadCommandsNC::packetReturn<
+                                   ReadCommandsNC::POSITION>::type{}),
+                        size);
+          }
         });
 
     stepper_micro.read_callbacks.emplace(
-        ReadCommandsNC::ReadCommand::SPEED, [this](const uint8_t *data) {
-          ReadCommandsNC::dispatch_one<ReadCommandsNC::SPEED>(
-              data, [&](const auto &info) {
+        ReadCommandsNC::ReadCommand::SPEED,
+        [this](const uint8_t *data, size_t size) {
+          bool x = ReadCommandsNC::dispatch_one<ReadCommandsNC::SPEED>(
+              data, size, [&](const auto &info) {
                 std::apply(
                     [&](const auto &...args) {
                       size_t i{0};
@@ -1046,6 +1072,14 @@ private:
                     },
                     info);
               });
+          if (!x) {
+            RCLCPP_WARN(this->get_logger(),
+                        "Speed return info different than expected: "
+                        "expected %zu, got %zu",
+                        tuple_size(ReadCommandsNC::packetReturn<
+                                   ReadCommandsNC::SPEED>::type{}),
+                        size);
+          }
         });
   }
 
@@ -1153,8 +1187,8 @@ int main(int argc, char **argv) {
 
   auto node = std::make_shared<HardwareDriverNode>();
 
-  // Rate del loop principal (controla TODO el bus)
-  constexpr int LOOP_HZ = 50;
+  // Debug change do not forget to change it back to 500
+  constexpr int LOOP_HZ = 2;
   rclcpp::Rate rate(LOOP_HZ);
 
   RCLCPP_INFO(node->get_logger(), "DC Motors node started");
