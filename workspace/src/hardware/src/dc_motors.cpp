@@ -385,7 +385,6 @@ public:
       error_state = Error_State::INVALID_CONFIG;
       return false;
     }
-    closeI2C();
     return connect();
   }
 
@@ -440,7 +439,7 @@ public:
                    std::tuple_size<tail>::value <
                100 &&
            clock::now() < deadline + timeout) {
-      
+
       auto expectedsize = sending.front()->getPckSize();
       auto sent = sendNext();
       if (sent < expectedsize) {
@@ -474,6 +473,10 @@ public:
         RCLCPP_DEBUG(logger, "No message available to read");
         break; // nothing more to read
       }
+      if (res == ReadResult::NO_SYNC) {
+        RCLCPP_WARN(logger, "Could not sync to message HEADER");
+        break; // nothing more to read
+      }
       if (res == ReadResult::CRC_MISMATCH) {
         RCLCPP_WARN(logger, "CRC mismatch for received message, dropping it");
         // Skip and attempt to continue reading next message
@@ -496,12 +499,18 @@ public:
   int getSlaveAddress() const { return slave_addr; }
 
 private:
-  enum class ReadResult { OK_DISPATCHED, NO_MESSAGE, CRC_MISMATCH, ERROR_IO };
+  enum class ReadResult {
+    OK_DISPATCHED,
+    NO_MESSAGE,
+    NO_SYNC,
+    CRC_MISMATCH,
+    ERROR_IO
+  };
 
   size_t sendNext() {
     if (!connected())
       return 0;
-    if(sending.empty())
+    if (sending.empty())
       return 0;
 
     // TODO: get rid of std::vector from this function (and maybe also read)
@@ -516,8 +525,8 @@ private:
     pack_tuple_to_buffer(headerSend, buffer.data());
     sending.front()->pack(buffer.data() + headerSize);
 
-    auto tail_tuple =
-        make_msg_from_args(tail{}, calcCRC(buffer.data(), headerSize + size, 0));
+    auto tail_tuple = make_msg_from_args(
+        tail{}, calcCRC(buffer.data(), headerSize + size, 0));
     pack_tuple_to_buffer(tail_tuple, buffer.data() + headerSize + size);
 
     // RCLCPP_DEBUG(logger, "Sending instruction 0x%02X with payload size %zu
@@ -540,9 +549,8 @@ private:
 
     // Wait for sync byte; if none found within timeout, return NO_MESSAGE
     if (!syncMessage()) {
-      return ReadResult::NO_MESSAGE;
+      return ReadResult::NO_SYNC;
     }
-    RCLCPP_DEBUG(logger, "Sync byte found, reading header...");
 
     // Read remaining header bytes
     if (readData(header_buf + 1, sizeof(header_buf) - 1) !=
@@ -551,9 +559,6 @@ private:
       closeI2C();
       return ReadResult::ERROR_IO;
     }
-
-    RCLCPP_DEBUG(logger, "Header read: 0x%02X 0x%02X 0x%02X 0x%02X",
-                 header_buf[0], header_buf[1], header_buf[2], header_buf[3]);
 
     using headerScan = tuple_push_back_t<header, uint8_t>;
     headerScan recv_header{};
@@ -618,7 +623,7 @@ private:
     auto deadline = clock::now() + timeout;
 
     size_t total{0};
-    
+
     RCLCPP_DEBUG(logger, "Writing a message with %zu bytes", length);
     while (total < length) {
 
@@ -628,22 +633,22 @@ private:
       buf.fill(0xBB);
       memcpy(buf.data(), data, available);
 
-      struct i2c_msg msg{};
+      struct i2c_msg msg {};
       msg.addr = slave_addr;
       msg.flags = 0;
       msg.len = static_cast<__u16>(INTERNAL_SEND_SIZE);
-      msg.buf = buf.data(); 
+      msg.buf = buf.data();
 
-      struct i2c_rdwr_ioctl_data ioctl_data{};
+      struct i2c_rdwr_ioctl_data ioctl_data {};
       ioctl_data.msgs = &msg;
       ioctl_data.nmsgs = 1;
 
       int ret = ioctl(i2c_fd, I2C_RDWR, &ioctl_data);
       if (ret != static_cast<int>(ioctl_data.nmsgs)) {
-          closeI2C();
-          error_state = Error_State::IO_ERROR;
-          return total;
-        }
+        closeI2C();
+        error_state = Error_State::IO_ERROR;
+        return total;
+      }
 
       total += available;
 
@@ -664,23 +669,23 @@ private:
                       2}) {
     if (!connected() || !buffer || length == 0)
       return 0;
-    
+
     using clock = std::chrono::steady_clock;
     auto deadline = clock::now() + timeout;
 
     size_t total = 0;
 
     while (total < length) {
-      
+
       // Si el buffer interno está vacío → leer otro chunk de 8
       if (internal_pos >= INTERNAL_BUF_SIZE) {
 
         RCLCPP_DEBUG(logger, "Reading new chunk...");
-        
-        uint8_t skipmsg[4] {0xAA, 0XFF, INTERNAL_BUF_SIZE, 0x00};
+
+        uint8_t skipmsg[4]{0xAA, 0XFF, INTERNAL_BUF_SIZE, 0x00};
         skipmsg[3] = calcCRC(skipmsg, 3, 0);
 
-        struct i2c_msg msg[2] {};
+        struct i2c_msg msg[2]{};
         msg[0].addr = slave_addr;
         msg[0].flags = I2C_M_RD;
         msg[0].len = INTERNAL_BUF_SIZE;
@@ -704,11 +709,13 @@ private:
 
         internal_pos = 0;
 
-        //print all the buffer to debug
-        RCLCPP_DEBUG(logger, "Read chunk of %zu bytes: 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X 0x%02X",
+        // print all the buffer to debug
+        RCLCPP_DEBUG(logger,
+                     "Read chunk of %zu bytes: 0x%02X 0x%02X 0x%02X 0x%02X "
+                     "0x%02X 0x%02X 0x%02X 0x%02X",
                      INTERNAL_BUF_SIZE, internal_buf[0], internal_buf[1],
-                     internal_buf[2], internal_buf[3], internal_buf[4], internal_buf[5], internal_buf[6], internal_buf[7]);
-
+                     internal_buf[2], internal_buf[3], internal_buf[4],
+                     internal_buf[5], internal_buf[6], internal_buf[7]);
       }
 
       // Copiar desde el buffer interno al buffer del usuario
@@ -781,7 +788,6 @@ private:
     using clock = std::chrono::steady_clock;
     auto deadline = clock::now() + time;
     uint8_t header;
-
     while (clock::now() < deadline) {
       if (readData(&header, 1, std::chrono::milliseconds(1)) != 1) {
         return false;
@@ -803,12 +809,14 @@ private:
   }
 
   // Read buffer
-  // Do not set INTERNAL_SEND_SIZE to 4 or you will be subject to super rare and obscure bugs
+  // Do not set INTERNAL_SEND_SIZE to 4 or you will be subject to super rare and
+  // obscure bugs
   static constexpr size_t INTERNAL_SEND_SIZE = 16;
   static constexpr size_t INTERNAL_BUF_SIZE = 8;
 
   uint8_t internal_buf[INTERNAL_BUF_SIZE];
-  size_t internal_pos = INTERNAL_BUF_SIZE; // start "full" to trigger initial read
+  // start "full" to trigger initial read
+  size_t internal_pos = INTERNAL_BUF_SIZE;
 
   constexpr static unsigned int max_queue{50};
 
@@ -883,6 +891,7 @@ public:
 
     stepper_micro.sendQueue();
     stepper_micro.readPending();
+    RCLCPP_DEBUG(this->get_logger(), "Passed the sendings and readings");
 
     switch (tick_state_) {
     case TickState::IDLE:
@@ -1145,7 +1154,7 @@ int main(int argc, char **argv) {
   auto node = std::make_shared<HardwareDriverNode>();
 
   // Rate del loop principal (controla TODO el bus)
-  constexpr int LOOP_HZ = 500;
+  constexpr int LOOP_HZ = 50;
   rclcpp::Rate rate(LOOP_HZ);
 
   RCLCPP_INFO(node->get_logger(), "DC Motors node started");
