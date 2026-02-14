@@ -925,9 +925,9 @@ public:
              i < static_cast<size_t>(steppers) && i < in_joint_positions.size();
              ++i) {
           int32_t pos_key = static_cast<int32_t>(std::llround(
-              in_joint_positions[i] / M_2_PI * steps_per_revolution));
+              in_joint_positions[i] / ( 2 * M_PI ) * steps_per_revolution));
           int32_t spd_key = static_cast<int32_t>(std::llround(
-              in_joint_velocities[i] / M_2_PI * steps_per_revolution));
+              in_joint_velocities[i] / ( 2 * M_PI ) * steps_per_revolution));
           if (pos_key != last_sent_pos_int_[i] ||
               spd_key != last_sent_spd_int_[i]) {
             changed = true;
@@ -951,16 +951,16 @@ public:
            i < static_cast<size_t>(steppers) && i < in_joint_positions.size();
            ++i) {
         int32_t pos_key = static_cast<int32_t>(std::llround(
-            in_joint_positions[i] / M_2_PI * steps_per_revolution));
+            in_joint_positions[i] / ( 2 * M_PI ) * steps_per_revolution));
         int32_t spd_key = static_cast<int32_t>(std::llround(
-            in_joint_velocities[i] / M_2_PI * steps_per_revolution));
+            in_joint_velocities[i] / ( 2 * M_PI ) * steps_per_revolution));
 
         uint8_t bit = static_cast<uint8_t>(1u << i);
         pos_groups[pos_key] |= bit;
 
         spd_groups[spd_key] |= bit;
         // store representative float value (convert back)
-        float spd_f = static_cast<float>(in_joint_velocities[i] / M_2_PI *
+        float spd_f = static_cast<float>(in_joint_velocities[i] / ( 2 * M_PI ) *
                                          steps_per_revolution);
         spd_value.emplace(spd_key, spd_f);
       }
@@ -986,9 +986,9 @@ public:
            i < static_cast<size_t>(steppers) && i < in_joint_positions.size();
            ++i) {
         last_sent_pos_int_[i] = static_cast<int32_t>(std::llround(
-            in_joint_positions[i] / M_2_PI * steps_per_revolution));
+            in_joint_positions[i] / ( 2 * M_PI ) * steps_per_revolution));
         last_sent_spd_int_[i] = static_cast<int32_t>(std::llround(
-            in_joint_velocities[i] / M_2_PI * steps_per_revolution));
+            in_joint_velocities[i] / ( 2 * M_PI ) * steps_per_revolution));
       }
 
       stepper_micro.addCommand(
@@ -1041,7 +1041,7 @@ private:
                       size_t i{0};
                       ((feedback_joint_positions[i++] =
                             static_cast<double>(args) * steps_per_revolution /
-                            M_2_PI),
+                            ( 2 * M_PI )),
                        ...);
                       updated_pos = true;
                     },
@@ -1066,7 +1066,7 @@ private:
                     [&](const auto &...args) {
                       size_t i{0};
                       ((feedback_joint_velocities[i++] = static_cast<double>(
-                            args * steps_per_revolution / M_2_PI)),
+                            args * steps_per_revolution / (2 * M_PI))),
                        ...);
                       updated_vel = true;
                     },
@@ -1187,8 +1187,7 @@ int main(int argc, char **argv) {
 
   auto node = std::make_shared<HardwareDriverNode>();
 
-  // Debug change do not forget to change it back to 500
-  constexpr int LOOP_HZ = 2;
+  constexpr int LOOP_HZ = 500;
   rclcpp::Rate rate(LOOP_HZ);
 
   RCLCPP_INFO(node->get_logger(), "DC Motors node started");
