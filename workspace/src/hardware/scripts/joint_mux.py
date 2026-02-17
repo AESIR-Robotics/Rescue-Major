@@ -65,21 +65,24 @@ def clr(code, text):
 # ── Node ──────────────────────────────────────────────────────────────────────
 class JointKeyboardTeleop(Node):
 
-    speedDef = 1.0
-
     def __init__(self):
         super().__init__('joint_keyboard_teleop')
 
         # ── Parameters ──────────────────────────────────────────────────────
         self.declare_parameter('topic',       'hardware_node/joint_command')
         self.declare_parameter('step',        0.1)       # position step per keypress (rad / m)
+        self.declare_parameter('speed',       0.5)
         self.declare_parameter('joint_names', list(DEFAULT_JOINT_KEYS.keys()))
         self.declare_parameter('frame_id',    'world')
 
         self.topic_     = self.get_parameter('topic').value
         self.step_      = self.get_parameter('step').value
+        self.speed_     = self.get_parameter('speed').value
         self.frame_id_  = self.get_parameter('frame_id').value
         joint_names_    = self.get_parameter('joint_names').value
+
+        # ── Parameter callbacks ─────────────────────────────────────────────
+        self.add_on_set_parameters_callback(self._parameter_callback)
 
         # ── Build key → (joint_index, direction) map ────────────────────────
         # Uses DEFAULT_JOINT_KEYS for joints that appear there,
@@ -87,7 +90,7 @@ class JointKeyboardTeleop(Node):
         extra_key_pool = list('uijkop')   # fallback keys for extra joints
         self.joints_    = list(joint_names_)
         self.positions_ = [0.0] * len(self.joints_)
-        self.velocities_= [JointKeyboardTeleop.speedDef] * len(self.joints_)
+        self.velocities_= [self.speed_] * len(self.joints_)
         self.efforts_   = [0.0] * len(self.joints_)
 
         self.key_map_   = {}   # key -> (joint_idx, delta)
@@ -115,6 +118,88 @@ class JointKeyboardTeleop(Node):
         self.settings_  = termios.tcgetattr(sys.stdin)
         self.last_key_  = ''
         self.running_   = True
+
+    # ── Parameter callback ────────────────────────────────────────────────────
+    def _parameter_callback(self, params):
+        """Handle dynamic parameter updates (topic, step, speed, joint_names)."""
+        from rclpy.parameter import Parameter
+        result_success = True
+        
+        for param in params:
+            if param.name == 'topic':
+                old_topic = self.topic_
+                self.topic_ = param.value
+                # Recreate publisher with new topic
+                self.destroy_publisher(self.pub_)
+                self.pub_ = self.create_publisher(JointControl, self.topic_, 10)
+                self.get_logger().info(f'Topic changed: {old_topic} → {self.topic_}')
+                
+            elif param.name == 'step':
+                if param.value > 0.0:
+                    self.step_ = param.value
+                    self.get_logger().info(f'Step changed to {self.step_:.4f} rad')
+                else:
+                    self.get_logger().warn(f'Invalid step {param.value}, must be > 0')
+                    result_success = False
+                    
+            elif param.name == 'speed':
+                if param.value >= 0.0:
+                    old_speed = self.speed_
+                    self.speed_ = param.value
+                    # Update all velocities that were using old speed
+                    for i in range(len(self.velocities_)):
+                        if abs(self.velocities_[i]) == abs(old_speed):
+                            self.velocities_[i] = self.speed_ if self.velocities_[i] > 0 else -self.speed_
+                    self.get_logger().info(f'Speed changed to {self.speed_:.4f} rad/s')
+                else:
+                    self.get_logger().warn(f'Invalid speed {param.value}, must be >= 0')
+                    result_success = False
+                    
+            elif param.name == 'joint_names':
+                # Rebuild joint structure
+                old_joints = self.joints_
+                self.joints_ = list(param.value)
+                
+                # Preserve positions where joint names match
+                new_positions = [0.0] * len(self.joints_)
+                new_velocities = [self.speed_] * len(self.joints_)
+                new_efforts = [0.0] * len(self.joints_)
+                
+                for new_idx, new_name in enumerate(self.joints_):
+                    if new_name in old_joints:
+                        old_idx = old_joints.index(new_name)
+                        new_positions[new_idx] = self.positions_[old_idx]
+                        new_velocities[new_idx] = self.velocities_[old_idx]
+                        new_efforts[new_idx] = self.efforts_[old_idx]
+                
+                self.positions_ = new_positions
+                self.velocities_ = new_velocities
+                self.efforts_ = new_efforts
+                
+                # Rebuild key map
+                self.key_map_ = {}
+                self.bindings_ = {}
+                extra_key_pool = list('uijkop')
+                
+                for idx, name in enumerate(self.joints_):
+                    if name in DEFAULT_JOINT_KEYS:
+                        inc_k, dec_k = DEFAULT_JOINT_KEYS[name]
+                    elif extra_key_pool:
+                        inc_k = extra_key_pool.pop(0)
+                        dec_k = extra_key_pool.pop(0) if extra_key_pool else '?'
+                    else:
+                        inc_k, dec_k = '?', '?'
+                    
+                    self.bindings_[name] = (inc_k, dec_k)
+                    if inc_k != '?':
+                        self.key_map_[inc_k] = (idx, +1)
+                    if dec_k != '?':
+                        self.key_map_[dec_k] = (idx, -1)
+                
+                self.get_logger().info(f'Joint names updated: {self.joints_}')
+        
+        from rclpy.parameter import SetParametersResult
+        return SetParametersResult(successful=result_success)
 
 
     def _get_key(self, timeout: float = 0.1) -> str:
@@ -157,8 +242,10 @@ class JointKeyboardTeleop(Node):
             '║     Joint Keyboard Teleop  (ROS2)        ║'))
         lines.append(clr(BOLD + CYAN,
             '╚══════════════════════════════════════════╝'))
-        lines.append(f'  Topic : {clr(YELLOW, self.topic_)}   '
-                     f'Step : {clr(YELLOW, str(self.step_))} rad/m')
+        lines.append(f'  Topic : {clr(YELLOW, self.topic_)}')
+        lines.append(f'  Step  : {clr(YELLOW, f"{self.step_:.4f}")} rad   '
+                     f'Speed : {clr(YELLOW, f"{self.speed_:.4f}")} rad/s   '
+                     f'Range : {clr(DIM, "[0, 2π]")}')
         lines.append('')
         lines.append(clr(BOLD, f'  {"Joint":<20} {"Inc":>4}  {"Dec":>4}   {"Position":>10}'))
         lines.append('  ' + '─' * 46)
@@ -166,13 +253,11 @@ class JointKeyboardTeleop(Node):
         for idx, name in enumerate(self.joints_):
             inc_k, dec_k = self.bindings_[name]
             pos_str = f'{self.positions_[idx]:+.4f}'
-            bar_val = max(0, min(1.0, self.positions_[idx]))
+            # Normalize to [0, 1] range for bar display
+            bar_val = self.positions_[idx] / (2 * math.pi)
             bar_len = 15
-            filled  = int(abs(bar_val) * bar_len)
-            if bar_val >= 0:
-                bar = '┼' + '█' * filled + ' ' * (bar_len - filled)
-            else:
-                bar = ' ' * (bar_len - filled) + '█' * filled + '┼' 
+            filled  = int(bar_val * bar_len)
+            bar = '┼' + '█' * filled + '─' * (bar_len - filled)
             color = GREEN if self.positions_[idx] != 0.0 else DIM
             lines.append(
                 f'  {name:<20} '
@@ -209,7 +294,7 @@ class JointKeyboardTeleop(Node):
 
                 elif key == RESET_KEY:
                     self.positions_  = [0.0] * len(self.joints_)
-                    self.velocities_ = [JointKeyboardTeleop.speedDef] * len(self.joints_)
+                    self.velocities_ = [self.speed_] * len(self.joints_)
                     self.efforts_    = [0.0] * len(self.joints_)
                     self.last_key_   = key
                     self.pub_.publish(self._build_msg())
@@ -221,9 +306,10 @@ class JointKeyboardTeleop(Node):
 
                 elif key in self.key_map_:
                     idx, direction = self.key_map_[key]
-                    if(0 < self.positions_[idx] + direction * self.step_ < math.pi * 2):
-                        self.positions_[idx] += direction * self.step_
-                        self.velocities_[idx] = direction * JointKeyboardTeleop.speedDef
+                    # Add delta and wrap to [0, 2π] range using modulo
+                    new_pos = self.positions_[idx] + direction * self.step_
+                    self.positions_[idx] = new_pos % (2 * math.pi)
+                    self.velocities_[idx] = direction * self.speed_
                     self.last_key_ = key
                     self.pub_.publish(self._build_msg())
 
