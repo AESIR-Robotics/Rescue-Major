@@ -17,6 +17,7 @@ import os
 import select
 import termios
 import tty
+import math
 import rclpy
 from rclpy.node import Node
 from rclpy.parameter import Parameter
@@ -64,6 +65,8 @@ def clr(code, text):
 # ── Node ──────────────────────────────────────────────────────────────────────
 class JointKeyboardTeleop(Node):
 
+    speedDef = 1.0
+
     def __init__(self):
         super().__init__('joint_keyboard_teleop')
 
@@ -84,7 +87,7 @@ class JointKeyboardTeleop(Node):
         extra_key_pool = list('uijkop')   # fallback keys for extra joints
         self.joints_    = list(joint_names_)
         self.positions_ = [0.0] * len(self.joints_)
-        self.velocities_= [0.1] * len(self.joints_)
+        self.velocities_= [JointKeyboardTeleop.speedDef] * len(self.joints_)
         self.efforts_   = [0.0] * len(self.joints_)
 
         self.key_map_   = {}   # key -> (joint_idx, delta)
@@ -132,7 +135,7 @@ class JointKeyboardTeleop(Node):
         finally:
             termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self.settings_)
 
-    # ── Message builder ───────────────────────────────────────────────────────
+
     def _build_msg(self) -> JointControl:
         msg = JointControl()
         now = self.get_clock().now().to_msg()
@@ -145,7 +148,7 @@ class JointKeyboardTeleop(Node):
         msg.effort          = list(self.efforts_)
         return msg
 
-    # ── HUD rendering ─────────────────────────────────────────────────────────
+
     def _render_hud(self):
         lines = []
         lines.append(clr(BOLD + CYAN,
@@ -163,13 +166,13 @@ class JointKeyboardTeleop(Node):
         for idx, name in enumerate(self.joints_):
             inc_k, dec_k = self.bindings_[name]
             pos_str = f'{self.positions_[idx]:+.4f}'
-            bar_val = max(-1.0, min(1.0, self.positions_[idx]))
-            bar_len = 10
+            bar_val = max(0, min(1.0, self.positions_[idx]))
+            bar_len = 15
             filled  = int(abs(bar_val) * bar_len)
             if bar_val >= 0:
-                bar = '─' * bar_len + '┼' + '█' * filled + ' ' * (bar_len - filled)
+                bar = '┼' + '█' * filled + ' ' * (bar_len - filled)
             else:
-                bar = ' ' * (bar_len - filled) + '█' * filled + '┼' + '─' * bar_len
+                bar = ' ' * (bar_len - filled) + '█' * filled + '┼' 
             color = GREEN if self.positions_[idx] != 0.0 else DIM
             lines.append(
                 f'  {name:<20} '
@@ -206,19 +209,21 @@ class JointKeyboardTeleop(Node):
 
                 elif key == RESET_KEY:
                     self.positions_  = [0.0] * len(self.joints_)
-                    self.velocities_ = [0.1] * len(self.joints_)
+                    self.velocities_ = [JointKeyboardTeleop.speedDef] * len(self.joints_)
                     self.efforts_    = [0.0] * len(self.joints_)
                     self.last_key_   = key
                     self.pub_.publish(self._build_msg())
 
                 elif key == ZERO_VEL_EFFORT_KEY:
-                    self.velocities_ = [0.1] * len(self.joints_)
+                    self.velocities_ = [0.0] * len(self.joints_)
                     self.efforts_    = [0.0] * len(self.joints_)
                     self.last_key_   = key
 
                 elif key in self.key_map_:
                     idx, direction = self.key_map_[key]
-                    self.positions_[idx] += direction * self.step_
+                    if(0 < self.positions_[idx] + direction * self.step_ < math.pi * 2):
+                        self.positions_[idx] += direction * self.step_
+                        self.velocities_[idx] = direction * JointKeyboardTeleop.speedDef
                     self.last_key_ = key
                     self.pub_.publish(self._build_msg())
 
@@ -234,7 +239,7 @@ class JointKeyboardTeleop(Node):
             print('\n\n' + clr(YELLOW, 'Terminal restored. Bye!') + '\n')
 
 
-# ── Entry point ───────────────────────────────────────────────────────────────
+
 def main(args=None):
     rclpy.init(args=args)
     node = JointKeyboardTeleop()

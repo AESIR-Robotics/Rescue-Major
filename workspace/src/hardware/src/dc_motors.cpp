@@ -628,12 +628,18 @@ private:
   }
 
   inline ReadResult ReadHeader(header &output) {
-    if (!syncMessage()) {
+    uint8_t first = 0x00;
+    if (!syncMessage(first)) {
+      return ReadResult::NO_SYNC;
+    }
+
+    // Redundant but just in case i guess
+    if (first != 0xAA) {
       return ReadResult::NO_SYNC;
     }
 
     uint8_t header_buf[sizeof(output)];
-    header_buf[0] = 0xAA;
+    header_buf[0] = first;
     // Read remaining header bytes
     auto num = readData(header_buf + 1, sizeof(header_buf) - 1);
     if (num != (sizeof(header_buf) - 1)) {
@@ -645,10 +651,33 @@ private:
     unpack_tuple_from_buffer(output, header_buf);
 
     if (output == header{0xAA, 0x00, calcCRC({0xAA, 0x00}, 0)}) {
+      // If it is less than three then the "no message" started in the last
+      // chunk If that is the case it is possible that there could actually be
+      // another message after it
+      if (internal_pos < tuple_size(header{})) {
+        return ReadHeader(output);
+      }
       return ReadResult::NO_MESSAGE;
     }
 
     return ReadResult::OK_DISPATCHED;
+  }
+
+  bool syncMessage(uint8_t &first, micros time = micros(3000)) {
+
+    auto deadline = stdclock::now() + time;
+    uint8_t header;
+    while (stdclock::now() < deadline) {
+      if (readData(&header, 1, micros(1000)) != 1) {
+        return false;
+      }
+      first = header;
+      if (header == 0xAA) {
+        return true;
+      }
+    }
+    RCLCPP_INFO(logger, "Sync byte not found within timeout");
+    return false;
   }
 
   // Write and read deal with a lot of low level stuff
@@ -800,22 +829,6 @@ private:
     return !device.empty() && slave_addr >= 0x03 && slave_addr <= 0x77;
   }
 
-  bool syncMessage(micros time = micros(3000)) {
-
-    auto deadline = stdclock::now() + time;
-    uint8_t header;
-    while (stdclock::now() < deadline) {
-      if (readData(&header, 1, micros(1000)) != 1) {
-        return false;
-      }
-      if (header == 0xAA) {
-        return true;
-      }
-    }
-    RCLCPP_INFO(logger, "Sync byte not found within timeout");
-    return false;
-  }
-
   void dispatchInput(uint8_t inst, uint8_t *pckg, size_t size) {
     // TODO: register time of incoming messages
     auto it = instruction_callback.find(inst);
@@ -854,7 +867,7 @@ public:
     // Parameters
     this->declare_parameter<std::string>("i2c_port", "/dev/i2c-7");
     this->declare_parameter<int>("i2c_address", 0x30);
-    this->declare_parameter<int>("flipper_revolution", 400);
+    this->declare_parameter<int>("flipper_revolution", 40000);
     this->declare_parameter<std::vector<std::string>>(
         "joint_names", {"flipper_0", "flipper_1", "flipper_2", "flipper_3"});
     this->declare_parameter("steppers", 4);
@@ -925,9 +938,9 @@ public:
              i < static_cast<size_t>(steppers) && i < in_joint_positions.size();
              ++i) {
           int32_t pos_key = static_cast<int32_t>(std::llround(
-              in_joint_positions[i] / ( 2 * M_PI ) * steps_per_revolution));
+              in_joint_positions[i] / (2 * M_PI) * steps_per_revolution));
           int32_t spd_key = static_cast<int32_t>(std::llround(
-              in_joint_velocities[i] / ( 2 * M_PI ) * steps_per_revolution));
+              in_joint_velocities[i] / (2 * M_PI) * steps_per_revolution));
           if (pos_key != last_sent_pos_int_[i] ||
               spd_key != last_sent_spd_int_[i]) {
             changed = true;
@@ -951,16 +964,16 @@ public:
            i < static_cast<size_t>(steppers) && i < in_joint_positions.size();
            ++i) {
         int32_t pos_key = static_cast<int32_t>(std::llround(
-            in_joint_positions[i] / ( 2 * M_PI ) * steps_per_revolution));
+            in_joint_positions[i] / (2 * M_PI) * steps_per_revolution));
         int32_t spd_key = static_cast<int32_t>(std::llround(
-            in_joint_velocities[i] / ( 2 * M_PI ) * steps_per_revolution));
+            in_joint_velocities[i] / (2 * M_PI) * steps_per_revolution));
 
         uint8_t bit = static_cast<uint8_t>(1u << i);
         pos_groups[pos_key] |= bit;
 
         spd_groups[spd_key] |= bit;
         // store representative float value (convert back)
-        float spd_f = static_cast<float>(in_joint_velocities[i] / ( 2 * M_PI ) *
+        float spd_f = static_cast<float>(in_joint_velocities[i] / (2 * M_PI) *
                                          steps_per_revolution);
         spd_value.emplace(spd_key, spd_f);
       }
@@ -986,9 +999,9 @@ public:
            i < static_cast<size_t>(steppers) && i < in_joint_positions.size();
            ++i) {
         last_sent_pos_int_[i] = static_cast<int32_t>(std::llround(
-            in_joint_positions[i] / ( 2 * M_PI ) * steps_per_revolution));
+            in_joint_positions[i] / (2 * M_PI) * steps_per_revolution));
         last_sent_spd_int_[i] = static_cast<int32_t>(std::llround(
-            in_joint_velocities[i] / ( 2 * M_PI ) * steps_per_revolution));
+            in_joint_velocities[i] / (2 * M_PI) * steps_per_revolution));
       }
 
       stepper_micro.addCommand(
@@ -1040,8 +1053,8 @@ private:
                     [&](const auto &...args) {
                       size_t i{0};
                       ((feedback_joint_positions[i++] =
-                            static_cast<double>(args) * steps_per_revolution /
-                            ( 2 * M_PI )),
+                            static_cast<double>(args) * (2 * M_PI) /
+                            steps_per_revolution),
                        ...);
                       updated_pos = true;
                     },
@@ -1066,7 +1079,7 @@ private:
                     [&](const auto &...args) {
                       size_t i{0};
                       ((feedback_joint_velocities[i++] = static_cast<double>(
-                            args * steps_per_revolution / (2 * M_PI))),
+                            args * (2 * M_PI) / steps_per_revolution)),
                        ...);
                       updated_vel = true;
                     },
@@ -1134,7 +1147,7 @@ private:
   Protocol_Handler_I2C stepper_micro{this->get_logger()};
 
   // Steppers
-  int steps_per_revolution{400};
+  int steps_per_revolution{40000};
   int steppers{4};
 
   std::vector<std::string> joint_names{"flipper_0", "flipper_1", "flipper_2",
