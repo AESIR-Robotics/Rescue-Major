@@ -61,7 +61,8 @@ tmux split-window -h
 # Comandos
 tmux send-keys -t 0 "ros2 run rosbridge_server rosbridge_websocket --port 9090" Enter
 tmux send-keys -t 1 "python3 src/teleoperation/scripts/server_rtc.py" Enter
-tmux send-keys -t 2 "ros2 run hardware dc_motors --ros-args --log-level debug" Enter
+tmux send-keys -t 2 "ros2 run hardware dc_motors" Enter
+#tmux send-keys -t 2 "ros2 run hardware dc_motors --ros-args --log-level debug" Enter
 tmux send-keys -t 3 "ros2 launch vision vision.launch.py" Enter
 
 # Pane 1 (bottom-left): run teleoperation command_server.py

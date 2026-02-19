@@ -684,7 +684,7 @@ private:
   // All hardcode in this two functions is intentional
   // do not touch them, there is no need to
   size_t writeData(const uint8_t *data, size_t length,
-                   micros timeout = micros{1000}) {
+                   micros timeout = micros{1500}) {
     if (!connected())
       return 0;
 
@@ -694,6 +694,14 @@ private:
 
     RCLCPP_DEBUG(logger, "Writing a message with %zu bytes", length);
     while (total < length) {
+
+      if (stdclock::now() > deadline) {
+        RCLCPP_WARN(logger,
+                    "Send timeout from device %s at address %d: expected %zu "
+                    "bytes, got %zu",
+                    device.c_str(), slave_addr, length, total);
+        break;
+      }
 
       size_t available = std::min(INTERNAL_SEND_SIZE, length - total);
 
@@ -722,13 +730,6 @@ private:
 
       total += available;
 
-      if (stdclock::now() > deadline) {
-        RCLCPP_WARN(logger,
-                    "Send timeout from device %s at address %d: expected %zu "
-                    "bytes, got %zu",
-                    device.c_str(), slave_addr, length, total);
-        break;
-      }
     }
 
     return total;
@@ -744,6 +745,14 @@ private:
     size_t total = 0;
 
     while (total < length) {
+
+      if (stdclock::now() > deadline) {
+        RCLCPP_WARN(logger,
+                    "Read timeout from device %s at address %d: expected %zu "
+                    "bytes, got %zu",
+                    device.c_str(), slave_addr, length, total);
+        break;
+      }
 
       // If the no message message started and ended in the same buffer then
       // there was indeed no message, if not then it is old and means there
@@ -780,12 +789,12 @@ private:
         internal_pos = 0;
 
         // print all the buffer to debug
-        RCLCPP_DEBUG(logger,
+        /*RCLCPP_DEBUG(logger,
                      "Read chunk of %zu bytes: 0x%02X 0x%02X 0x%02X 0x%02X "
                      "0x%02X 0x%02X 0x%02X 0x%02X",
                      INTERNAL_BUF_SIZE, internal_buf[0], internal_buf[1],
                      internal_buf[2], internal_buf[3], internal_buf[4],
-                     internal_buf[5], internal_buf[6], internal_buf[7]);
+                     internal_buf[5], internal_buf[6], internal_buf[7]);*/
       }
 
       // Copiar desde el buffer interno al buffer del usuario
@@ -797,13 +806,6 @@ private:
       internal_pos += to_copy;
       total += to_copy;
 
-      if (stdclock::now() > deadline) {
-        RCLCPP_WARN(logger,
-                    "Read timeout from device %s at address %d: expected %zu "
-                    "bytes, got %zu",
-                    device.c_str(), slave_addr, length, total);
-        break;
-      }
     }
 
     return total;
@@ -963,8 +965,9 @@ public:
       for (size_t i = 0;
            i < static_cast<size_t>(steppers) && i < in_joint_positions.size();
            ++i) {
+            //Make function to convert to good units instead of this
         int32_t pos_key = static_cast<int32_t>(std::llround(
-            in_joint_positions[i] / (2 * M_PI) * steps_per_revolution));
+            in_joint_positions[i] / (2 * M_PI) * steps_per_revolution) % steps_per_revolution);
         int32_t spd_key = static_cast<int32_t>(std::llround(
             in_joint_velocities[i] / (2 * M_PI) * steps_per_revolution));
 

@@ -23,6 +23,8 @@ from rclpy.node import Node
 from rclpy.parameter import Parameter
 from std_msgs.msg import Header
 from builtin_interfaces.msg import Time
+from rclpy.parameter import Parameter
+from rcl_interfaces.msg import SetParametersResult
 
 
 from hardware.msg import JointControl  
@@ -122,7 +124,7 @@ class JointKeyboardTeleop(Node):
     # ── Parameter callback ────────────────────────────────────────────────────
     def _parameter_callback(self, params):
         """Handle dynamic parameter updates (topic, step, speed, joint_names)."""
-        from rclpy.parameter import Parameter
+        
         result_success = True
         
         for param in params:
@@ -198,7 +200,6 @@ class JointKeyboardTeleop(Node):
                 
                 self.get_logger().info(f'Joint names updated: {self.joints_}')
         
-        from rclpy.parameter import SetParametersResult
         return SetParametersResult(successful=result_success)
 
 

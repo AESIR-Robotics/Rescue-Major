@@ -53,7 +53,8 @@ tmux set-option -t "$session_name" default-command "$ENV_CMD"
 
 # Splits
 tmux split-window -h
-tmux select-pane -t 0
+tmux select-pane -t 1
+tmux split-window -v
 
 # Comandos
 tmux send-keys -t 0 "ros2 run hardware joint_mux.py" Enter
