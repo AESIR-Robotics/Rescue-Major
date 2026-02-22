@@ -368,6 +368,29 @@ class InputHandler {
   let motorTopic = null;
   let isControlEnabled = false;
   let velocityInterval = null;
+  
+  // Variables locales para control adicional (a,b,c,d)
+  let motorVars = { a: 0, b: 0, c: 0, d: 0 };
+  
+  // Función para cambiar las 4 variables simultáneamente
+  window.setMotorVars = function(values) {
+    if (Array.isArray(values) && values.length === 4) {
+      motorVars.a = values[0];
+      motorVars.b = values[1];
+      motorVars.c = values[2];
+      motorVars.d = values[3];
+      log(`Motor vars: a=${motorVars.a}, b=${motorVars.b}, c=${motorVars.c}, d=${motorVars.d}`);
+    }
+  };
+  
+  // Función para resetear variables (tecla 's')
+  window.resetMotorVars = function() {
+    motorVars.a = 0;
+    motorVars.b = 0;
+    motorVars.c = 0;
+    motorVars.d = 0;
+    log('Motor vars reset to 0');
+  };
 
   function initializeROS(rosbridgeHost = location.hostname, rosbridgePort = 9090) {
     if (typeof ROSLIB === 'undefined') {
@@ -397,12 +420,51 @@ class InputHandler {
         .then(r => r.json())
         .then(config => {
           inputHandler.loadActions(config);
-          log(`Actions loaded: ${Object.keys(inputHandler.actionMap).length} mappings`);
+          log(`Keyboard actions loaded: ${Object.keys(inputHandler.actionMap).length} mappings`);
           setupKeyboardBindings();
           
-          // Get motor topic for joystick control
-          motorTopic = robotAPI.getOrCreateTopic('/dc_motors', 'std_msgs/Float32MultiArray');
-          log('Motor control topic ready');
+          // Get motor topic for joystick control (formato: "x,y,a,b,c,d")
+          motorTopic = robotAPI.getOrCreateTopic('/all_motors', 'std_msgs/String');
+          log('Motor control topic ready (/all_motors)');
+          
+          // Registrar funciones locales para InputHandler
+          inputHandler.registerLocalFunction('setMotorVars', (payload) => {
+            if (payload.data) window.setMotorVars(payload.data);
+          });
+          inputHandler.registerLocalFunction('resetMotorVars', () => {
+            window.resetMotorVars();
+          });
+          
+          // Load controller keymaps
+          return fetch('static/keys_map_controller.json');
+        })
+        .then(r => r.json())
+        .then(controllerConfig => {
+          // Store controller mappings separately
+          inputHandler.controllerActionMap = controllerConfig;
+          log(`Controller actions loaded: ${Object.keys(controllerConfig).length} mappings`);
+          
+          // Setup gamepad button handler
+          inputHandler.on('buttonDown', (padIndex, buttonIndex) => {
+            const buttonId = String(buttonIndex);
+            const action = inputHandler.controllerActionMap[buttonId];
+            
+            if (!action) return;
+            
+            if (action.type === 'local_function') {
+              const funcName = action.payload?.function_name;
+              if (funcName && inputHandler.localFunctions[funcName]) {
+                inputHandler.localFunctions[funcName](action.payload);
+                log(`Button ${buttonId} -> ${funcName}()`);
+              }
+            } else if (action.type === 'send_topic' && robotAPI) {
+              robotAPI.sendTopic(action.topics, action.data_type, action.payload);
+              log(`Button ${buttonId} -> send_topic`);
+            } else if (action.type === 'send_service' && robotAPI) {
+              robotAPI.sendService(action.topics, action.data_type, action.payload);
+              log(`Button ${buttonId} -> send_service`);
+            }
+          });
         })
         .catch(e => log(`Failed to load keymaps: ${e.message}`));
     });
@@ -445,9 +507,17 @@ class InputHandler {
     if (!motorTopic || !inputHandler) return;
     
     const { x, y } = inputHandler.readJoystick();
-    const message = new ROSLIB.Message({
-      data: [Number(x) || 0.0, Number(y) || 0.0]
-    });
+    // Formato: "x,y,a,b,c,d"
+    const dataString = [
+      (Number(x) || 0.0).toFixed(3),
+      (Number(y) || 0.0).toFixed(3),
+      motorVars.a,
+      motorVars.b,
+      motorVars.c,
+      motorVars.d
+    ].join(',');
+    
+    const message = new ROSLIB.Message({ data: dataString });
     
     try {
       motorTopic.publish(message);
@@ -471,7 +541,7 @@ class InputHandler {
         }
         // Send stop command
         if (motorTopic) {
-          const stopMsg = new ROSLIB.Message({ data: [0.0, 0.0] });
+          const stopMsg = new ROSLIB.Message({ data: '0.0,0.0,0,0,0,0' });
           motorTopic.publish(stopMsg);
         }
       } else {
@@ -518,7 +588,7 @@ class InputHandler {
   window.addEventListener('beforeunload', () => {
     if (motorTopic) {
       try {
-        motorTopic.publish(new ROSLIB.Message({ data: [0.0, 0.0] }));
+        motorTopic.publish(new ROSLIB.Message({ data: '0.0,0.0,0,0,0,0' }));
       } catch (e) {
         console.error('Error publishing emergency stop:', e);
       }

@@ -19,7 +19,7 @@
   
   <depend>std_msgs</depend>
   <depend>geometry_msgs</depend>
-  <depend>control_msgs</depend>
+  <!-- <depend>control_msgs</depend> -->  <!-- Comentado temporalmente -->
   <depend>trajectory_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>builtin_interfaces</depend>
