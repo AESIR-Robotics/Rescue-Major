@@ -10,7 +10,7 @@ class MotorNode(Node):
         super().__init__('motor_node')
 
         # Configuración Serial (ajusta el puerto según tu Raspberry/PC)
-        self.serial_port = "/dev/ttyUSB0"   # o "/dev/serial0" en la Raspberry
+        self.serial_port = "/dev/ttyACM0"   # o "/dev/serial0" en la Raspberry
         self.baud_rate = 115200
         self.ser = None
         self.serial_available = False

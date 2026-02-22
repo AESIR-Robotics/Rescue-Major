@@ -503,14 +503,21 @@ class InputHandler {
     });
   }
 
+  // Mapea posición del joystick (-1 a 1) a velocidad (-100 a 100) con curva cuadrática
+  function mapToVelocity(pos) {
+    // Curva cuadrática: más precisión cerca del centro, más potencia en extremos
+    const sign = pos >= 0 ? 1 : -1;
+    return Math.round(sign * Math.pow(Math.abs(pos), 1.5) * 100);
+  }
+
   function publishJoystickVelocities() {
     if (!motorTopic || !inputHandler) return;
     
     const { x, y } = inputHandler.readJoystick();
-    // Formato: "x,y,a,b,c,d"
+    // Formato: "vx,vy,a,b,c,d" - velocidades de -100 a 100
     const dataString = [
-      (Number(x) || 0.0).toFixed(3),
-      (Number(y) || 0.0).toFixed(3),
+      mapToVelocity(x),
+      mapToVelocity(y),
       motorVars.a,
       motorVars.b,
       motorVars.c,

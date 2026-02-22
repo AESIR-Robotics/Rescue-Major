@@ -16,7 +16,7 @@ class SerialSenderNode(Node):
         super().__init__('serial_sender')
 
         # Parámetros configurables
-        self.declare_parameter('serial_port', '/dev/ttyUSB0')
+        self.declare_parameter('serial_port', '/dev/ttyACM0')
         self.declare_parameter('baud_rate', 115200)
         self.declare_parameter('topic', '/all_motors')
 
