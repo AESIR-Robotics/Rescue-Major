@@ -695,14 +695,6 @@ private:
     RCLCPP_DEBUG(logger, "Writing a message with %zu bytes", length);
     while (total < length) {
 
-      if (stdclock::now() > deadline) {
-        RCLCPP_WARN(logger,
-                    "Send timeout from device %s at address %d: expected %zu "
-                    "bytes, got %zu",
-                    device.c_str(), slave_addr, length, total);
-        break;
-      }
-
       size_t available = std::min(INTERNAL_SEND_SIZE, length - total);
 
       std::array<uint8_t, INTERNAL_SEND_SIZE> buf;
@@ -730,6 +722,14 @@ private:
 
       total += available;
 
+      if (stdclock::now() > deadline) {
+        RCLCPP_WARN(logger,
+                    "Send timeout from device %s at address %d: expected %zu "
+                    "bytes, got %zu",
+                    device.c_str(), slave_addr, length, total);
+        break;
+      }
+
     }
 
     return total;
@@ -745,14 +745,6 @@ private:
     size_t total = 0;
 
     while (total < length) {
-
-      if (stdclock::now() > deadline) {
-        RCLCPP_WARN(logger,
-                    "Read timeout from device %s at address %d: expected %zu "
-                    "bytes, got %zu",
-                    device.c_str(), slave_addr, length, total);
-        break;
-      }
 
       // If the no message message started and ended in the same buffer then
       // there was indeed no message, if not then it is old and means there
@@ -805,6 +797,14 @@ private:
 
       internal_pos += to_copy;
       total += to_copy;
+
+      if (stdclock::now() > deadline) {
+        RCLCPP_WARN(logger,
+                    "Read timeout from device %s at address %d: expected %zu "
+                    "bytes, got %zu",
+                    device.c_str(), slave_addr, length, total);
+        break;
+      }
 
     }
 
