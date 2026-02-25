@@ -350,6 +350,34 @@ class InputHandler {
   readJoystick() {
     return this._readGamepad();
   }
+
+  // Read trigger values (LT and RT)
+  // Returns: { leftTrigger: 0-1, rightTrigger: 0-1 }
+  readTriggers() {
+    if (this.gamepadIndex == null) return { leftTrigger: 0, rightTrigger: 0 };
+    const gp = navigator.getGamepads()[this.gamepadIndex];
+    if (!gp) return { leftTrigger: 0, rightTrigger: 0 };
+    
+    let leftTrigger = 0;
+    let rightTrigger = 0;
+    
+    // Axes: izquierdo = axes[4], derecho = axes[5]
+    if (gp.axes.length > 5) {
+      // Asegurar que el valor esté en rango [0, 1]
+      leftTrigger = Math.max(0, gp.axes[4] || 0);
+      rightTrigger = Math.max(0, gp.axes[5] || 0);
+    }
+    
+    // Fallback to button values (buttons 6 and 7) si los axes no funcionan
+    if (leftTrigger < 0.05 && rightTrigger < 0.05) {
+      if (gp.buttons.length > 7) {
+        leftTrigger = gp.buttons[6]?.value || (gp.buttons[6]?.pressed ? 1 : 0);
+        rightTrigger = gp.buttons[7]?.value || (gp.buttons[7]?.pressed ? 1 : 0);
+      }
+    }
+    
+    return { leftTrigger, rightTrigger };
+  }
 }
 
 //______________________ Main Application ____________________
@@ -371,6 +399,13 @@ class InputHandler {
   
   // Variables locales para control adicional (a,b,c,d)
   let motorVars = { a: 0, b: 0, c: 0, d: 0 };
+  
+  // Variables para control de velocidad con gatillos y aceleración
+  let currentVelocity = { x: 0, y: 0 };  
+  const ACCELERATION_TIME = 0.5;  
+  const MAX_VELOCITY = 100;
+  const UPDATE_INTERVAL = 100;  // 100ms = 10Hz
+  const ACCELERATION_STEP = (MAX_VELOCITY / ACCELERATION_TIME) * (UPDATE_INTERVAL / 1000);  
   
   // Función para cambiar las 4 variables simultáneamente
   window.setMotorVars = function(values) {
@@ -503,21 +538,54 @@ class InputHandler {
     });
   }
 
-  // Mapea posición del joystick (-1 a 1) a velocidad (-100 a 100) con curva cuadrática
-  function mapToVelocity(pos) {
-    // Curva cuadrática: más precisión cerca del centro, más potencia en extremos
-    const sign = pos >= 0 ? 1 : -1;
-    return Math.round(sign * Math.pow(Math.abs(pos), 1.5) * 100);
+  function getTargetVelocityFromTriggers() {
+    if (!inputHandler) return { x: 0, y: 0 };
+    
+    const { leftTrigger, rightTrigger } = inputHandler.readTriggers();
+    
+    // El gatillo derecho tiene prioridad si ambos están presionados
+    // o se puede hacer que se cancelen mutuamente
+    let targetX = 0;
+    let targetY = 0;
+    
+    if (rightTrigger > 0.1) {
+      // Gatillo derecho: velocidad positiva
+      targetX = MAX_VELOCITY;
+      targetY = MAX_VELOCITY;
+    } else if (leftTrigger > 0.1) {
+      // Gatillo izquierdo: velocidad negativa
+      targetX = -MAX_VELOCITY;
+      targetY = -MAX_VELOCITY;
+    }
+    
+    return { x: targetX, y: targetY };
   }
 
-  function publishJoystickVelocities() {
+  // Aplica aceleración gradual hacia la velocidad objetivo
+  function applyAcceleration(current, target) {
+    if (current < target) {
+      // Acelerando hacia adelante
+      return Math.min(current + ACCELERATION_STEP, target);
+    } else if (current > target) {
+      // Desacelerando o acelerando hacia atrás
+      return Math.max(current - ACCELERATION_STEP, target);
+    }
+    return current;
+  }
+
+  function publishTriggerVelocities() {
     if (!motorTopic || !inputHandler) return;
     
-    const { x, y } = inputHandler.readJoystick();
+    // Obtener velocidad objetivo basada en gatillos
+    const target = getTargetVelocityFromTriggers();
+    
+    currentVelocity.x = applyAcceleration(currentVelocity.x, target.x);
+    currentVelocity.y = applyAcceleration(currentVelocity.y, target.y);
+    
     // Formato: "vx,vy,a,b,c,d" - velocidades de -100 a 100
     const dataString = [
-      mapToVelocity(x),
-      mapToVelocity(y),
+      Math.round(currentVelocity.x),
+      Math.round(currentVelocity.y),
       motorVars.a,
       motorVars.b,
       motorVars.c,
@@ -529,7 +597,7 @@ class InputHandler {
     try {
       motorTopic.publish(message);
     } catch (e) {
-      console.error('Joystick velocity publish error:', e);
+      console.error('Trigger velocity publish error:', e);
     }
   }
 
@@ -546,15 +614,17 @@ class InputHandler {
           clearInterval(velocityInterval);
           velocityInterval = null;
         }
-        // Send stop command
+        // Reset current velocity and send stop command
+        currentVelocity.x = 0;
+        currentVelocity.y = 0;
         if (motorTopic) {
-          const stopMsg = new ROSLIB.Message({ data: '0.0,0.0,0,0,0,0' });
+          const stopMsg = new ROSLIB.Message({ data: '0,0,0,0,0,0' });
           motorTopic.publish(stopMsg);
         }
       } else {
-        // Start publishing joystick velocities at 10Hz
+        // Start publishing trigger velocities at 10Hz
         if (!velocityInterval) {
-          velocityInterval = setInterval(publishJoystickVelocities, 100);
+          velocityInterval = setInterval(publishTriggerVelocities, UPDATE_INTERVAL);
         }
       }
     });
@@ -593,9 +663,11 @@ class InputHandler {
 
   // Emergency stop on page unload
   window.addEventListener('beforeunload', () => {
+    currentVelocity.x = 0;
+    currentVelocity.y = 0;
     if (motorTopic) {
       try {
-        motorTopic.publish(new ROSLIB.Message({ data: '0.0,0.0,0,0,0,0' }));
+        motorTopic.publish(new ROSLIB.Message({ data: '0,0,0,0,0,0' }));
       } catch (e) {
         console.error('Error publishing emergency stop:', e);
       }
