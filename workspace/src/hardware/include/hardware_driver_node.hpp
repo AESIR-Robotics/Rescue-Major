@@ -1,7 +1,7 @@
 #pragma once
 
 #include <algorithm>
-#include <chrono>
+//#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -208,7 +208,7 @@ inline void HardwareDriverNode::tick() {
 
         float spd_f = static_cast<float>(in_joint_velocities[i] /
                                          (2.0 * M_PI) * steps_per_revolution);
-        spd_value.emplace(spd_key, spd_f);
+        spd_value.insert_or_assign(spd_key, spd_f);
       }
 
       for (size_t i = 0;

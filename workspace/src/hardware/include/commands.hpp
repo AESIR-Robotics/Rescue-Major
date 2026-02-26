@@ -70,7 +70,7 @@ template <> struct packetReturn<SPEED>    { using type = std::tuple<float, float
 
 template <> struct packetSend<POSITION>   { using type = std::tuple<>; };
 template <> struct packetReturn<POSITION> {
-  using type = std::tuple<unsigned int, unsigned int, unsigned int, unsigned int>; // position per motor
+  using type = std::tuple<int32_t, int32_t, int32_t, int32_t>; // position per motor
 };
 
 } // namespace ReadCommandsNC

@@ -7,7 +7,7 @@
 #include <cstring>
 #include <functional>
 #include <memory>
-#include <mutex>
+//#include <mutex>
 #include <queue>
 #include <string>
 #include <unordered_map>
@@ -18,6 +18,8 @@
 #include <linux/i2c.h>
 #include <sys/ioctl.h>
 #include <sys/types.h>
+#include <cerrno>
+#include <poll.h>
 #include <unistd.h>
 
 #include <rclcpp/logger.hpp>
@@ -27,8 +29,9 @@
 #include "crc.hpp"
 #include "tuple_utils.hpp"
 
-using micros   = std::chrono::microseconds;
-using stdclock = std::chrono::steady_clock;
+using micros    = std::chrono::microseconds;
+using stdclock  = std::chrono::steady_clock;
+using deadline_t = stdclock::time_point;  ///< Absolute deadline used internally.
 
 // =============================================================================
 // Declaration
@@ -47,6 +50,7 @@ public:
   using header = std::tuple<uint8_t, uint8_t, uint8_t>; // sync, instruction, length
   using tail   = std::tuple<uint8_t>;                    // checksum
 
+  // callbacks must be non-blocking and complete in O(1) — no locks, no I/O, no complex computation
   std::unordered_map<ReadCommandsNC::ReadCommand,
                      std::function<void(const uint8_t *, size_t)>>
       read_callbacks{};
@@ -71,12 +75,12 @@ public:
   bool addCommand(std::unique_ptr<CommandsNC::Command> &&input);
 
   // TODO: add sequencing to the protocol
-  bool sendQueue(micros timeout = micros(5000));
+  bool sendQueue(micros timeout = micros(6000), micros timePerMsg = micros(1000));
 
   /// Read pending messages until there are none left.
   /// Returns true if at least one message was dispatched, false on I/O error
   /// or if no messages were available.
-  bool readPending(micros timeout = micros(5000));
+  bool readPending(micros timeout = micros(6000), micros timePerMsg = micros(1000));
 
   bool connected() const;
   const std::string &getDevice() const;
@@ -91,18 +95,19 @@ private:
     ERROR_IO
   };
 
-  size_t     sendNext();
-  ReadResult readOneMessage();
+  size_t     sendNext(deadline_t deadline);
+  ReadResult readOneMessage(deadline_t deadline);
   uint8_t    getMsgCRC(const header &msg_head, uint8_t *pckage, size_t size);
-  ReadResult ReadHeader(header &output);
-  bool       syncMessage(uint8_t &first, micros time = micros(3000));
+  ReadResult ReadHeader(header &output, deadline_t deadline);
+  bool       syncMessage(uint8_t &first, deadline_t deadline);
+  /// Wait until i2c_fd is ready for I/O or the deadline expires.
+  /// Uses ppoll() for nanosecond-resolution timeout.
+  bool       waitFdReady(short events, deadline_t deadline);
 
   // Low-level I/O — all I2C hardcoding lives here; do not modify unless
   // the underlying protocol framing changes.
-  size_t writeData(const uint8_t *data, size_t length,
-                   micros timeout = micros{1500});
-  size_t readData(uint8_t *buffer, size_t length,
-                  micros timeout = micros{2000});
+  size_t writeData(const uint8_t *data, size_t length, deadline_t deadline);
+  size_t readData(uint8_t *buffer, size_t length, deadline_t deadline);
 
   void closeI2C();
   bool isValidConfig() const noexcept;
@@ -199,7 +204,7 @@ inline bool Protocol_Handler_I2C::connect() {
     error_state = Error_State::INVALID_CONFIG;
     return false;
   }
-  i2c_fd = open(device.c_str(), O_RDWR);
+  i2c_fd = open(device.c_str(), O_RDWR | O_NONBLOCK);
   if (i2c_fd < 0) {
     error_state = Error_State::OPEN_FAILED;
     return false;
@@ -223,19 +228,19 @@ inline bool Protocol_Handler_I2C::addCommand(
   return false;
 }
 
-inline bool Protocol_Handler_I2C::sendQueue(micros timeout) {
+inline bool Protocol_Handler_I2C::sendQueue(micros timeout, micros timePerMsg) {
   if (!connected())
     return false;
 
+  const deadline_t dl = stdclock::now() + timeout;
   size_t bytes{0};
-  auto   deadline = stdclock::now() + timeout;
 
   size_t expectedsize{0};
   while (!sending.empty() &&
          (expectedsize = sending.front()->getPckSize() +
                          tuple_size(header{}) + tuple_size(tail{})) &&
-         bytes + expectedsize < 100 && stdclock::now() < deadline) {
-    auto sent = sendNext();
+         bytes + expectedsize < 100 && stdclock::now() + timePerMsg < dl) {
+    auto sent = sendNext(dl);
     if (sent != expectedsize) {
       return false;
     }
@@ -245,14 +250,15 @@ inline bool Protocol_Handler_I2C::sendQueue(micros timeout) {
   return true;
 }
 
-inline bool Protocol_Handler_I2C::readPending(micros timeout) {
+inline bool Protocol_Handler_I2C::readPending(micros timeout, micros timePerMsg) {
   if (!connected())
     return false;
 
+  const deadline_t dl = stdclock::now() + timeout;
   bool dispatched_any = false;
-  for (auto deadline = stdclock::now();
-       stdclock::now() < deadline + timeout;) {
-    auto res = readOneMessage();
+
+  while (stdclock::now() + timePerMsg < dl) {
+    auto res = readOneMessage(dl);
     if (res == ReadResult::OK_DISPATCHED) {
       RCLCPP_DEBUG(logger, "Message dispatched successfully");
       dispatched_any = true;
@@ -277,7 +283,7 @@ inline bool Protocol_Handler_I2C::readPending(micros timeout) {
   return dispatched_any;
 }
 
-inline bool Protocol_Handler_I2C::connected() const { return i2c_fd > 0; }
+inline bool Protocol_Handler_I2C::connected() const { return i2c_fd >= 0; }
 
 inline const std::string &Protocol_Handler_I2C::getDevice() const {
   return device;
@@ -285,7 +291,7 @@ inline const std::string &Protocol_Handler_I2C::getDevice() const {
 
 inline int Protocol_Handler_I2C::getSlaveAddress() const { return slave_addr; }
 
-inline size_t Protocol_Handler_I2C::sendNext() {
+inline size_t Protocol_Handler_I2C::sendNext(deadline_t deadline) {
   if (!connected() || sending.empty())
     return 0;
 
@@ -303,21 +309,21 @@ inline size_t Protocol_Handler_I2C::sendNext() {
       tail{}, calcCRC(buffer.data(), headerSize + size, 0));
   pack_tuple_to_buffer(tail_tuple, buffer.data() + headerSize + size);
 
-  auto sent = writeData(buffer.data(), buffer.size());
+  auto sent = writeData(buffer.data(), buffer.size(), deadline);
   if (sent == buffer.size()) {
     sending.pop();
   }
   return sent;
 }
 
-inline Protocol_Handler_I2C::ReadResult Protocol_Handler_I2C::readOneMessage() {
+inline Protocol_Handler_I2C::ReadResult Protocol_Handler_I2C::readOneMessage(deadline_t deadline) {
   if (!connected()) {
     RCLCPP_DEBUG(logger, "Not connected");
     return ReadResult::ERROR_IO;
   }
 
   header msg_head;
-  auto state = ReadHeader(msg_head);
+  auto state = ReadHeader(msg_head, deadline);
   if (state != ReadResult::OK_DISPATCHED) {
     return state;
   }
@@ -330,7 +336,7 @@ inline Protocol_Handler_I2C::ReadResult Protocol_Handler_I2C::readOneMessage() {
   // leaving out_buffer[0] uninitialised).
   std::vector<uint8_t> out_buffer(length + 1);
   {
-    auto num = readData(out_buffer.data(), length + 1);
+    auto num = readData(out_buffer.data(), length + 1, deadline);
     if (num != static_cast<size_t>(length + 1)) {
       error_state = Error_State::IO_ERROR;
       closeI2C();
@@ -372,44 +378,43 @@ inline uint8_t Protocol_Handler_I2C::getMsgCRC(const header &msg_head,
 }
 
 inline Protocol_Handler_I2C::ReadResult
-Protocol_Handler_I2C::ReadHeader(header &output) {
-  uint8_t first = 0x00;
-  if (!syncMessage(first)) {
-    return ReadResult::NO_SYNC;
-  }
-
-  if (first != 0xAA) {
-    return ReadResult::NO_SYNC;
-  }
-
-  uint8_t header_buf[sizeof(output)];
-  header_buf[0] = first;
-  auto num = readData(header_buf + 1, sizeof(header_buf) - 1);
-  if (num != (sizeof(header_buf) - 1)) {
-    error_state = Error_State::IO_ERROR;
-    closeI2C();
-    return ReadResult::ERROR_IO;
-  }
-
-  unpack_tuple_from_buffer(output, header_buf);
-
-  if (output == header{0xAA, 0x00, calcCRC({0xAA, 0x00}, 0)}) {
-    // "No message" sentinel — if it started in the last chunk there might
-    // still be a real message right after it.
-    if (internal_pos < tuple_size(header{})) {
-      return ReadHeader(output);
+Protocol_Handler_I2C::ReadHeader(header &output, deadline_t deadline) {
+  // "No message" sentinel loop: keep reading if the sentinel started in the
+  // previous chunk (meaning a real message might follow immediately).
+  // Bounded by MAX_NO_MESSAGE_RETRIES to prevent infinite looping if the MCU
+  // keeps sending sentinels (e.g. during a deadman stop).
+  constexpr int MAX_NO_MESSAGE_RETRIES = 4;
+  int retries = 0;
+  do {
+    uint8_t header_buf[sizeof(output)];
+    header_buf[0] = 0x00;
+    if (!syncMessage(header_buf[0], deadline) || header_buf[0] != 0xAA) {
+      return ReadResult::NO_SYNC;
     }
-    return ReadResult::NO_MESSAGE;
-  }
+    auto num = readData(header_buf + 1, sizeof(header_buf) - 1, deadline);
+    if (num != (sizeof(header_buf) - 1)) {
+      error_state = Error_State::IO_ERROR;
+      closeI2C();
+      return ReadResult::ERROR_IO;
+    }
+    unpack_tuple_from_buffer(output, header_buf);
+
+    if (internal_pos >= tuple_size(header{})) {
+      // Sentinel started and ended in the same chunk — genuinely no message.
+      return ReadResult::NO_MESSAGE;
+    }
+    if (++retries > MAX_NO_MESSAGE_RETRIES) {
+      return ReadResult::NO_MESSAGE;
+    }
+  } while (output == header{0xAA, 0x00, calcCRC({0xAA, 0x00}, 0)});
 
   return ReadResult::OK_DISPATCHED;
 }
 
-inline bool Protocol_Handler_I2C::syncMessage(uint8_t &first, micros time) {
-  auto deadline = stdclock::now() + time;
+inline bool Protocol_Handler_I2C::syncMessage(uint8_t &first, deadline_t deadline) {
   uint8_t byte;
   while (stdclock::now() < deadline) {
-    if (readData(&byte, 1, micros(1000)) != 1) {
+    if (readData(&byte, 1, deadline) != 1) {
       return false;
     }
     first = byte;
@@ -422,15 +427,30 @@ inline bool Protocol_Handler_I2C::syncMessage(uint8_t &first, micros time) {
 }
 
 inline size_t Protocol_Handler_I2C::writeData(const uint8_t *data,
-                                               size_t length, micros timeout) {
+                                               size_t length, deadline_t deadline) {
   if (!connected())
     return 0;
 
-  auto   deadline = stdclock::now() + timeout;
   size_t total{0};
 
   RCLCPP_DEBUG(logger, "Writing a message with %zu bytes", length);
   while (total < length) {
+    // Wait until the fd is ready to write, consuming only the remaining budget.
+    if (stdclock::now() >= deadline) {
+      RCLCPP_WARN(logger,
+                  "Send timeout (pre-poll) from device %s at address %d: "
+                  "expected %zu bytes, got %zu",
+                  device.c_str(), slave_addr, length, total);
+      break;
+    }
+    if (!waitFdReady(POLLOUT, deadline)) {
+      RCLCPP_WARN(logger,
+                  "Send poll timeout/error from device %s at address %d: "
+                  "expected %zu bytes, got %zu",
+                  device.c_str(), slave_addr, length, total);
+      break;
+    }
+
     size_t available = std::min(INTERNAL_SEND_SIZE, length - total);
 
     std::array<uint8_t, INTERNAL_SEND_SIZE> buf;
@@ -457,31 +477,38 @@ inline size_t Protocol_Handler_I2C::writeData(const uint8_t *data,
     }
 
     total += available;
-
-    if (stdclock::now() > deadline) {
-      RCLCPP_WARN(logger,
-                  "Send timeout from device %s at address %d: expected %zu "
-                  "bytes, got %zu",
-                  device.c_str(), slave_addr, length, total);
-      break;
-    }
   }
 
   return total;
 }
 
 inline size_t Protocol_Handler_I2C::readData(uint8_t *buffer, size_t length,
-                                              micros timeout) {
+                                              deadline_t deadline) {
   if (!connected() || !buffer || length == 0)
     return 0;
 
-  auto   deadline = stdclock::now() + timeout;
-  size_t total    = 0;
+  size_t total = 0;
 
   while (total < length) {
     // Refill internal buffer when exhausted
     if (internal_pos >= INTERNAL_BUF_SIZE) {
       RCLCPP_DEBUG(logger, "Reading new chunk...");
+
+      // Wait until the fd is ready to read, consuming only the remaining budget.
+      if (stdclock::now() >= deadline) {
+        RCLCPP_WARN(logger,
+                    "Read timeout (pre-poll) from device %s at address %d: "
+                    "expected %zu bytes, got %zu",
+                    device.c_str(), slave_addr, length, total);
+        break;
+      }
+      if (!waitFdReady(POLLIN, deadline)) {
+        RCLCPP_WARN(logger,
+                    "Read poll timeout/error from device %s at address %d: "
+                    "expected %zu bytes, got %zu",
+                    device.c_str(), slave_addr, length, total);
+        break;
+      }
 
       // Send "skip" message to advance microcontroller's TX pointer
       uint8_t skipmsg[4]{0xBB, 0xFF, INTERNAL_BUF_SIZE, 0x00};
@@ -518,17 +545,37 @@ inline size_t Protocol_Handler_I2C::readData(uint8_t *buffer, size_t length,
     std::memcpy(buffer + total, internal_buf + internal_pos, to_copy);
     internal_pos += to_copy;
     total        += to_copy;
-
-    if (stdclock::now() > deadline) {
-      RCLCPP_WARN(logger,
-                  "Read timeout from device %s at address %d: expected %zu "
-                  "bytes, got %zu",
-                  device.c_str(), slave_addr, length, total);
-      break;
-    }
   }
 
   return total;
+}
+
+inline bool Protocol_Handler_I2C::waitFdReady(short events, deadline_t deadline) {
+  struct pollfd pfd{};
+  pfd.fd     = i2c_fd;
+  pfd.events = events;
+
+  // Convert absolute deadline to a relative timespec for ppoll().
+  // ppoll() gives nanosecond-resolution timeout unlike poll()'s milliseconds,
+  // which matters when the remaining budget is in the low-microsecond range.
+  auto remaining_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+      deadline - stdclock::now());
+  if (remaining_ns.count() <= 0) {
+    return false;   // already expired — don't even call ppoll
+  }
+
+  struct timespec ts{};
+  ts.tv_sec  = remaining_ns.count() / 1'000'000'000LL;
+  ts.tv_nsec = remaining_ns.count() % 1'000'000'000LL;
+
+  int ret = ppoll(&pfd, 1, &ts, nullptr);
+  if (ret < 0) {
+    RCLCPP_DEBUG(logger, "ppoll error: %s", strerror(errno));
+    error_state = Error_State::IO_ERROR;
+    return false;
+  }
+  // ret == 0 means timeout expired with no events
+  return ret > 0 && (pfd.revents & events);
 }
 
 inline void Protocol_Handler_I2C::closeI2C() {
