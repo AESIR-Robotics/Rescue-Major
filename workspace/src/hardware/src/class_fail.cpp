@@ -1,4 +1,4 @@
-/* 
+/*/
 // Designed this for runtype buffer builders
 // Then remembered that messages are known at compile time making this unnecessary
 // I do not have the heart to delete it though
