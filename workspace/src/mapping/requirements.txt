@@ -1,0 +1,28 @@
+# Dependencias Python para el paquete mapping
+# Equipo Aesir - RoboCup Rescue 2026
+#
+# Instalación:
+#   pip install -r requirements.txt --break-system-packages
+#
+# En Jetson Orin Nano, algunas dependencias pueden requerir compilación.
+# Ver setup_mapping.sh para instalación completa.
+
+# ── Core ─────────────────────────────────────────────────────────────────────
+numpy>=1.24.0
+
+# ── Visión / YOLO ────────────────────────────────────────────────────────────
+ultralytics>=8.0.0          # YOLOv8
+opencv-python-headless>=4.8.0  # Sin GUI para Jetson/server
+
+# ── Procesamiento de nubes de puntos ─────────────────────────────────────────
+open3d>=0.17.0              # Para export_map_ply.py
+
+# ── Nota: Las siguientes son dependencias ROS 2, se instalan via apt ─────────
+# ros-humble-cv-bridge
+# ros-humble-message-filters
+# ros-humble-tf2-ros
+# ros-humble-tf2-geometry-msgs
+# ros-humble-vision-msgs
+# ros-humble-rtabmap-ros
+# ros-humble-depthai-ros
+# ros-humble-imu-filter-madgwick
