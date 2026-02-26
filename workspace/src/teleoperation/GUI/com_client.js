@@ -405,7 +405,10 @@ class InputHandler {
   const ACCELERATION_TIME = 0.5;  
   const MAX_VELOCITY = 100;
   const UPDATE_INTERVAL = 100;  // 100ms = 10Hz
-  const ACCELERATION_STEP = (MAX_VELOCITY / ACCELERATION_TIME) * (UPDATE_INTERVAL / 1000);  
+  const ACCELERATION_STEP = (MAX_VELOCITY / ACCELERATION_TIME) * (UPDATE_INTERVAL / 1000);
+  
+  // Variables para giro cerrado (bumpers B4 y B5)
+  let closedTurnState = { left: false, right: false };  // B4 = left, B5 = right  
   
   // Función para cambiar las 4 variables simultáneamente
   window.setMotorVars = function(values) {
@@ -542,23 +545,41 @@ class InputHandler {
     if (!inputHandler) return { x: 0, y: 0 };
     
     const { leftTrigger, rightTrigger } = inputHandler.readTriggers();
+    const { x: joystickX } = inputHandler.readJoystick();
     
-    // El gatillo derecho tiene prioridad si ambos están presionados
-    // o se puede hacer que se cancelen mutuamente
-    let targetX = 0;
-    let targetY = 0;
+    // Determinar velocidad base según gatillos
+    let baseVelocity = 0;
     
     if (rightTrigger > 0.1) {
       // Gatillo derecho: velocidad positiva
-      targetX = MAX_VELOCITY;
-      targetY = MAX_VELOCITY;
+      baseVelocity = MAX_VELOCITY;
     } else if (leftTrigger > 0.1) {
       // Gatillo izquierdo: velocidad negativa
-      targetX = -MAX_VELOCITY;
-      targetY = -MAX_VELOCITY;
+      baseVelocity = -MAX_VELOCITY;
     }
     
-    return { x: targetX, y: targetY };
+    if (baseVelocity === 0) {
+      return { x: 0, y: 0 };
+    }
+    
+    // direction  joystick X
+    // rigth (75%, 0%)
+    // leftizquierda (0%, 75%)
+    const absX = Math.abs(joystickX);
+    let multiplierX, multiplierY;
+    
+    if (joystickX >= 0) {
+      multiplierX = 1 - absX * 0.25;  
+      multiplierY = 1 - absX;         
+    } else {
+      multiplierX = 1 - absX;         
+      multiplierY = 1 - absX * 0.25;  
+    }
+    
+    return { 
+      x: baseVelocity * multiplierX, 
+      y: baseVelocity * multiplierY 
+    };
   }
 
   // Aplica aceleración gradual hacia la velocidad objetivo
@@ -573,19 +594,46 @@ class InputHandler {
     return current;
   }
 
+  function readBumperState() {
+    if (!inputHandler || inputHandler.gamepadIndex == null) return;
+    const gp = navigator.getGamepads()[inputHandler.gamepadIndex];
+    if (!gp || gp.buttons.length < 6) return;
+    
+    // Button 4 = Left Bumper (LB), Button 5 = Right Bumper (RB)
+    closedTurnState.left = gp.buttons[4]?.pressed || false;
+    closedTurnState.right = gp.buttons[5]?.pressed || false;
+  }
+
   function publishTriggerVelocities() {
     if (!motorTopic || !inputHandler) return;
+    
+    // Leer estado de bumpers para giro cerrado
+    readBumperState();
     
     // Obtener velocidad objetivo basada en gatillos
     const target = getTargetVelocityFromTriggers();
     
+    // Aplicar aceleración gradual
     currentVelocity.x = applyAcceleration(currentVelocity.x, target.x);
     currentVelocity.y = applyAcceleration(currentVelocity.y, target.y);
     
+    // Velocidades finales a enviar
+    let finalX = Math.round(currentVelocity.x);
+    let finalY = Math.round(currentVelocity.y);
+    
+    // Override con giro cerrado si los bumpers están presionados
+    if (closedTurnState.left) {
+      finalX = -MAX_VELOCITY;
+      finalY = MAX_VELOCITY;
+    } else if (closedTurnState.right) {
+      finalX = MAX_VELOCITY;
+      finalY = -MAX_VELOCITY;
+    }
+    
     // Formato: "vx,vy,a,b,c,d" - velocidades de -100 a 100
     const dataString = [
-      Math.round(currentVelocity.x),
-      Math.round(currentVelocity.y),
+      finalX,
+      finalY,
       motorVars.a,
       motorVars.b,
       motorVars.c,
