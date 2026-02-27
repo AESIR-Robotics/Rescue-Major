@@ -318,7 +318,6 @@ inline size_t Protocol_Handler_I2C::sendNext(deadline_t deadline) {
 
 inline Protocol_Handler_I2C::ReadResult Protocol_Handler_I2C::readOneMessage(deadline_t deadline) {
   if (!connected()) {
-    RCLCPP_DEBUG(logger, "Not connected");
     return ReadResult::ERROR_IO;
   }
 
@@ -335,28 +334,27 @@ inline Protocol_Handler_I2C::ReadResult Protocol_Handler_I2C::readOneMessage(dea
   // even when length == 0 (original skipped readData for length==0,
   // leaving out_buffer[0] uninitialised).
   std::vector<uint8_t> out_buffer(length + 1);
-  {
-    auto num = readData(out_buffer.data(), length + 1, deadline);
-    if (num != static_cast<size_t>(length + 1)) {
-      error_state = Error_State::IO_ERROR;
-      closeI2C();
-      return ReadResult::ERROR_IO;
-    }
-    if (length > 0) {
-      RCLCPP_DEBUG(logger,
-                   "Payload read for instruction 0x%02X: first 4 bytes "
-                   "0x%02X 0x%02X 0x%02X 0x%02X",
-                   inst, out_buffer[0],
-                   out_buffer.size() > 1 ? out_buffer[1] : 0,
-                   out_buffer.size() > 2 ? out_buffer[2] : 0,
-                   out_buffer.size() > 3 ? out_buffer[3] : 0);
-    }
+  
+  auto num = readData(out_buffer.data(), length + 1, deadline);
+  if (num != static_cast<size_t>(length + 1)) {
+    error_state = Error_State::IO_ERROR;
+    closeI2C();
+    return ReadResult::ERROR_IO;
   }
+  /*/if (length > 0) {
+    RCLCPP_DEBUG(logger,
+                 "Payload read for instruction 0x%02X: first 4 bytes "
+                 "0x%02X 0x%02X 0x%02X 0x%02X",
+                 inst, out_buffer[0],
+                 out_buffer.size() > 1 ? out_buffer[1] : 0,
+                 out_buffer.size() > 2 ? out_buffer[2] : 0,
+                 out_buffer.size() > 3 ? out_buffer[3] : 0);
+  }//*/
 
   uint8_t recv_crc       = out_buffer[length];
   auto    calculated_crc = getMsgCRC(msg_head, out_buffer.data(), length);
 
-  RCLCPP_DEBUG(logger, "Received CRC: 0x%02X", recv_crc);
+  RCLCPP_DEBUG(logger, "Received and Calculated CRCs: 0x%02X, 0x%02X", recv_crc, calculated_crc);
 
   if (recv_crc != calculated_crc) {
     return ReadResult::CRC_MISMATCH;
@@ -399,13 +397,16 @@ Protocol_Handler_I2C::ReadHeader(header &output, deadline_t deadline) {
     }
     unpack_tuple_from_buffer(output, header_buf);
 
-    if (internal_pos >= tuple_size(header{})) {
-      // Sentinel started and ended in the same chunk — genuinely no message.
-      return ReadResult::NO_MESSAGE;
+    if(output == header{0xAA, 0x00, calcCRC({0xAA, 0x00}, 0)}){
+      if (internal_pos >= tuple_size(header{})) {
+        // Sentinel started and ended in the same chunk — genuinely no message.
+        return ReadResult::NO_MESSAGE;
+      }
+      if (++retries > MAX_NO_MESSAGE_RETRIES) {
+        return ReadResult::NO_MESSAGE;
+      }
     }
-    if (++retries > MAX_NO_MESSAGE_RETRIES) {
-      return ReadResult::NO_MESSAGE;
-    }
+
   } while (output == header{0xAA, 0x00, calcCRC({0xAA, 0x00}, 0)});
 
   return ReadResult::OK_DISPATCHED;
@@ -492,7 +493,7 @@ inline size_t Protocol_Handler_I2C::readData(uint8_t *buffer, size_t length,
   while (total < length) {
     // Refill internal buffer when exhausted
     if (internal_pos >= INTERNAL_BUF_SIZE) {
-      RCLCPP_DEBUG(logger, "Reading new chunk...");
+      //RCLCPP_DEBUG(logger, "Reading new chunk...");
 
       // Wait until the fd is ready to read, consuming only the remaining budget.
       if (stdclock::now() >= deadline) {
