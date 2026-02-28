@@ -354,14 +354,14 @@ inline Protocol_Handler_I2C::ReadResult Protocol_Handler_I2C::readOneMessage(dea
   uint8_t recv_crc       = out_buffer[length];
   auto    calculated_crc = getMsgCRC(msg_head, out_buffer.data(), length);
 
-  RCLCPP_DEBUG(logger, "Received and Calculated CRCs: 0x%02X, 0x%02X", recv_crc, calculated_crc);
+  //RCLCPP_DEBUG(logger, "Received and Calculated CRCs: 0x%02X, 0x%02X", recv_crc, calculated_crc);
 
   if (recv_crc != calculated_crc) {
     return ReadResult::CRC_MISMATCH;
   }
 
-  RCLCPP_DEBUG(logger, "Received instruction 0x%02X with payload size %d",
-               inst, length);
+  /*RCLCPP_DEBUG(logger, "Received instruction 0x%02X with payload size %d",
+               inst, length);*/
   dispatchInput(inst, out_buffer.data(), length);
   return ReadResult::OK_DISPATCHED;
 }

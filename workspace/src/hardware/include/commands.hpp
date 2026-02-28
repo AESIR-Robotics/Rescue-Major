@@ -38,32 +38,41 @@ namespace CommandsNC {
 // --- WriteCommandsNC --------------------------------------------------------
 namespace WriteCommandsNC {
 
-enum WriteCommand : uint8_t { DIRECTION = 0x00, SPEED = 0x01, POSITION = 0x02 };
+enum WriteCommand : uint8_t { BYTELOSS = 0X00, SPEED = 0x01, POSITION = 0x02, ACCEL = 0x03, DCVEL = 0x04, DCACCEL = 0x05 };
 
-template <WriteCommand CMD> struct packetSend  { using type = void; };
+template <WriteCommand CMD> struct packetSend   { using type = void; };
 template <WriteCommand CMD> struct packetReturn { using type = void; };
 
-template <> struct packetSend<DIRECTION>  { using type = std::tuple<uint8_t, bool>;    }; // motor mask, direction
-template <> struct packetReturn<DIRECTION>{ using type = std::tuple<>;                  };
+template <> struct packetSend<BYTELOSS>      { using type = std::tuple<>;   }; 
+template <> struct packetReturn<BYTELOSS>    { using type = std::tuple<>;   };
 
-template <> struct packetSend<SPEED>      { using type = std::tuple<uint8_t, float>;   }; // motor mask, speed
+template <> struct packetSend<SPEED>      { using type = std::tuple<uint8_t, float>;    }; // motor mask, speed
 template <> struct packetReturn<SPEED>    { using type = std::tuple<>;                  };
 
-template <> struct packetSend<POSITION>   { using type = std::tuple<uint8_t, int32_t>; }; // motor mask, position
+template <> struct packetSend<POSITION>   { using type = std::tuple<uint8_t, int32_t>;  }; // motor mask, position
 template <> struct packetReturn<POSITION> { using type = std::tuple<>;                  };
+
+template <> struct packetSend<ACCEL>   { using type = std::tuple<uint8_t, int32_t>;  }; // motor mask, position
+template <> struct packetReturn<ACCEL> { using type = std::tuple<>;                  };
+
+template <> struct packetSend<DCVEL>    { using type = std::tuple<float, float>; };
+template <> struct packetReturn<DCVEL>  { using type = std::tuple<>; };
+
+template <> struct packetSend<DCACCEL>    { using type = std::tuple<float, float>; };
+template <> struct packetReturn<DCACCEL>  { using type = std::tuple<>; };
 
 } // namespace WriteCommandsNC
 
 // --- ReadCommandsNC ---------------------------------------------------------
 namespace ReadCommandsNC {
 
-enum ReadCommand : uint8_t { DIRECTION = 0x00, SPEED = 0x01, POSITION = 0x02 };
+enum ReadCommand : uint8_t { BYTELOSS = 0X00, SPEED = 0x01, POSITION = 0x02, ACCEL = 0x03, DCVEL = 0x04, DCACCEL = 0x05  };
 
 template <ReadCommand CMD> struct packetSend  { using type = void; };
 template <ReadCommand CMD> struct packetReturn { using type = void; };
 
-template <> struct packetSend<DIRECTION>  { using type = std::tuple<>; };
-template <> struct packetReturn<DIRECTION>{ using type = std::tuple<bool, bool, bool, bool>; }; // direction per motor
+template <> struct packetSend<BYTELOSS>      { using type = std::tuple<>;   }; 
+template <> struct packetReturn<BYTELOSS>    { using type = std::tuple<uint32_t>;   }; // Amount of bytes lost
 
 template <> struct packetSend<SPEED>      { using type = std::tuple<>; };
 template <> struct packetReturn<SPEED>    { using type = std::tuple<float, float, float, float>; }; // speed per motor
@@ -72,6 +81,15 @@ template <> struct packetSend<POSITION>   { using type = std::tuple<>; };
 template <> struct packetReturn<POSITION> {
   using type = std::tuple<int32_t, int32_t, int32_t, int32_t>; // position per motor
 };
+
+template <> struct packetSend<ACCEL>   { using type = std::tuple<>;  }; // motor mask, position
+template <> struct packetReturn<ACCEL> { using type = std::tuple<int32_t, int32_t, int32_t, int32_t>; };
+
+template <> struct packetSend<DCVEL>    { using type = std::tuple<>; };
+template <> struct packetReturn<DCVEL>  { using type = std::tuple<float, float>; };
+
+template <> struct packetSend<DCACCEL>    { using type = std::tuple<>; };
+template <> struct packetReturn<DCACCEL>  { using type = std::tuple<float, float>; };
 
 } // namespace ReadCommandsNC
 

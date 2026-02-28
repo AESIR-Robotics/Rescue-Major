@@ -5,6 +5,7 @@
 #include <cstring>
 #include <tuple>
 #include <type_traits>
+#include <mutex>
 //#include <utility>
 
 // ---------------------------------------------------------------------------
@@ -176,3 +177,22 @@ struct tuple_push_front<std::tuple<Ts...>, NewType> {
 
 template <typename Tuple, typename NewType>
 using tuple_push_front_t = typename tuple_push_front<Tuple, NewType>::type;
+
+template <typename T>
+struct Guarded {  
+  template <typename F>
+  auto with(F &&fn) {
+      std::lock_guard<std::mutex> lock{mtx};
+      return fn(data);
+  }
+
+  T snapshot() const {
+      std::lock_guard<std::mutex> lock{mtx};
+      return data;
+  }
+  
+  private:
+
+  T data;
+  mutable std::mutex mtx;
+};

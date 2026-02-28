@@ -93,6 +93,7 @@ class JointKeyboardTeleop(Node):
         self.joints_    = list(joint_names_)
         self.positions_ = [0.0] * len(self.joints_)
         self.velocities_= [self.speed_] * len(self.joints_)
+        self.accelerations_ = [20000] * len(self.joints_)
         self.efforts_   = [0.0] * len(self.joints_)
 
         self.key_map_   = {}   # key -> (joint_idx, delta)
@@ -231,6 +232,7 @@ class JointKeyboardTeleop(Node):
         msg.joint_names     = list(self.joints_)
         msg.position        = list(self.positions_)
         msg.velocity        = list(self.velocities_)
+        msg.acceleration    = list(self.accelerations_)
         msg.effort          = list(self.efforts_)
         return msg
 
