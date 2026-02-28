@@ -100,13 +100,13 @@ struct StepperState {
 struct DCState {
   double linear{0.0};   // m/s
   double angular{0.0};  // rad/s
-  std::bitset<2> updated{};
+  std::bitset<1> updated{};
 
   void setLinear(double v)  { if (linear  != v) { linear  = v; updated.set(0); } }
-  void setAngular(double w) { if (angular != w) { angular = w; updated.set(1); } }
+  void setAngular(double w) { if (angular != w) { angular = w; updated.set(0); } }
 
   bool anyUpdated() const { return updated.any(); }
-  void clearUpdated(std::bitset<2> mask) { updated &= ~mask; }
+  void clearUpdated(std::bitset<1> mask) { updated &= ~mask; }
   void markAllUpdated() { updated.set(); }
 };
 
@@ -155,7 +155,7 @@ private:
   int steps_per_revolution{40000};
   static constexpr int steppers{4};
 
-  double track_width_m{0.5};    ///< Distance between wheels [m]
+  double track_width_m{1.25};    ///< Distance between wheels [m]
   double velocity_scale{1.0};   ///< (m/s or rad/s) → percent on MCU
 
   std::vector<std::string> joint_names{"flipper_0", "flipper_1", "flipper_2", "flipper_3"};
@@ -209,7 +209,7 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
   this->declare_parameter<int>("flipper_revolution", 40000);
   this->declare_parameter<std::vector<std::string>>(
       "joint_names", {"flipper_0", "flipper_1", "flipper_2", "flipper_3"});
-  this->declare_parameter<double>("track_width_m", 0.5);
+  this->declare_parameter<double>("track_width_m", 1.5);
   this->declare_parameter<double>("velocity_scale", 1.0);
 
   std::string i2c_port_;
@@ -362,11 +362,13 @@ inline std::pair<float, float> HardwareDriverNode::twistToMotorPct(
   double right  = (linear + angular * half_w) * velocity_scale;
   double left   = (linear - angular * half_w) * velocity_scale;
 
-  // Change this to resize both vectors not just clamp them
-  auto clamp = [](double v) -> float {
-    return static_cast<float>(std::max(-100.0, std::min(100.0, v)));
-  };
-  return {clamp(left), clamp(right)};
+  float mult = 1.0;
+  float maxVel = std::max(std::fabs(right), std::fabs(left));
+  if(maxVel > 70.0){
+    mult = 70.0 / maxVel;
+  }
+
+  return {left * mult, right * mult};
 }
 
 // -----------------------------------------------------------------------------
