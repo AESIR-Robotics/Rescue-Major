@@ -8,7 +8,7 @@ SOURCE_VENV_DIR="../.venv/bin/activate"
 if [ -n "${BASH_SOURCE[0]:-}" ]; then
 	SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 else
-	SCRIPT_DIR="$(cd "$(dirnaS instme "$0")" && pwd)"
+	SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 fi
 
 echo "launch.bash: ROS_UBUNTU_VERSION='${ROS_UBUNTU_VERSION:-}'"
@@ -51,15 +51,32 @@ session_name="test_move_$(date +%s)"
 tmux new-session -d -s "$session_name" -n main "$ENV_CMD"
 tmux set-option -t "$session_name" default-command "$ENV_CMD"
 
-# Splits
+# Splits: 3 panes
+# Layout:
+# ┌──────────┬──────────┐
+# │    0     │    1     │
+# ├──────────┴──────────┤
+# │    2     │    3     │
+# └──────────┴──────────┘
 tmux split-window -h
-tmux select-pane -t 1
+tmux select-pane -t 0
+tmux split-window -v
+tmux select-pane -t 2
 tmux split-window -v
 
 # Comandos
+# Pane 0: Joint teleop (top left)
 tmux send-keys -t 0 "ros2 run hardware joint_mux.py" Enter
-tmux send-keys -t 1 "ros2 topic echo /hardware_node/joint_states" Enter
 
+# Pane 1: Differential robot teleop (top right)
+# Using teleop_twist_keyboard package with custom topic
+tmux send-keys -t 1 "ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -r cmd_vel:=hardware_node/cmd_vel" Enter
+
+# Pane 2: Monitor joint states (bottom left)
+tmux send-keys -t 2 "ros2 topic echo /hardware_node/joint_states" Enter
+
+# Pane 3: Monitor velocity states (bottom right)
+tmux send-keys -t 3 "ros2 topic echo /hardware_node/state_vel" Enter
 
 sleep 3
 
