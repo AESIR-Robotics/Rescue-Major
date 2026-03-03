@@ -273,7 +273,7 @@ inline bool Protocol_Handler_I2C::readPending(micros timeout, micros timePerMsg)
       break;
     }
     if (res == ReadResult::CRC_MISMATCH) {
-      RCLCPP_WARN(logger, "CRC mismatch for received message, dropping it");
+      //RCLCPP_WARN(logger, "CRC mismatch for received message, dropping it");
       continue;
     }
     RCLCPP_ERROR(logger, "I/O error occurred while reading message");
@@ -357,6 +357,7 @@ inline Protocol_Handler_I2C::ReadResult Protocol_Handler_I2C::readOneMessage(dea
   //RCLCPP_DEBUG(logger, "Received and Calculated CRCs: 0x%02X, 0x%02X", recv_crc, calculated_crc);
 
   if (recv_crc != calculated_crc) {
+    RCLCPP_WARN(logger, "CRC mismatch: Inst, Size, ReadCRC n CalcCRC: 0x%02X, %03i, 0x%02X, 0x%02X", inst, length, recv_crc, calculated_crc);
     return ReadResult::CRC_MISMATCH;
   }
 

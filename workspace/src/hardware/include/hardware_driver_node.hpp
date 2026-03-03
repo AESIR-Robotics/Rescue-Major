@@ -194,12 +194,6 @@ private:
 };
 
 // =============================================================================
-// Templates
-// =============================================================================
-
-// (none — HardwareDriverNode is not a template class)
-
-// =============================================================================
 // Inline definitions
 // =============================================================================
 
@@ -209,8 +203,8 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
   this->declare_parameter<int>("flipper_revolution", 40000);
   this->declare_parameter<std::vector<std::string>>(
       "joint_names", {"flipper_0", "flipper_1", "flipper_2", "flipper_3"});
-  this->declare_parameter<double>("track_width_m", 1.5);
-  this->declare_parameter<double>("velocity_scale", 1.0);
+  this->declare_parameter<double>("track_width_m", 1.1);
+  this->declare_parameter<double>("velocity_scale", 70.0);
 
   std::string i2c_port_;
   int slave_addr_{};
@@ -310,7 +304,7 @@ inline void HardwareDriverNode::enqueueJointInfo(const StepperState<4> &snap) {
   if (snap.updatedPosition()) {
     std::unordered_map<int32_t, uint8_t> groups;
     for (int i = 0; i < steppers; ++i) {
-      int32_t key = static_cast<int32_t>(
+      int32_t key = snap.position[i] < 0 ? -1 : static_cast<int32_t>(
           radToSteps(snap.position[i]) % steps_per_revolution);
       groups[key] |= static_cast<uint8_t>(1u << i);
     }

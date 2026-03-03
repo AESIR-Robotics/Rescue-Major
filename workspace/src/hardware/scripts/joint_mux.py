@@ -50,8 +50,8 @@ DEFAULT_JOINT_KEYS = {
 QUIT_KEYS = ('\x03', '\x1b')   # Ctrl+C, Escape
 RESET_KEY = 'z'
 ZERO_VEL_EFFORT_KEY = 'x'     # zero out velocity and effort fields
-VEL_UP_KEY = '\x1b[A'         # Up arrow
-VEL_DOWN_KEY = '\x1b[B'       # Down arrow
+VEL_UP_KEY = '+'         # Up arrow
+VEL_DOWN_KEY = '-'       # Down arrow
 VEL_MODE_KEY = 'v'            # Toggle velocity mode
 
 
@@ -79,7 +79,6 @@ class JointKeyboardTeleop(Node):
         # ── Parameters ──────────────────────────────────────────────────────
         self.declare_parameter('topic',       'hardware_node/joint_command')
         self.declare_parameter('step',        0.1)       # position step per keypress (rad / m)
-        self.declare_parameter('speed',       0.5)
         self.declare_parameter('speed_step',  0.1)       # velocity adjustment step
         self.declare_parameter('min_speed',   0.0)
         self.declare_parameter('max_speed',   2.0)
@@ -88,12 +87,12 @@ class JointKeyboardTeleop(Node):
 
         self.topic_       = self.get_parameter('topic').value
         self.step_        = self.get_parameter('step').value
-        self.speed_       = self.get_parameter('speed').value
         self.speed_step_  = self.get_parameter('speed_step').value
         self.min_speed_   = self.get_parameter('min_speed').value
         self.max_speed_   = self.get_parameter('max_speed').value
         self.frame_id_    = self.get_parameter('frame_id').value
         joint_names_      = self.get_parameter('joint_names').value
+        self.speed_       = 0.1
 
         # ── Velocity control state ──────────────────────────────────────────
         self.velocity_mode_ = 'constant'  # 'constant' or 'hold'
@@ -160,15 +159,7 @@ class JointKeyboardTeleop(Node):
                 else:
                     self.get_logger().warn(f'Invalid step {param.value}, must be > 0')
                     result_success = False
-                    
-            elif param.name == 'speed':
-                if param.value >= 0.0:
-                    self.speed_ = max(self.min_speed_, min(self.max_speed_, param.value))
-                    self.get_logger().info(f'Speed changed to {self.speed_:.4f} rad/s')
-                else:
-                    self.get_logger().warn(f'Invalid speed {param.value}, must be >= 0')
-                    result_success = False
-                    
+
             elif param.name == 'joint_names':
                 # Rebuild joint structure
                 old_joints = self.joints_
@@ -342,73 +333,65 @@ class JointKeyboardTeleop(Node):
                     self.pub_.publish(self._build_msg())
 
                 elif key == VEL_UP_KEY:
-                    # Increase global velocity
                     self.speed_ = min(self.max_speed_, self.speed_ + self.speed_step_)
                     self.last_key_ = '↑'
-                    # Update active joints to new speed
-                    for idx in self.active_joints_:
-                        direction = 1 if self.velocities_[idx] > 0 else -1
-                        self.velocities_[idx] = direction * self.speed_
 
                 elif key == VEL_DOWN_KEY:
-                    # Decrease global velocity
                     self.speed_ = max(self.min_speed_, self.speed_ - self.speed_step_)
                     self.last_key_ = '↓'
-                    # Update active joints to new speed
-                    for idx in self.active_joints_:
-                        direction = 1 if self.velocities_[idx] > 0 else -1
-                        self.velocities_[idx] = direction * self.speed_
 
                 elif key == VEL_MODE_KEY:
                     # Toggle velocity mode
                     self.velocity_mode_ = 'hold' if self.velocity_mode_ == 'constant' else 'constant'
                     self.last_key_ = key
+
                     if self.velocity_mode_ == 'hold':
-                        # In hold mode, stop all joints not being pressed
-                        for idx in range(len(self.joints_)):
-                            if idx not in self.active_joints_:
-                                self.velocities_[idx] = 0.0
+                        # Mandar todas las posiciones a -1
+                        self.positions_ = [-1.0] * len(self.joints_)
+                    else:
+                        # Restaurar posiciones válidas
+                        self.positions_ = [0.0] * len(self.joints_)
+                        self.velocities_ = [0.0] * len(self.joints_)
+                        self.active_joints_.clear()
+
+                    self.pub_.publish(self._build_msg())
 
                 elif key in self.key_map_:
                     idx, direction = self.key_map_[key]
-                    
-                    # Update position
-                    new_pos = self.positions_[idx] + direction * self.step_
-                    self.positions_[idx] = new_pos % (2 * math.pi)
-                    
-                    # Update velocity based on mode
+
                     if self.velocity_mode_ == 'constant':
+                        # Modo normal (posición incremental)
+                        new_pos = self.positions_[idx] + direction * self.step_
+                        self.positions_[idx] = new_pos % (2 * math.pi)
                         self.velocities_[idx] = direction * self.speed_
                         self.active_joints_.add(idx)
-                    else:  # hold mode
-                        self.velocities_[idx] = direction * self.speed_
-                        self.active_joints_.add(idx)
-                    
+
+                    else:  # HOLD MODE
+                        current_vel = self.velocities_[idx]
+
+                        # Si ya se mueve en dirección opuesta → detener
+                        if current_vel * direction < 0:
+                            self.velocities_[idx] = 0.0
+                            if idx in self.active_joints_:
+                                self.active_joints_.remove(idx)
+
+                        else:
+                            # Aplicar velocidad en dirección indicada
+                            self.velocities_[idx] = direction * self.speed_
+                            self.active_joints_.add(idx)
+
                     self.last_key_ = key
                     self.pub_.publish(self._build_msg())
 
                 elif key:
-                    self.last_key_ = key   # show unknown key in HUD
-
-                # In hold mode, check if we need to stop joints
-                if self.velocity_mode_ == 'hold':
-                    # Clear active joints set each cycle (will be repopulated by keypresses)
-                    if not key or key not in self.key_map_:
-                        # No joint key pressed, stop all
-                        for idx in range(len(self.joints_)):
-                            self.velocities_[idx] = 0.0
-                        self.active_joints_.clear()
-                        if key:  # Publish stop command
-                            self.pub_.publish(self._build_msg())
+                    self.last_key_ = key
 
                 self._render_hud()
                 rclpy.spin_once(self, timeout_sec=0.0)
 
         finally:
-            # Always restore terminal, even on crash
             termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self.settings_)
             print('\n\n' + clr(YELLOW, 'Terminal restored. Bye!') + '\n')
-
 
 
 def main(args=None):
