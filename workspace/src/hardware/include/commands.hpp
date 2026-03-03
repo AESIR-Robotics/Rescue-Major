@@ -2,7 +2,12 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <string>
+#include <sstream>
 #include <tuple>
+#include <iomanip>
+#include <array>
 
 #include "tuple_utils.hpp"
 
@@ -134,9 +139,10 @@ template <ReadCommandsNC::ReadCommand ID> struct CmdInter<ID> {
 // Command: polymorphic base
 struct Command {
   virtual void    pack(uint8_t *buffer) { (void)buffer; }
-  virtual size_t  getPckSize()          { return 0; }
-  virtual uint8_t getInst()             { return 0; }
-  virtual uint8_t getID()               { return 0; }
+  virtual std::string info()            { return ""; }
+  virtual size_t  getPckSize()          { return 0;  }
+  virtual uint8_t getInst()             { return 0;  }
+  virtual uint8_t getID()               { return 0;  }
   virtual bool    hasID()               { return false; }
   virtual ~Command() = default;
 };
@@ -145,19 +151,77 @@ struct Command {
 template <typename T> struct GeneralInstruction : Command {
   using packet = typename T::sending;
 
-  packet info;
+  packet content;
   constexpr static size_t  size = tuple_size(packet{});
   constexpr static uint8_t id   = T::id;
 
-  GeneralInstruction(packet in = packet{}) : info{in} {}
+  GeneralInstruction(packet in = packet{}) : content{in} {}
 
   void pack(uint8_t *buffer) override {
     if constexpr (T::hasID) {
       buffer[0] = static_cast<uint8_t>(id);
-      pack_tuple_to_buffer(info, buffer + 1);
+      pack_tuple_to_buffer(content, buffer + 1);
     } else {
-      pack_tuple_to_buffer(info, buffer);
+      pack_tuple_to_buffer(content, buffer);
     }
+  }
+
+  std::string info() override{
+    std::ostringstream oss;
+    oss << "Size: " << getPckSize() << " | ";
+
+    if constexpr (T::hasID) {
+        oss << "ID: " << static_cast<int>(id) << " | ";
+    }
+
+    oss << "Packet: (";
+
+    std::apply([&oss](auto&&... args) {
+      size_t n = 0;
+
+      auto print_arg = [&oss](auto&& value) {
+          using U = std::decay_t<decltype(value)>;
+
+          if constexpr (std::is_same_v<U, uint8_t> ||
+                        std::is_same_v<U, int8_t>  ||
+                        std::is_same_v<U, unsigned char> ||
+                        std::is_same_v<U, signed char>) {
+              oss << static_cast<int>(value);
+          } else {
+              oss << value;
+          }
+      };
+      
+      (void)print_arg;
+
+      ((print_arg(args),
+        oss << (++n < sizeof...(args) ? ", " : "")), ...);
+
+    }, content);
+    
+    constexpr auto totalSize = T::hasID ? size + 1 : size;
+    std::array<uint8_t, totalSize> buffer;
+    pack(buffer.data());
+
+    oss << " | Raw: [";
+
+    for (size_t i = 0; i < totalSize; ++i) {
+        oss << "0x"
+            << std::hex
+            << std::uppercase
+            << std::setw(2)
+            << std::setfill('0')
+            << static_cast<int>(buffer[i]);
+
+        if (i + 1 < totalSize)
+          oss << " ";
+    }
+
+    oss << "]";
+
+    return oss.str();
+
+    return oss.str();
   }
 
   size_t  getPckSize() override { return T::hasID ? size + 1 : size; }

@@ -8,8 +8,10 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <rclcpp/logging.hpp>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include <rclcpp/rclcpp.hpp>
@@ -322,8 +324,11 @@ inline void HardwareDriverNode::enqueueJointInfo(const StepperState<4> &snap) {
       groups[key] |= static_cast<uint8_t>(1u << i);
       values.insert_or_assign(key, val);
     }
-    for (auto &[key, mask] : groups)
-      stepper_micro.addCommand(std::make_unique<speedW>(speedW::packet{mask, values[key]}));
+    for (auto &[key, mask] : groups){
+      auto cmand = std::make_unique<speedW>(speedW::packet{mask, values[key]});
+      //RCLCPP_INFO(this->get_logger(), cmand->info().c_str());
+      stepper_micro.addCommand(std::move(cmand));
+    }
   }
 
   // Acceleration
@@ -346,7 +351,9 @@ inline void HardwareDriverNode::enqueueDCInfo(const DCState &snap) {
   if (!snap.anyUpdated()) return;
   using dcvelW = WriteInst<WriteCommandsNC::DCVEL>;
   auto [left_pct, right_pct] = twistToMotorPct(snap.linear, snap.angular);
-  stepper_micro.addCommand(std::make_unique<dcvelW>(dcvelW::packet{left_pct, right_pct}));
+  auto cmand = std::make_unique<dcvelW>(dcvelW::packet{left_pct, right_pct});
+  stepper_micro.addCommand(std::move(cmand));
+  
 }
 
 // -----------------------------------------------------------------------------

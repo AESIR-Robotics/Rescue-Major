@@ -1,402 +1,347 @@
 #!/usr/bin/env python3
-"""
-Keyboard teleoperation node for JointControl messages.
-Works over SSH / headless terminals using termios raw mode.
+"""Dual-mode keyboard teleoperation: Joint Control + Twist Control"""
 
-Keybindings (configurable via ROS2 params):
-  Each joint gets two keys: one to increment, one to decrement.
-  Joints are shown in the live HUD rendered in the terminal.
-  
-Velocity control:
-  ↑ / ↓ : Increase / Decrease global velocity
-  v     : Toggle velocity mode (constant / zero on release)
-
-Usage:
-  ros2 run <your_pkg> joint_mux.py
-  ros2 run <your_pkg> joint_mux.py --ros-args -p step:=0.05 -p topic:=/joint_cmd
-"""
-
-import sys
-import os
-import select
-import termios
-import tty
-import math
+import sys, select, termios, tty, math, time
+from abc import ABC, abstractmethod
 import rclpy
 from rclpy.node import Node
-from rclpy.parameter import Parameter
 from std_msgs.msg import Header
-from builtin_interfaces.msg import Time
-from rclpy.parameter import Parameter
-from rcl_interfaces.msg import SetParametersResult
+from geometry_msgs.msg import Twist
+from hardware.msg import JointControl
 
+# Terminal codes
+CLEAR, BOLD, DIM = '\033[2J\033[H', '\033[1m', '\033[2m'
+GREEN, CYAN, YELLOW, RED, MAGENTA = '\033[92m', '\033[96m', '\033[93m', '\033[91m', '\033[95m'
+RESET_CLR, MOVE_TOP = '\033[0m', '\033[H'
+def clr(c, t): return f'{c}{t}{RESET_CLR}'
 
-from hardware.msg import JointControl  
-
-
-# ── Default joint configuration ───────────────────────────────────────────────
-# Format: { 'joint_name': ('inc_key', 'dec_key') }
-# Add or remove joints as needed.
-DEFAULT_JOINT_KEYS = {
-    'flipper_0': ('q', 'a'),
-    'flipper_1': ('w', 's'),
-    'flipper_2': ('e', 'd'),
-    'flipper_3': ('r', 'f'),
-    'flipper_4': ('t', 'g'),
-    'flipper_5': ('y', 'h'),
-}
-
-# Keys that are always active
-QUIT_KEYS = ('\x03', '\x1b')   # Ctrl+C, Escape
-RESET_KEY = 'z'
-ZERO_VEL_EFFORT_KEY = 'x'     # zero out velocity and effort fields
-VEL_UP_KEY = '+'         # Up arrow
-VEL_DOWN_KEY = '-'       # Down arrow
-VEL_MODE_KEY = 'v'            # Toggle velocity mode
-
-
-CLEAR      = '\033[2J\033[H'
-BOLD       = '\033[1m'
-DIM        = '\033[2m'
-GREEN      = '\033[92m'
-CYAN       = '\033[96m'
-YELLOW     = '\033[93m'
-RED        = '\033[91m'
-RESET_CLR  = '\033[0m'
-MOVE_TOP   = '\033[H'
-
-
-def clr(code, text):
-    return f'{code}{text}{RESET_CLR}'
-
-
-# ── Node ──────────────────────────────────────────────────────────────────────
-class JointKeyboardTeleop(Node):
-
+class KeyboardReader:
     def __init__(self):
-        super().__init__('joint_keyboard_teleop')
-
-        # ── Parameters ──────────────────────────────────────────────────────
-        self.declare_parameter('topic',       'hardware_node/joint_command')
-        self.declare_parameter('step',        0.1)       # position step per keypress (rad / m)
-        self.declare_parameter('speed_step',  0.1)       # velocity adjustment step
-        self.declare_parameter('min_speed',   0.0)
-        self.declare_parameter('max_speed',   2.0)
-        self.declare_parameter('joint_names', list(DEFAULT_JOINT_KEYS.keys()))
-        self.declare_parameter('frame_id',    'world')
-
-        self.topic_       = self.get_parameter('topic').value
-        self.step_        = self.get_parameter('step').value
-        self.speed_step_  = self.get_parameter('speed_step').value
-        self.min_speed_   = self.get_parameter('min_speed').value
-        self.max_speed_   = self.get_parameter('max_speed').value
-        self.frame_id_    = self.get_parameter('frame_id').value
-        joint_names_      = self.get_parameter('joint_names').value
-        self.speed_       = 0.1
-
-        # ── Velocity control state ──────────────────────────────────────────
-        self.velocity_mode_ = 'constant'  # 'constant' or 'hold'
-        self.active_joints_ = set()       # joints currently being pressed
-
-        # ── Parameter callbacks ─────────────────────────────────────────────
-        self.add_on_set_parameters_callback(self._parameter_callback)
-
-        # ── Build key → (joint_index, direction) map ────────────────────────
-        # Uses DEFAULT_JOINT_KEYS for joints that appear there,
-        # auto-assigns keys for any extras not in the default map.
-        extra_key_pool = list('uijkop')   # fallback keys for extra joints
-        self.joints_    = list(joint_names_)
-        self.positions_ = [0.0] * len(self.joints_)
-        self.velocities_= [0.0] * len(self.joints_)
-        self.accelerations_ = [20000.0] * len(self.joints_)
-        self.efforts_   = [0.0] * len(self.joints_)
-
-        self.key_map_   = {}   # key -> (joint_idx, delta)
-        self.bindings_  = {}   # joint_name -> (inc_key, dec_key)  for display
-
-        for idx, name in enumerate(self.joints_):
-            if name in DEFAULT_JOINT_KEYS:
-                inc_k, dec_k = DEFAULT_JOINT_KEYS[name]
-            elif extra_key_pool:
-                inc_k = extra_key_pool.pop(0)
-                dec_k = extra_key_pool.pop(0) if extra_key_pool else '?'
-            else:
-                inc_k, dec_k = '?', '?'
-
-            self.bindings_[name] = (inc_k, dec_k)
-            if inc_k != '?':
-                self.key_map_[inc_k] = (idx, +1)
-            if dec_k != '?':
-                self.key_map_[dec_k] = (idx, -1)
-
-
-        self.pub_ = self.create_publisher(JointControl, self.topic_, 10)
-
-
-        self.settings_  = termios.tcgetattr(sys.stdin)
-        self.last_key_  = ''
-        self.running_   = True
-
-    # ── Parameter callback ────────────────────────────────────────────────────
-    def _parameter_callback(self, params):
-        """Handle dynamic parameter updates (topic, step, speed, joint_names)."""
-        
-        result_success = True
-        
-        for param in params:
-            if param.name == 'topic':
-                old_topic = self.topic_
-                self.topic_ = param.value
-                # Recreate publisher with new topic
-                self.destroy_publisher(self.pub_)
-                self.pub_ = self.create_publisher(JointControl, self.topic_, 10)
-                self.get_logger().info(f'Topic changed: {old_topic} → {self.topic_}')
-                
-            elif param.name == 'step':
-                if param.value > 0.0:
-                    self.step_ = param.value
-                    self.get_logger().info(f'Step changed to {self.step_:.4f} rad')
-                else:
-                    self.get_logger().warn(f'Invalid step {param.value}, must be > 0')
-                    result_success = False
-
-            elif param.name == 'joint_names':
-                # Rebuild joint structure
-                old_joints = self.joints_
-                self.joints_ = list(param.value)
-                
-                # Preserve positions where joint names match
-                new_positions = [0.0] * len(self.joints_)
-                new_velocities = [0.0] * len(self.joints_)
-                new_efforts = [0.0] * len(self.joints_)
-                
-                for new_idx, new_name in enumerate(self.joints_):
-                    if new_name in old_joints:
-                        old_idx = old_joints.index(new_name)
-                        new_positions[new_idx] = self.positions_[old_idx]
-                        new_velocities[new_idx] = self.velocities_[old_idx]
-                        new_efforts[new_idx] = self.efforts_[old_idx]
-                
-                self.positions_ = new_positions
-                self.velocities_ = new_velocities
-                self.efforts_ = new_efforts
-                
-                # Rebuild key map
-                self.key_map_ = {}
-                self.bindings_ = {}
-                extra_key_pool = list('uijkop')
-                
-                for idx, name in enumerate(self.joints_):
-                    if name in DEFAULT_JOINT_KEYS:
-                        inc_k, dec_k = DEFAULT_JOINT_KEYS[name]
-                    elif extra_key_pool:
-                        inc_k = extra_key_pool.pop(0)
-                        dec_k = extra_key_pool.pop(0) if extra_key_pool else '?'
-                    else:
-                        inc_k, dec_k = '?', '?'
-                    
-                    self.bindings_[name] = (inc_k, dec_k)
-                    if inc_k != '?':
-                        self.key_map_[inc_k] = (idx, +1)
-                    if dec_k != '?':
-                        self.key_map_[dec_k] = (idx, -1)
-                
-                self.get_logger().info(f'Joint names updated: {self.joints_}')
-        
-        return SetParametersResult(successful=result_success)
-
-
-    def _get_key(self, timeout: float = 0.1) -> str:
-        """Read one key without blocking longer than timeout seconds."""
+        self.settings = termios.tcgetattr(sys.stdin)
+    
+    def get_key(self, timeout=0.05):
         tty.setraw(sys.stdin.fileno())
         try:
             rlist, _, _ = select.select([sys.stdin], [], [], timeout)
-            if rlist:
-                key = sys.stdin.read(1)
-                # Handle escape sequences (arrows etc.)
-                if key == '\x1b':
-                    rlist2, _, _ = select.select([sys.stdin], [], [], 0.05)
-                    if rlist2:
-                        seq = sys.stdin.read(2)   # consume '[A' etc.
-                        return '\x1b' + seq
-                    return '\x1b'
-                return key
-            return ''
+            if not rlist: return ''
+            ch = sys.stdin.read(1)
+            if ch == '\x1b':
+                rlist2, _, _ = select.select([sys.stdin], [], [], 0.05)
+                if rlist2:
+                    ch2 = sys.stdin.read(1)
+                    if ch2 == '[':
+                        return f'\x1b[{sys.stdin.read(1)}'
+                    return ch + ch2
+                return ch
+            return ch
         finally:
-            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self.settings_)
+            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self.settings)
+    
+    def restore(self):
+        termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self.settings)
 
+class TeleopInterface(ABC):
+    def __init__(self, node):
+        self.node, self.last_key, self.active = node, '', False
+    
+    @abstractmethod
+    def handle_key(self, key): pass
+    @abstractmethod
+    def render(self): pass
+    @abstractmethod
+    def on_activate(self): pass
+    @abstractmethod
+    def on_deactivate(self): pass
+    @abstractmethod
+    def update(self): pass
 
-    def _build_msg(self) -> JointControl:
+DEFAULT_JOINT_KEYS = {
+    'flipper_0': ('q', 'a'), 'flipper_1': ('w', 's'), 'flipper_2': ('e', 'd'),
+    'flipper_3': ('r', 'f'), 'flipper_4': ('t', 'g'), 'flipper_5': ('y', 'h'),
+}
+
+class JointControlInterface(TeleopInterface):
+    def __init__(self, node, topic, joint_names):
+        super().__init__(node)
+        self.topic, self.joint_names = topic, joint_names
+        self.step, self.speed, self.speed_step = 0.1, 0.5, 0.1
+        self.min_speed, self.max_speed = 0.0, 2.0
+        self.velocity_mode = 'hold'
+        self.positions = [-1.0] * len(joint_names)
+        self.velocities = [0.0] * len(joint_names)
+        self.efforts = [0.0] * len(joint_names)
+        self.key_map, self.bindings = {}, {}
+        self._build_key_map()
+        self.pub = node.create_publisher(JointControl, topic, 10)
+        self.republish_rate, self.last_publish_time = 10.0, time.time()
+    
+    def _build_key_map(self):
+        extra = list('uijkop')
+        for idx, name in enumerate(self.joint_names):
+            if name in DEFAULT_JOINT_KEYS:
+                inc_k, dec_k = DEFAULT_JOINT_KEYS[name]
+            elif extra:
+                inc_k, dec_k = extra.pop(0), (extra.pop(0) if extra else '?')
+            else:
+                inc_k, dec_k = '?', '?'
+            self.bindings[name] = (inc_k, dec_k)
+            if inc_k != '?': self.key_map[inc_k] = (idx, +1)
+            if dec_k != '?': self.key_map[dec_k] = (idx, -1)
+    
+    def on_activate(self):
+        self.last_publish_time = time.time()
+    
+    def on_deactivate(self):
+        self.velocities = [0.0] * len(self.joint_names)
+        self._publish()
+    
+    def handle_key(self, key):
+        self.last_key = key
+        if key == '+':
+            self.speed = min(self.max_speed, self.speed + self.speed_step)
+            self._update_active_velocities()
+            self._publish()
+            return True
+        elif key == '-':
+            self.speed = max(self.min_speed, self.speed - self.speed_step)
+            self._update_active_velocities()
+            self._publish()
+            return True
+        elif key == 'v':
+            self.velocity_mode = 'hold' if self.velocity_mode == 'constant' else 'constant'
+            self.positions = [-1.0] * len(self.joint_names) if self.velocity_mode == 'hold' else [0.0] * len(self.joint_names)
+            self._publish()
+            return True
+        elif key == 'z':
+            self.positions = [-1.0 if self.velocity_mode == 'hold' else 0.0] * len(self.joint_names)
+            self.velocities, self.efforts = [0.0] * len(self.joint_names), [0.0] * len(self.joint_names)
+            self._publish()
+            return True
+        elif key == 'x':
+            self.velocities, self.efforts = [0.0] * len(self.joint_names), [0.0] * len(self.joint_names)
+            self._publish()
+            return True
+        elif key in self.key_map:
+            idx, direction = self.key_map[key]
+            if self.velocity_mode == 'constant':
+                self.positions[idx] = (self.positions[idx] + direction * self.step) % (2 * math.pi)
+                self.velocities[idx] = direction * self.speed
+            else:
+
+                self.positions[idx] = -1.0 
+                if direction * self.velocities[idx] < 0:
+                    self.velocities[idx] = 0.0
+                else:
+                    self.velocities[idx] = direction * self.speed
+                
+            self._publish()
+            return True
+        return False
+    
+    def _update_active_velocities(self):
+        for idx, vel in enumerate(self.velocities):
+            if vel != 0:
+                self.velocities[idx] = self.speed * (-1 if vel < 0 else 1)
+    
+    def update(self):
+        current_time = time.time()
+        if current_time - self.last_publish_time >= 1.0 / self.republish_rate:
+            if any(v != 0.0 for v in self.velocities):
+                self._publish()
+    
+    def _publish(self):
         msg = JointControl()
-        now = self.get_clock().now().to_msg()
         msg.header = Header()
-        msg.header.stamp    = now
-        msg.header.frame_id = self.frame_id_
-        msg.joint_names     = list(self.joints_)
-        msg.position        = list(self.positions_)
-        msg.velocity        = list(self.velocities_)
-        msg.acceleration    = list(self.accelerations_)
-        msg.effort          = list(self.efforts_)
-        return msg
+        msg.header.stamp = self.node.get_clock().now().to_msg()
+        msg.header.frame_id = 'world'
+        msg.joint_names, msg.position = list(self.joint_names), list(self.positions)
+        msg.velocity, msg.effort = list(self.velocities), list(self.efforts)
+        msg.acceleration = [20000.0] * len(self.joint_names)
+        self.pub.publish(msg)
+        self.last_publish_time = time.time()
+    
+    def render(self):
+        lines = [
+            clr(BOLD + CYAN, '╔══════════════════════════════════════════════════════╗'),
+            clr(BOLD + CYAN, '║         [1] JOINT CONTROL MODE                       ║'),
+            clr(BOLD + CYAN, '╚══════════════════════════════════════════════════════╝'),
+            f'  Topic : {clr(YELLOW, self.topic)}',
+        ]
+        mode_color = GREEN if self.velocity_mode == 'constant' else MAGENTA
+        mode_symbol = '●' if self.velocity_mode == 'constant' else '◐'
+        lines.append(f'  Step: {clr(YELLOW, f"{self.step:.4f}")} rad   Speed: {clr(YELLOW, f"{self.speed:.4f}")} rad/s {clr(mode_color, mode_symbol)}   Mode: {clr(mode_color, self.velocity_mode.upper())}')
+        if self.velocity_mode == 'hold':
+            lines.append(f'  {clr(MAGENTA, "HOLD MODE: Position = -1 (no target), velocity only while pressed")}')
+        lines.extend(['', clr(BOLD, f'  {"Joint":<20} {"Inc":>4}  {"Dec":>4}   {"Position":>10}  {"Vel":>7}'), '  ' + '─' * 58])
+        for idx, name in enumerate(self.joint_names):
+            inc_k, dec_k = self.bindings[name]
+            pos_val, vel_val = self.positions[idx], self.velocities[idx]
+            pos_str = clr(MAGENTA, '  (hold)') if pos_val == -1.0 else f'{pos_val:+.4f}'
+            vel_str = f'{vel_val:+.3f}'
+            if self.velocity_mode == 'constant' and pos_val >= 0:
+                bar_val, bar_len = pos_val / (2 * math.pi), 12
+                filled = int(bar_val * bar_len)
+                bar = '┼' + '█' * filled + '─' * (bar_len - filled)
+            else:
+                bar = ' ' * 13
+            pos_color = GREEN if pos_val > 0.0 and pos_val != -1.0 else DIM
+            vel_color = RED if vel_val != 0.0 else DIM
+            lines.append(f'  {name:<20} {clr(GREEN, "["+inc_k+"]"):>4}  {clr(RED, "["+dec_k+"]"):>4}   {clr(pos_color, pos_str):>10}  {clr(DIM, bar)}  {clr(vel_color, vel_str):>7}')
+        lines.extend(['', clr(BOLD, '  Controls:'),
+            f'  {clr(GREEN, "[↑]")} ↑ Speed   {clr(RED, "[↓]")} ↓ Speed   {clr(YELLOW, "[v]")} Toggle mode   {clr(DIM, "[z]")} Reset   {clr(DIM, "[x]")} Stop',
+            f'  {clr(CYAN, "[2]")} Switch to Twist mode', '', f'  Last key: {clr(YELLOW, repr(self.last_key) if self.last_key else "─")}'])
+        return '\n'.join(lines)
 
+class TwistControlInterface(TeleopInterface):
+    MOVE_BINDINGS = {
+        'i': (1,0,0,0), 'o': (1,0,0,-1), 'j': (0,0,0,1), 'l': (0,0,0,-1),
+        'u': (1,0,0,1), ',': (-1,0,0,0), '.': (-1,0,0,1), 'm': (-1,0,0,-1), 'k': (0,0,0,0),
+    }
+    
+    def __init__(self, node, topic):
+        super().__init__(node)
+        self.topic, self.speed, self.turn = topic, 0.5, 1.0
+        self.speed_step, self.turn_step = 0.1, 0.1
+        self.min_speed, self.max_speed = 0.0, 2.0
+        self.min_turn, self.max_turn = 0.0, 3.0
+        self.x, self.y, self.z, self.th = 0, 0, 0, 0
+        self.pub = node.create_publisher(Twist, topic, 10)
+        self.republish_rate, self.last_publish_time = 10.0, time.time()
+    
+    def on_activate(self):
+        self.x = self.y = self.z = self.th = 0
+        self._publish()
+        self.last_publish_time = time.time()
+    
+    def on_deactivate(self):
+        self.x = self.y = self.z = self.th = 0
+        self._publish()
+    
+    def handle_key(self, key):
+        self.last_key = key
+        if key in self.MOVE_BINDINGS:
+            self.x, self.y, self.z, self.th = self.MOVE_BINDINGS[key]
+            self._publish()
+            return True
+        elif key == 'q':
+            self.speed = min(self.max_speed, self.speed + self.speed_step)
+            self._publish()
+            return True
+        elif key == 'z':
+            self.speed = max(self.min_speed, self.speed - self.speed_step)
+            self._publish()
+            return True
+        elif key == 'w':
+            self.turn = min(self.max_turn, self.turn + self.turn_step)
+            self._publish()
+            return True
+        elif key == 'x':
+            self.turn = max(self.min_turn, self.turn - self.turn_step)
+            self._publish()
+            return True
+        elif key == 'k' or key == ' ':
+            self.x = self.y = self.z = self.th = 0
+            self._publish()
+            return True
+        return False
+    
+    def update(self):
+        current_time = time.time()
+        if current_time - self.last_publish_time >= 1.0 / self.republish_rate:
+            if self.x != 0 or self.y != 0 or self.z != 0 or self.th != 0:
+                self._publish()
+    
+    def _publish(self):
+        msg = Twist()
+        msg.linear.x, msg.linear.y, msg.linear.z = self.x * self.speed, self.y * self.speed, self.z * self.speed
+        msg.angular.x, msg.angular.y, msg.angular.z = 0.0, 0.0, self.th * self.turn
+        self.pub.publish(msg)
+        self.last_publish_time = time.time()
+    
+    def render(self):
+        linear, angular = self.x * self.speed, self.th * self.turn
+        return '\n'.join([
+            clr(BOLD + GREEN, '╔══════════════════════════════════════════════════════╗'),
+            clr(BOLD + GREEN, '║         [2] TWIST CONTROL MODE                       ║'),
+            clr(BOLD + GREEN, '╚══════════════════════════════════════════════════════╝'),
+            f'  Topic : {clr(YELLOW, self.topic)}',
+            f'  Linear Speed: {clr(YELLOW, f"{self.speed:.2f}")} m/s   Angular Speed: {clr(YELLOW, f"{self.turn:.2f}")} rad/s',
+            '',
+            f'  Current: Linear = {clr(CYAN if linear != 0 else DIM, f"{linear:+.2f}")} m/s   Angular = {clr(CYAN if angular != 0 else DIM, f"{angular:+.2f}")} rad/s',
+            '',
+            clr(BOLD, '  Movement:'),
+            f'        {clr(GREEN, "[u]")}    {clr(GREEN, "[i]")}    {clr(GREEN, "[o]")}',
+            f'        {clr(DIM, " ↰      ↑      ↱ ")}',
+            '',
+            f'        {clr(YELLOW, "[j]")}    {clr(RED, "[k]")}    {clr(YELLOW, "[l]")}',
+            f'        {clr(DIM, " ←    STOP    → ")}',
+            '',
+            f'        {clr(GREEN, "[m]")}    {clr(GREEN, "[,]")}    {clr(GREEN, "[.]")}',
+            f'        {clr(DIM, " ↲      ↓      ↳ ")}',
+            '',
+            clr(BOLD, '  Speed Controls:'),
+            f'  {clr(GREEN, "[q]")} Linear ↑   {clr(RED, "[z]")} Linear ↓   {clr(YELLOW, "[w]")} Angular ↑   {clr(MAGENTA, "[x]")} Angular ↓',
+            f'  {clr(CYAN, "[1]")} Switch to Joint mode',
+            '',
+            f'  Last key: {clr(YELLOW, repr(self.last_key) if self.last_key else "─")}',
+        ])
 
-    def _render_hud(self):
-        lines = []
-        lines.append(clr(BOLD + CYAN,
-            '╔══════════════════════════════════════════════════════╗'))
-        lines.append(clr(BOLD + CYAN,
-            '║     Joint Keyboard Teleop  (ROS2)                    ║'))
-        lines.append(clr(BOLD + CYAN,
-            '╚══════════════════════════════════════════════════════╝'))
-        lines.append(f'  Topic : {clr(YELLOW, self.topic_)}')
-        
-        # Velocity info with mode indicator
-        mode_indicator = clr(GREEN, '●') if self.velocity_mode_ == 'constant' else clr(YELLOW, '○')
-        lines.append(
-            f'  Step  : {clr(YELLOW, f"{self.step_:.4f}")} rad   '
-            f'Speed : {clr(YELLOW, f"{self.speed_:.4f}")} rad/s {mode_indicator}   '
-            f'Range : {clr(DIM, f"[{self.min_speed_:.1f}, {self.max_speed_:.1f}]")}'
-        )
-        lines.append(f'  Mode  : {clr(GREEN if self.velocity_mode_ == "constant" else YELLOW, self.velocity_mode_.upper())}')
-        lines.append('')
-        lines.append(clr(BOLD, f'  {"Joint":<20} {"Inc":>4}  {"Dec":>4}   {"Position":>10}  {"Vel":>7}'))
-        lines.append('  ' + '─' * 58)
-
-        for idx, name in enumerate(self.joints_):
-            inc_k, dec_k = self.bindings_[name]
-            pos_str = f'{self.positions_[idx]:+.4f}'
-            vel_str = f'{self.velocities_[idx]:+.3f}'
-            
-            # Normalize to [0, 1] range for bar display
-            bar_val = self.positions_[idx] / (2 * math.pi)
-            bar_len = 12
-            filled  = int(bar_val * bar_len)
-            bar = '┼' + '█' * filled + '─' * (bar_len - filled)
-            
-            # Color based on activity
-            is_active = idx in self.active_joints_
-            pos_color = GREEN if self.positions_[idx] != 0.0 else DIM
-            vel_color = RED if is_active else (GREEN if self.velocities_[idx] != 0.0 else DIM)
-            
-            lines.append(
-                f'  {name:<20} '
-                f'{clr(GREEN, "[" + inc_k + "]"):>4}  '
-                f'{clr(RED,   "[" + dec_k + "]"):>4}   '
-                f'{clr(pos_color, pos_str):>10}  '
-                f'{clr(DIM, bar)}  '
-                f'{clr(vel_color, vel_str):>7}'
-            )
-
-        lines.append('')
-        lines.append(clr(BOLD, '  Velocity Control:'))
-        lines.append(f'  {clr(GREEN, "[↑]")} Increase speed   '
-                     f'{clr(RED, "[↓]")} Decrease speed   '
-                     f'{clr(YELLOW, "[v]")} Toggle mode')
-        lines.append('')
-        lines.append(clr(DIM, f'  [{RESET_KEY}] Reset all   '
-                              f'[{ZERO_VEL_EFFORT_KEY}] Zero vel/effort   '
-                              f'[ESC/Ctrl+C] Quit'))
-        lines.append('')
-        key_display = repr(self.last_key_) if self.last_key_ else '─'
-        lines.append(f'  Last key: {clr(YELLOW, key_display)}')
-
-        # Move cursor to top and overwrite (avoids flicker vs. full clear)
+class DualTeleopNode(Node):
+    def __init__(self):
+        super().__init__('dual_teleop')
+        self.declare_parameter('joint_topic', 'hardware_node/joint_command')
+        self.declare_parameter('twist_topic', 'hardware_node/cmd_vel')
+        self.declare_parameter('joint_names', list(DEFAULT_JOINT_KEYS.keys()))
+        joint_topic = self.get_parameter('joint_topic').value
+        twist_topic = self.get_parameter('twist_topic').value
+        joint_names = self.get_parameter('joint_names').value
+        self.joint_interface = JointControlInterface(self, joint_topic, joint_names)
+        self.twist_interface = TwistControlInterface(self, twist_topic)
+        self.current_interface = self.joint_interface
+        self.current_interface.active = True
+        self.current_interface.on_activate()
+        self.keyboard = KeyboardReader()
+        self.running = True
+    
+    def switch_interface(self, interface):
+        if self.current_interface == interface: return
+        self.current_interface.on_deactivate()
+        self.current_interface.active = False
+        self.current_interface = interface
+        self.current_interface.active = True
+        self.current_interface.on_activate()
+    
+    def render(self):
+        sys.stdout.write(CLEAR)
         sys.stdout.write(MOVE_TOP)
-        sys.stdout.write('\n'.join(lines))
-        sys.stdout.write('\033[J')   # clear from cursor to end of screen
+        sys.stdout.write(self.current_interface.render())
+        sys.stdout.write('\033[J')
         sys.stdout.flush()
-
+    
     def run(self):
         print(CLEAR, end='')
-
         try:
-            while rclpy.ok() and self.running_:
-                key = self._get_key(timeout=0.05)
-
-                if key in QUIT_KEYS:
-                    self.running_ = False
+            while rclpy.ok() and self.running:
+                key = self.keyboard.get_key(timeout=0.05)
+                if key in ('\x03', '\x1b'):
+                    self.running = False
                     break
-
-                elif key == RESET_KEY:
-                    self.positions_  = [0.0] * len(self.joints_)
-                    self.velocities_ = [0.0] * len(self.joints_)
-                    self.efforts_    = [0.0] * len(self.joints_)
-                    self.active_joints_.clear()
-                    self.last_key_   = key
-                    self.pub_.publish(self._build_msg())
-
-                elif key == ZERO_VEL_EFFORT_KEY:
-                    self.velocities_ = [0.0] * len(self.joints_)
-                    self.efforts_    = [0.0] * len(self.joints_)
-                    self.active_joints_.clear()
-                    self.last_key_   = key
-                    self.pub_.publish(self._build_msg())
-
-                elif key == VEL_UP_KEY:
-                    self.speed_ = min(self.max_speed_, self.speed_ + self.speed_step_)
-                    self.last_key_ = '↑'
-
-                elif key == VEL_DOWN_KEY:
-                    self.speed_ = max(self.min_speed_, self.speed_ - self.speed_step_)
-                    self.last_key_ = '↓'
-
-                elif key == VEL_MODE_KEY:
-                    # Toggle velocity mode
-                    self.velocity_mode_ = 'hold' if self.velocity_mode_ == 'constant' else 'constant'
-                    self.last_key_ = key
-
-                    if self.velocity_mode_ == 'hold':
-                        # Mandar todas las posiciones a -1
-                        self.positions_ = [-1.0] * len(self.joints_)
-                    else:
-                        # Restaurar posiciones válidas
-                        self.positions_ = [0.0] * len(self.joints_)
-                        self.velocities_ = [0.0] * len(self.joints_)
-                        self.active_joints_.clear()
-
-                    self.pub_.publish(self._build_msg())
-
-                elif key in self.key_map_:
-                    idx, direction = self.key_map_[key]
-
-                    if self.velocity_mode_ == 'constant':
-                        # Modo normal (posición incremental)
-                        new_pos = self.positions_[idx] + direction * self.step_
-                        self.positions_[idx] = new_pos % (2 * math.pi)
-                        self.velocities_[idx] = direction * self.speed_
-                        self.active_joints_.add(idx)
-
-                    else:  # HOLD MODE
-                        current_vel = self.velocities_[idx]
-
-                        # Si ya se mueve en dirección opuesta → detener
-                        if current_vel * direction < 0:
-                            self.velocities_[idx] = 0.0
-                            if idx in self.active_joints_:
-                                self.active_joints_.remove(idx)
-
-                        else:
-                            # Aplicar velocidad en dirección indicada
-                            self.velocities_[idx] = direction * self.speed_
-                            self.active_joints_.add(idx)
-
-                    self.last_key_ = key
-                    self.pub_.publish(self._build_msg())
-
+                elif key == '1':
+                    self.switch_interface(self.joint_interface)
+                elif key == '2':
+                    self.switch_interface(self.twist_interface)
                 elif key:
-                    self.last_key_ = key
-
-                self._render_hud()
+                    self.current_interface.handle_key(key)
+                self.current_interface.update()
+                self.render()
                 rclpy.spin_once(self, timeout_sec=0.0)
-
         finally:
-            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self.settings_)
+            self.keyboard.restore()
             print('\n\n' + clr(YELLOW, 'Terminal restored. Bye!') + '\n')
-
 
 def main(args=None):
     rclpy.init(args=args)
-    node = JointKeyboardTeleop()
+    node = DualTeleopNode()
     try:
         node.run()
     except KeyboardInterrupt:
@@ -404,7 +349,6 @@ def main(args=None):
     finally:
         node.destroy_node()
         rclpy.shutdown()
-
 
 if __name__ == '__main__':
     main()

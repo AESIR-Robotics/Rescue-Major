@@ -54,15 +54,14 @@ tmux set-option -t "$session_name" default-command "$ENV_CMD"
 # Splits: 3 panes
 # Layout:
 # ┌──────────┬──────────┐
-# │    0     │    1     │
-# ├──────────┴──────────┤
-# │    2     │    3     │
+# │          │    1     │
+# |    0     |──────────┤
+# │          │    2     │
 # └──────────┴──────────┘
+tmux split-window -v
+tmux select-pane -t 1
 tmux split-window -h
 tmux select-pane -t 0
-tmux split-window -v
-tmux select-pane -t 2
-tmux split-window -v
 
 # Comandos
 # Pane 0: Joint teleop (top left)
@@ -70,13 +69,13 @@ tmux send-keys -t 0 "ros2 run hardware joint_mux.py" Enter
 
 # Pane 1: Differential robot teleop (top right)
 # Using teleop_twist_keyboard package with custom topic
-tmux send-keys -t 1 "ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -r cmd_vel:=hardware_node/cmd_vel" Enter
+#tmux send-keys -t 1 "ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -r cmd_vel:=hardware_node/cmd_vel" Enter
 
 # Pane 2: Monitor joint states (bottom left)
-tmux send-keys -t 2 "ros2 topic echo /hardware_node/joint_states" Enter
+tmux send-keys -t 1 "ros2 topic echo /hardware_node/joint_states" Enter
 
 # Pane 3: Monitor velocity states (bottom right)
-tmux send-keys -t 3 "ros2 topic echo /hardware_node/state_vel" Enter
+tmux send-keys -t 2 "ros2 topic echo /hardware_node/state_vel" Enter
 
 sleep 3
 

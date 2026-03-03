@@ -18,6 +18,7 @@
 #include <linux/i2c.h>
 #include <sys/ioctl.h>
 #include <sys/types.h>
+#include <sys/file.h>
 #include <cerrno>
 #include <poll.h>
 #include <unistd.h>
@@ -44,7 +45,9 @@ public:
     INVALID_CONFIG,
     OPEN_FAILED,
     IOCTL_FAILED,
-    IO_ERROR
+    IO_ERROR,
+    DEVICE_BUSY,
+    LOCK_FAILED
   };
 
   using header = std::tuple<uint8_t, uint8_t, uint8_t>; // sync, instruction, length
@@ -92,7 +95,7 @@ private:
     NO_MESSAGE,
     NO_SYNC,
     CRC_MISMATCH,
-    ERROR_IO
+    ERROR_IO, 
   };
 
   size_t     sendNext(deadline_t deadline);
@@ -209,6 +212,19 @@ inline bool Protocol_Handler_I2C::connect() {
     error_state = Error_State::OPEN_FAILED;
     return false;
   }
+  
+  if (flock(i2c_fd, LOCK_EX | LOCK_NB) != 0) {
+    if (errno == EWOULDBLOCK) {
+        error_state = Error_State::DEVICE_BUSY;
+        RCLCPP_ERROR(logger, "Device is already in use");
+    } else {
+        error_state = Error_State::LOCK_FAILED;
+        RCLCPP_ERROR(logger, "Failed to lock file");
+    }
+    closeI2C();
+    return false;
+}
+
   if (ioctl(i2c_fd, I2C_SLAVE, slave_addr) < 0) {
     error_state = Error_State::IOCTL_FAILED;
     closeI2C();
