@@ -1,14 +1,39 @@
 {
-  "0": {
+  "temporal": {
     "type": "topic",
     "target": "/web_rtc_commands",
     "msg_type": "std_msgs/String",
     "payload": "toggle_client_audio"
   },
-  "1": {
+  "temporal2": {
     "type": "topic",
     "target": "/web_rtc_commands",
     "msg_type": "std_msgs/String",
     "payload": "toggle_server_audio"
+  },
+
+  "0": {
+    "type": "local_function",
+    "payload": {"function_name": "setMotorVars", "data": [125,125, 0, 0]}
+  },
+  "1": {
+    "type": "local_function",
+    "payload": {"function_name": "setMotorVars", "data": [45,45, 45, 45]}
+  },
+  "2": {
+    "type": "local_function",
+    "payload": {"function_name": "setMotorVars", "data": [90, 90, 90, 90]}
+  },
+  "3": {
+    "type": "local_function",
+    "payload": {"function_name": "setMotorVars", "data": [0, 0, 0, 0]}
+  },
+  "5": {
+    "type": "local_function",
+    "payload": {"function_name": "setMotorVars", "data": [1, 1, 1, 1]}
+  },  
+  "9": {
+    "type": "local_function",
+    "payload": {"function_name": "resetMotorVars"}
   }
 }

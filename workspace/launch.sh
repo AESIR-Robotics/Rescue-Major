@@ -8,7 +8,7 @@ SOURCE_VENV_DIR="../.venv/bin/activate"
 if [ -n "${BASH_SOURCE[0]:-}" ]; then
 	SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 else
-	SCRIPT_DIR="$(cd "$(dirnaS instme "$0")" && pwd)"
+	SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 fi
 
 echo "launch.bash: ROS_UBUNTU_VERSION='${ROS_UBUNTU_VERSION:-}'"
@@ -26,9 +26,7 @@ else
 	SOURCE_ROS_DIR="/opt/ros/jazzy/setup.bash"
 fi
 
-if [ -f "/dev/ttyUSB0" ]; then
-	sudo chmod 666 /dev/ttyUSB0
-fi
+#sudo chmod 666 /dev/ttyUSB0
 
 echo "launch.bash: using ROS setup: $SOURCE_ROS_DIR"
 echo "launch.bash: using venv:      $SOURCE_VENV_DIR"
@@ -59,8 +57,8 @@ tmux select-pane -t 2
 tmux split-window -h
 
 # Comandos
-tmux send-keys -t 0 "ros2 run rosbridge_server rosbridge_websocket --port 9090" Enter
-tmux send-keys -t 1 "python3 src/teleoperation/scripts/server_rtc.py" Enter
+tmux send-keys -t 0 "ros2 run rosbridge_server rosbridge_websocket --ros-args --param ssl:=true --param certfile:=\"$HOME/aesir/cert.pem\" --param keyfile:=\"$HOME/aesir/key.pem\" --param port:=9090 --param address:=\"0.0.0.0\"" Enter
+tmux send-keys -t 1 "python3 src/teleoperation/scripts/server_rtc.py --cert-file ~/aesir/cert.pem --key-file ~/aesir/key.pem --host 0.0.0.0 --port 8081" Enter
 tmux send-keys -t 2 "ros2 run hardware dc_motors" Enter
 #tmux send-keys -t 2 "ros2 run hardware dc_motors --ros-args --log-level debug" Enter
 tmux send-keys -t 3 "ros2 launch vision vision.launch.py" Enter
@@ -80,7 +78,7 @@ tmux send-keys -t 3 "ros2 launch vision vision.launch.py" Enter
 #tmux send-keys "ros2 run vision video_stream_publisher" Enter
 #sleep 2
 
-sleep 3
+sleep 1
 
 # Optional key bindings to switch panes
 tmux bind-key -n C-a select-pane -t :.+

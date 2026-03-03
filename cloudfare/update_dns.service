@@ -1,0 +1,14 @@
+# file expected on 
+# /etc/systemd/system/update-dns.service
+
+[Unit]
+Description=Update local_DNS with priv ip 
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/update_dns.sh
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

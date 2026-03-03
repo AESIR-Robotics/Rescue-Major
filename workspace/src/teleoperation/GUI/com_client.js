@@ -350,6 +350,34 @@ class InputHandler {
   readJoystick() {
     return this._readGamepad();
   }
+
+  // Read trigger values (LT and RT)
+  // Returns: { leftTrigger: 0-1, rightTrigger: 0-1 }
+  readTriggers() {
+    if (this.gamepadIndex == null) return { leftTrigger: 0, rightTrigger: 0 };
+    const gp = navigator.getGamepads()[this.gamepadIndex];
+    if (!gp) return { leftTrigger: 0, rightTrigger: 0 };
+    
+    let leftTrigger = 0;
+    let rightTrigger = 0;
+    
+    // Axes: izquierdo = axes[4], derecho = axes[5]
+    if (gp.axes.length > 5) {
+      // Asegurar que el valor esté en rango [0, 1]
+      leftTrigger = Math.max(0, gp.axes[4] || 0);
+      rightTrigger = Math.max(0, gp.axes[5] || 0);
+    }
+    
+    // Fallback to button values (buttons 6 and 7) si los axes no funcionan
+    if (leftTrigger < 0.05 && rightTrigger < 0.05) {
+      if (gp.buttons.length > 7) {
+        leftTrigger = gp.buttons[6]?.value || (gp.buttons[6]?.pressed ? 1 : 0);
+        rightTrigger = gp.buttons[7]?.value || (gp.buttons[7]?.pressed ? 1 : 0);
+      }
+    }
+    
+    return { leftTrigger, rightTrigger };
+  }
 }
 
 //______________________ Main Application ____________________
@@ -368,6 +396,39 @@ class InputHandler {
   let motorTopic = null;
   let isControlEnabled = false;
   let velocityInterval = null;
+  
+  // Variables locales para control adicional (a,b,c,d)
+  let motorVars = { a: 0, b: 0, c: 0, d: 0 };
+  
+  // Variables para control de velocidad con gatillos y aceleración
+  let currentVelocity = { x: 0, y: 0 };  
+  const ACCELERATION_TIME = 0.5;  
+  const MAX_VELOCITY = 100;
+  const UPDATE_INTERVAL = 100;  // 100ms = 10Hz
+  const ACCELERATION_STEP = (MAX_VELOCITY / ACCELERATION_TIME) * (UPDATE_INTERVAL / 1000);
+  
+  // Variables para giro cerrado (bumpers B4 y B5)
+  let closedTurnState = { left: false, right: false };  // B4 = left, B5 = right  
+  
+  // Función para cambiar las 4 variables simultáneamente
+  window.setMotorVars = function(values) {
+    if (Array.isArray(values) && values.length === 4) {
+      motorVars.a = values[0];
+      motorVars.b = values[1];
+      motorVars.c = values[2];
+      motorVars.d = values[3];
+      log(`Motor vars: a=${motorVars.a}, b=${motorVars.b}, c=${motorVars.c}, d=${motorVars.d}`);
+    }
+  };
+  
+  // Función para resetear variables (tecla 's')
+  window.resetMotorVars = function() {
+    motorVars.a = 0;
+    motorVars.b = 0;
+    motorVars.c = 0;
+    motorVars.d = 0;
+    log('Motor vars reset to 0');
+  };
 
   function initializeROS(rosbridgeHost = location.hostname, rosbridgePort = 9090) {
     if (typeof ROSLIB === 'undefined') {
@@ -397,12 +458,51 @@ class InputHandler {
         .then(r => r.json())
         .then(config => {
           inputHandler.loadActions(config);
-          log(`Actions loaded: ${Object.keys(inputHandler.actionMap).length} mappings`);
+          log(`Keyboard actions loaded: ${Object.keys(inputHandler.actionMap).length} mappings`);
           setupKeyboardBindings();
           
-          // Get motor topic for joystick control
-          motorTopic = robotAPI.getOrCreateTopic('/dc_motors', 'std_msgs/Float32MultiArray');
-          log('Motor control topic ready');
+          // Get motor topic for joystick control (formato: "x,y,a,b,c,d")
+          motorTopic = robotAPI.getOrCreateTopic('/all_motors', 'std_msgs/String');
+          log('Motor control topic ready (/all_motors)');
+          
+          // Registrar funciones locales para InputHandler
+          inputHandler.registerLocalFunction('setMotorVars', (payload) => {
+            if (payload.data) window.setMotorVars(payload.data);
+          });
+          inputHandler.registerLocalFunction('resetMotorVars', () => {
+            window.resetMotorVars();
+          });
+          
+          // Load controller keymaps
+          return fetch('static/keys_map_controller.json');
+        })
+        .then(r => r.json())
+        .then(controllerConfig => {
+          // Store controller mappings separately
+          inputHandler.controllerActionMap = controllerConfig;
+          log(`Controller actions loaded: ${Object.keys(controllerConfig).length} mappings`);
+          
+          // Setup gamepad button handler
+          inputHandler.on('buttonDown', (padIndex, buttonIndex) => {
+            const buttonId = String(buttonIndex);
+            const action = inputHandler.controllerActionMap[buttonId];
+            
+            if (!action) return;
+            
+            if (action.type === 'local_function') {
+              const funcName = action.payload?.function_name;
+              if (funcName && inputHandler.localFunctions[funcName]) {
+                inputHandler.localFunctions[funcName](action.payload);
+                log(`Button ${buttonId} -> ${funcName}()`);
+              }
+            } else if (action.type === 'send_topic' && robotAPI) {
+              robotAPI.sendTopic(action.topics, action.data_type, action.payload);
+              log(`Button ${buttonId} -> send_topic`);
+            } else if (action.type === 'send_service' && robotAPI) {
+              robotAPI.sendService(action.topics, action.data_type, action.payload);
+              log(`Button ${buttonId} -> send_service`);
+            }
+          });
         })
         .catch(e => log(`Failed to load keymaps: ${e.message}`));
     });
@@ -441,18 +541,111 @@ class InputHandler {
     });
   }
 
-  function publishJoystickVelocities() {
+  function getTargetVelocityFromTriggers() {
+    if (!inputHandler) return { x: 0, y: 0 };
+    
+    const { leftTrigger, rightTrigger } = inputHandler.readTriggers();
+    const { x: joystickX } = inputHandler.readJoystick();
+    
+    // Determinar velocidad base según gatillos
+    let baseVelocity = 0;
+    
+    if (rightTrigger > 0.1) {
+      // Gatillo derecho: velocidad positiva
+      baseVelocity = MAX_VELOCITY;
+    } else if (leftTrigger > 0.1) {
+      // Gatillo izquierdo: velocidad negativa
+      baseVelocity = -MAX_VELOCITY;
+    }
+    
+    if (baseVelocity === 0) {
+      return { x: 0, y: 0 };
+    }
+    
+    // direction  joystick X
+    // rigth (75%, 0%)
+    // leftizquierda (0%, 75%)
+    const absX = Math.abs(joystickX);
+    let multiplierX, multiplierY;
+    
+    if (joystickX >= 0) {
+      multiplierX = 1 - absX * 0.25;  
+      multiplierY = 1 - absX;         
+    } else {
+      multiplierX = 1 - absX;         
+      multiplierY = 1 - absX * 0.25;  
+    }
+    
+    return { 
+      x: baseVelocity * multiplierX, 
+      y: baseVelocity * multiplierY 
+    };
+  }
+
+  // Aplica aceleración gradual hacia la velocidad objetivo
+  function applyAcceleration(current, target) {
+    if (current < target) {
+      // Acelerando hacia adelante
+      return Math.min(current + ACCELERATION_STEP, target);
+    } else if (current > target) {
+      // Desacelerando o acelerando hacia atrás
+      return Math.max(current - ACCELERATION_STEP, target);
+    }
+    return current;
+  }
+
+  function readBumperState() {
+    if (!inputHandler || inputHandler.gamepadIndex == null) return;
+    const gp = navigator.getGamepads()[inputHandler.gamepadIndex];
+    if (!gp || gp.buttons.length < 6) return;
+    
+    // Button 4 = Left Bumper (LB), Button 5 = Right Bumper (RB)
+    closedTurnState.left = gp.buttons[4]?.pressed || false;
+    closedTurnState.right = gp.buttons[5]?.pressed || false;
+  }
+
+  function publishTriggerVelocities() {
     if (!motorTopic || !inputHandler) return;
     
-    const { x, y } = inputHandler.readJoystick();
-    const message = new ROSLIB.Message({
-      data: [Number(x) || 0.0, Number(y) || 0.0]
-    });
+    // Leer estado de bumpers para giro cerrado
+    readBumperState();
+    
+    // Obtener velocidad objetivo basada en gatillos
+    const target = getTargetVelocityFromTriggers();
+    
+    // Aplicar aceleración gradual
+    currentVelocity.x = applyAcceleration(currentVelocity.x, target.x);
+    currentVelocity.y = applyAcceleration(currentVelocity.y, target.y);
+    
+    // Velocidades finales a enviar
+    let finalX = Math.round(currentVelocity.x);
+    let finalY = Math.round(currentVelocity.y);
+    
+    // Override con giro cerrado si los bumpers están presionados
+    if (closedTurnState.left) {
+      finalX = -MAX_VELOCITY;
+      finalY = MAX_VELOCITY;
+    } else if (closedTurnState.right) {
+      finalX = MAX_VELOCITY;
+      finalY = -MAX_VELOCITY;
+    }
+    
+    // Formato: "vx,vy,a,b,c,d" - velocidades de -100 a 100
+    const dataString = [
+      finalX,
+      finalY,
+      motorVars.a,
+      motorVars.b,
+      motorVars.c,
+      motorVars.d
+    ].join(',');
+    
+    const message = new ROSLIB.Message({ data: dataString });
     
     try {
       motorTopic.publish(message);
     } catch (e) {
-      console.error('Joystick velocity publish error:', e);
+      console.error('Trigger velocity publish error:', e);
     }
   }
 
@@ -469,15 +662,17 @@ class InputHandler {
           clearInterval(velocityInterval);
           velocityInterval = null;
         }
-        // Send stop command
+        // Reset current velocity and send stop command
+        currentVelocity.x = 0;
+        currentVelocity.y = 0;
         if (motorTopic) {
-          const stopMsg = new ROSLIB.Message({ data: [0.0, 0.0] });
+          const stopMsg = new ROSLIB.Message({ data: '0,0,0,0,0,0' });
           motorTopic.publish(stopMsg);
         }
       } else {
-        // Start publishing joystick velocities at 10Hz
+        // Start publishing trigger velocities at 10Hz
         if (!velocityInterval) {
-          velocityInterval = setInterval(publishJoystickVelocities, 100);
+          velocityInterval = setInterval(publishTriggerVelocities, UPDATE_INTERVAL);
         }
       }
     });
@@ -516,9 +711,11 @@ class InputHandler {
 
   // Emergency stop on page unload
   window.addEventListener('beforeunload', () => {
+    currentVelocity.x = 0;
+    currentVelocity.y = 0;
     if (motorTopic) {
       try {
-        motorTopic.publish(new ROSLIB.Message({ data: [0.0, 0.0] }));
+        motorTopic.publish(new ROSLIB.Message({ data: '0,0,0,0,0,0' }));
       } catch (e) {
         console.error('Error publishing emergency stop:', e);
       }
