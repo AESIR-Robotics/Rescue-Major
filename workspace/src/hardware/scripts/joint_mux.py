@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Dual-mode keyboard teleoperation: Joint Control + Twist Control"""
 
-import sys, select, termios, tty, math, time
+import sys, select, termios, tty, math, time, os, signal, subprocess
 from abc import ABC, abstractmethod
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Header
 from geometry_msgs.msg import Twist
 from hardware.msg import JointControl
+from collections import deque
 
 # Terminal codes
 CLEAR, BOLD, DIM = '\033[2J\033[H', '\033[1m', '\033[2m'
@@ -53,7 +54,10 @@ class TeleopInterface(ABC):
     @abstractmethod
     def on_deactivate(self): pass
     @abstractmethod
+    def stop(self): pass
+    @abstractmethod
     def update(self): pass
+    
 
 DEFAULT_JOINT_KEYS = {
     'flipper_0': ('q', 'a'), 'flipper_1': ('w', 's'), 'flipper_2': ('e', 'd'),
@@ -92,8 +96,7 @@ class JointControlInterface(TeleopInterface):
         self.last_publish_time = time.time()
     
     def on_deactivate(self):
-        self.velocities = [0.0] * len(self.joint_names)
-        self._publish()
+        self.stop()
     
     def handle_key(self, key):
         self.last_key = key
@@ -114,12 +117,11 @@ class JointControlInterface(TeleopInterface):
             return True
         elif key == 'z':
             self.positions = [-1.0 if self.velocity_mode == 'hold' else 0.0] * len(self.joint_names)
-            self.velocities, self.efforts = [0.0] * len(self.joint_names), [0.0] * len(self.joint_names)
+            self.stop()
             self._publish()
             return True
         elif key == 'x':
-            self.velocities, self.efforts = [0.0] * len(self.joint_names), [0.0] * len(self.joint_names)
-            self._publish()
+            self.stop()
             return True
         elif key in self.key_map:
             idx, direction = self.key_map[key]
@@ -143,6 +145,10 @@ class JointControlInterface(TeleopInterface):
             if vel != 0:
                 self.velocities[idx] = self.speed * (-1 if vel < 0 else 1)
     
+    def stop(self):
+        self.velocities, self.efforts = [0.0] * len(self.joint_names), [0.0] * len(self.joint_names)
+        self._publish()
+
     def update(self):
         current_time = time.time()
         if current_time - self.last_publish_time >= 1.0 / self.republish_rate:
@@ -209,13 +215,11 @@ class TwistControlInterface(TeleopInterface):
         self.republish_rate, self.last_publish_time = 10.0, time.time()
     
     def on_activate(self):
-        self.x = self.y = self.z = self.th = 0
-        self._publish()
+        self.stop()
         self.last_publish_time = time.time()
     
     def on_deactivate(self):
-        self.x = self.y = self.z = self.th = 0
-        self._publish()
+        self.stop()
     
     def handle_key(self, key):
         self.last_key = key
@@ -240,10 +244,13 @@ class TwistControlInterface(TeleopInterface):
             self._publish()
             return True
         elif key == 'k' or key == ' ':
-            self.x = self.y = self.z = self.th = 0
-            self._publish()
+            self.stop()
             return True
         return False
+    
+    def stop(self):
+        self.x = self.y = self.z = self.th = 0
+        self._publish()
     
     def update(self):
         current_time = time.time()
@@ -295,6 +302,7 @@ class DualTeleopNode(Node):
         joint_topic = self.get_parameter('joint_topic').value
         twist_topic = self.get_parameter('twist_topic').value
         joint_names = self.get_parameter('joint_names').value
+
         self.joint_interface = JointControlInterface(self, joint_topic, joint_names)
         self.twist_interface = TwistControlInterface(self, twist_topic)
         self.current_interface = self.joint_interface
@@ -302,7 +310,96 @@ class DualTeleopNode(Node):
         self.current_interface.on_activate()
         self.keyboard = KeyboardReader()
         self.running = True
+
+        self.debug_log = deque(maxlen=10)
+
+        # --- Deadman state ---
+        self.deadman_triggered_ = False
+        self.operator_deadman_triggered_ = False
+        self.last_tmux_check_ = 0.0
+        self.tmux_check_interval_ = 0.5  
+        self.last_key_time = time.time()
+
+        # Detectar si estamos dentro de tmux
+        self.tmux_env = os.environ.get("TMUX")
+        self.tmux_socket_=""
+        if self.tmux_env:
+            self.tmux_socket_ = self.tmux_env.split(",")[0]
+            try:
+                result = subprocess.run(
+                    ["tmux", "-S", self.tmux_socket_,
+                    "display-message", "-p", "#{session_name}"],
+                    capture_output=True,
+                    text=True,
+                    timeout=0.5
+                )
+                if result.returncode == 0:
+                    self.tmux_session_ = result.stdout.strip()
+            except Exception as e:
+                self.debug(f"Failed to get session: {e}")
+        self.debug(self.tmux_env)
+        self.debug(self.tmux_socket_)
+        
+
+        # SIGHUP handler (solo útil fuera de tmux o si tmux muere)
+        signal.signal(signal.SIGHUP, self._handle_sighup)
     
+    def _handle_sighup(self, signum, frame):
+        self.stopInterf()
+        self.running = False
+
+    def debug(self, msg):
+        t = time.strftime("%H:%M:%S")
+        self.debug_log.append(f"[{t}] {msg}")
+
+    def _tmux_has_client(self) -> bool:
+        if not self.tmux_socket_ or not self.tmux_session_:
+            return True  # no estamos en tmux
+
+        try:
+            result = subprocess.run(
+                ["tmux", "-S", self.tmux_socket_,
+                "list-clients", "-t", self.tmux_session_],
+                capture_output=True,
+                text=True,
+                timeout=0.5
+            )
+
+            if result.returncode != 0:
+                self.debug(f"tmux error: {result.stderr.strip()}")
+                return False
+
+            clients = result.stdout.strip().splitlines()
+            return len(clients) > 0
+
+        except Exception as e:
+            self.debug(f"tmux exception: {e}")
+            return False
+    
+    def _check_connection_deadman(self):
+        if self.tmux_env:
+            now = time.time()
+            if now - self.last_tmux_check_ > self.tmux_check_interval_:
+                self.last_tmux_check_ = now
+
+                if not self._tmux_has_client():
+                    if not self.deadman_triggered_:
+                        self.debug("User de-ttached from tmux")
+                        self.deadman_triggered_ = True
+                        self.stopInterf()
+                    return False
+                
+                if self.deadman_triggered_:
+                    self.debug("User re-attached to tmux")
+                    self.deadman_triggered_ = False
+
+
+        return True
+
+    def stopInterf(self):
+        self.twist_interface.stop()
+        self.joint_interface.stop()
+
     def switch_interface(self, interface):
         if self.current_interface == interface: return
         self.current_interface.on_deactivate()
@@ -315,14 +412,37 @@ class DualTeleopNode(Node):
         sys.stdout.write(CLEAR)
         sys.stdout.write(MOVE_TOP)
         sys.stdout.write(self.current_interface.render())
+        sys.stdout.write(GREEN + '\n\nDEBUG INFO:\n' + YELLOW)
+        sys.stdout.write('\n'.join(self.debug_log))
+        sys.stdout.write('\n')
         sys.stdout.write('\033[J')
         sys.stdout.flush()
-    
+
     def run(self):
         print(CLEAR, end='')
         try:
+            self.last_key_time = time.time()
             while rclpy.ok() and self.running:
+                if not self._check_connection_deadman():
+                    self.render()
+                    rclpy.spin_once(self, timeout_sec=0.0)
+                    continue
+
                 key = self.keyboard.get_key(timeout=0.05)
+
+                # Operator dead man
+                if key != '':
+                    self.operator_deadman_triggered_ = False
+                    self.last_key_time = time.time()
+
+                now = time.time()
+                if now - self.last_key_time > 60.0 and not (self.deadman_triggered_ or self.operator_deadman_triggered_):
+                    self.operator_deadman_triggered_=True
+                    self.debug("Inactivity detected, stopping everything")
+                    self.stopInterf()
+
+                
+
                 if key in ('\x03', '\x1b'):
                     self.running = False
                     break
@@ -332,7 +452,8 @@ class DualTeleopNode(Node):
                     self.switch_interface(self.twist_interface)
                 elif key:
                     self.current_interface.handle_key(key)
-                self.current_interface.update()
+                if not self.deadman_triggered_:
+                    self.current_interface.update()
                 self.render()
                 rclpy.spin_once(self, timeout_sec=0.0)
         finally:
