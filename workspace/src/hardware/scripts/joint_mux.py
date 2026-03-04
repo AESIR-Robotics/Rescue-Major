@@ -61,7 +61,7 @@ class TeleopInterface(ABC):
 
 DEFAULT_JOINT_KEYS = {
     'flipper_0': ('q', 'a'), 'flipper_1': ('w', 's'), 'flipper_2': ('e', 'd'),
-    'flipper_3': ('r', 'f'), 'flipper_4': ('t', 'g'), 'flipper_5': ('y', 'h'),
+    'flipper_3': ('r', 'f'), 
 }
 
 class JointControlInterface(TeleopInterface):
@@ -80,7 +80,7 @@ class JointControlInterface(TeleopInterface):
         self.republish_rate, self.last_publish_time = 10.0, time.time()
     
     def _build_key_map(self):
-        extra = list('uijkop')
+        extra = list('tgyhujikolpmn')
         for idx, name in enumerate(self.joint_names):
             if name in DEFAULT_JOINT_KEYS:
                 inc_k, dec_k = DEFAULT_JOINT_KEYS[name]
@@ -225,6 +225,7 @@ class TwistControlInterface(TeleopInterface):
         self.last_key = key
         if key in self.MOVE_BINDINGS:
             self.x, self.y, self.z, self.th = self.MOVE_BINDINGS[key]
+            self.th *= -1
             self._publish()
             return True
         elif key == 'q':
@@ -261,7 +262,7 @@ class TwistControlInterface(TeleopInterface):
     def _publish(self):
         msg = Twist()
         msg.linear.x, msg.linear.y, msg.linear.z = self.x * self.speed, self.y * self.speed, self.z * self.speed
-        msg.angular.x, msg.angular.y, msg.angular.z = 0.0, 0.0, self.th * self.turn
+        msg.angular.x, msg.angular.y, msg.angular.z = 0.0, 0.0, self.th * self.turn 
         self.pub.publish(msg)
         self.last_publish_time = time.time()
     

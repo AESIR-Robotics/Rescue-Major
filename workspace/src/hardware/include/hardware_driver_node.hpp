@@ -7,7 +7,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <mutex>
 #include <rclcpp/logging.hpp>
 #include <string>
 #include <unordered_map>
