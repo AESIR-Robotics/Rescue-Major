@@ -70,7 +70,6 @@ install(TARGETS
 )
 
 install(PROGRAMS
-  scripts/motor_node.py
   scripts/joint_mux.py
   scripts/serial_sender.py
   DESTINATION lib/${PROJECT_NAME}

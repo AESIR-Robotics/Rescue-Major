@@ -71,7 +71,12 @@ class JointControlInterface(TeleopInterface):
         self.step, self.speed, self.speed_step = 0.1, 0.5, 0.1
         self.min_speed, self.max_speed = 0.0, 2.0
         self.velocity_mode = 'hold'
-        self.positions = [-1.0] * len(joint_names)
+
+        self.backupConstant = [0.0] * len(joint_names)
+        self.backupHold = [-1.0] * len(joint_names)
+
+        self.positions = self.backupHold
+
         self.velocities = [0.0] * len(joint_names)
         self.efforts = [0.0] * len(joint_names)
         self.key_map, self.bindings = {}, {}
@@ -112,13 +117,16 @@ class JointControlInterface(TeleopInterface):
             return True
         elif key == 'v':
             self.velocity_mode = 'hold' if self.velocity_mode == 'constant' else 'constant'
-            self.positions = [-1.0] * len(self.joint_names) if self.velocity_mode == 'hold' else [0.0] * len(self.joint_names)
-            self._publish()
+            if self.velocity_mode == "hold":
+                self.positions = self.backupHold
+                self.stop()
+            else:
+                self.positions = self.backupConstant
+                self._publish()
             return True
         elif key == 'z':
             self.positions = [-1.0 if self.velocity_mode == 'hold' else 0.0] * len(self.joint_names)
             self.stop()
-            self._publish()
             return True
         elif key == 'x':
             self.stop()
