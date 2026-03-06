@@ -13,3 +13,4 @@ pyyaml
 opencv-python
 serial
 pyzbar
+catkin_pkg

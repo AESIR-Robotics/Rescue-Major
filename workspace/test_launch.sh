@@ -26,7 +26,9 @@ else
 	SOURCE_ROS_DIR="/opt/ros/jazzy/setup.bash"
 fi
 
-#sudo chmod 666 /dev/ttyUSB0
+if [ -f "/dev/ttyUSB0" ]; then
+	sudo chmod 666 /dev/ttyUSB0
+fi
 
 echo "launch.bash: using ROS setup: $SOURCE_ROS_DIR"
 echo "launch.bash: using venv:      $SOURCE_VENV_DIR"
@@ -43,42 +45,39 @@ ENV_CMD="bash -lc ' \
   source \"$SOURCE_LOCAL_DIR\" && \
   exec bash'"
 
-session_name="rescue_aesir_$(date +%s)"
+session_name="test_move_$(date +%s)"
 
 # Crear sesión con default-command
 tmux new-session -d -s "$session_name" -n main "$ENV_CMD"
 tmux set-option -t "$session_name" default-command "$ENV_CMD"
 
-# Splits
+# Splits: 3 panes
+# Layout:
+# ┌──────────┬──────────┐
+# │          │    1     │
+# |    0     |──────────┤
+# │          │    2     │
+# └──────────┴──────────┘
 tmux split-window -v
+tmux select-pane -t 1
+tmux split-window -h
 tmux select-pane -t 0
-tmux split-window -h
-tmux select-pane -t 2
-tmux split-window -h
 
 # Comandos
-tmux send-keys -t 0 "ros2 run rosbridge_server rosbridge_websocket --ros-args --param ssl:=true --param certfile:=\"$HOME/aesir/cert.pem\" --param keyfile:=\"$HOME/aesir/key.pem\" --param port:=9090 --param address:=\"0.0.0.0\"" Enter
-tmux send-keys -t 1 "python3 src/teleoperation/scripts/server_rtc.py --cert-file ~/aesir/cert.pem --key-file ~/aesir/key.pem --host 0.0.0.0 --port 8081" Enter
-tmux send-keys -t 2 "ros2 run hardware dc_motors" Enter
-#tmux send-keys -t 2 "ros2 run hardware dc_motors --ros-args --log-level debug" Enter
-tmux send-keys -t 3 "ros2 launch vision vision.launch.py" Enter
+# Pane 0: Joint teleop (top left)
+tmux send-keys -t 0 "ros2 run hardware joint_mux.py" Enter
 
-# Pane 1 (bottom-left): run teleoperation command_server.py
-#tmux select-pane -t 1
-#tmux send-keys "python3 /src/teleoperation/scripts/server_rtc.py" Enter
-#sleep 2
+# Pane 1: Differential robot teleop (top right)
+# Using teleop_twist_keyboard package with custom topic
+#tmux send-keys -t 1 "ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -r cmd_vel:=hardware_node/cmd_vel" Enter
 
-# Pane 2 (bottom-right): run teleoperation server.py
-#tmux select-pane -t 2
-#tmux send-keys "ros2 run hardware dc_motors" Enter
-#sleep 1
+# Pane 2: Monitor joint states (bottom left)
+tmux send-keys -t 1 "ros2 topic echo /hardware_node/joint_states" Enter
 
-# Pane 2 (bottom-right): run teleoperation server.py
-#tmux select-pane -t 3
-#tmux send-keys "ros2 run vision video_stream_publisher" Enter
-#sleep 2
+# Pane 3: Monitor velocity states (bottom right)
+tmux send-keys -t 2 "ros2 topic echo /hardware_node/state_vel" Enter
 
-sleep 1
+sleep 3
 
 # Optional key bindings to switch panes
 tmux bind-key -n C-a select-pane -t :.+
