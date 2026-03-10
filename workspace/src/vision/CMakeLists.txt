@@ -90,7 +90,9 @@ install(DIRECTORY
 )
 
 install(DIRECTORY
+  srv
   launch
+  config
   DESTINATION share/${PROJECT_NAME}/
 )
 

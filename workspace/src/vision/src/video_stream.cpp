@@ -20,22 +20,31 @@ class VideoStreamPublisher : public rclcpp::Node {
 public:
     VideoStreamPublisher()
     : Node("video_stream_publisher") {
-        // Inicializar valores por defecto para evitar basura de memoria
-        WIDTH = 640; 
-        HEIGHT = 480; 
-        FPS = 30;
 
-        this->declare_parameter<bool>("enable_jetson", false);
+        this->declare_parameter<string>("device", "jetson");
         this->declare_parameter<vector<long int>>("camera_devices_index", {0});
+        this->declare_parameter<vector<string>>("capture_formats_", {"MJPG", "MJPG", "YUYV"});
+        this->declare_parameter<std::vector<int64_t>>("camera_widths", {1920});
+        this->declare_parameter<std::vector<int64_t>>("camera_heights", {1080});
+        this->declare_parameter<std::vector<int64_t>>("camera_fps", {30});
         this->declare_parameter<int>("thermal_camera_index", -1);
-        this->declare_parameter<bool>("thermal_enable", true);
+        this->declare_parameter<bool>("thermal_enable", false);
 
         vector<long int> cam_indices;
 
-        this->get_parameter("enable_jetson", enable_jetson_);
+        this->get_parameter("device", device_);
         this->get_parameter("camera_devices_index", cam_indices);
+        this->get_parameter("capture_formats_", capture_formats_);
+        this->get_parameter("camera_widths", camera_widths_);
+        this->get_parameter("camera_heights", camera_heights_);
+        this->get_parameter("camera_fps", camera_fps_);
         this->get_parameter("thermal_camera_index", thermal_camera_index_);
         this->get_parameter("thermal_enable", thermal_enabled_);
+
+        this->declare_parameter<std::string>("pipeline_templates.MJPG", "v4l2src device=/dev/video{dev} ! image/jpeg, width={w}, height={h}, framerate={fps}/1 !  jpegparse ! nvv4l2decoder mjpeg=1 ! video/x-raw(memory:NVMM) ! nvvidconv ! video/x-raw,  format=BGRx ! videoconvert ! video/x-raw, format=BGR ! appsink drop=true sync=false max-buffer=1");
+        this->declare_parameter<std::string>("pipeline_templates.CSI", "nvarguscamerasrc sensor-id={dev} ! video/x-raw(memory:NVMM), width={w}, height={h}, format=NV12, framerate={fps}/1 ! nvvidconv ! video/x-raw, format=I420 ! appsink drop=true sync=false max-buffer=1");
+        this->declare_parameter<std::string>("pipeline_templates.H264", "v4l2src device=/dev/video{dev} ! video/x-h264, width={w}, height={h}, framerate={fps}/1 ! h264parse ! nvv4l2decoder ! video/x-raw(memory:NVMM) ! nvvidconv ! video/x-raw, format=I420 ! appsink drop=true sync=false max-buffer=1");
+        this->declare_parameter<std::string>("pipeline_templates.YUYV", "v4l2src device=/dev/video{dev} ! video/x-raw, format=YUYV, width={w}, height={h}, framerate={fps}/1 ! nvvidconv ! video/x-raw(memory:NVMM) ! nvvidconv ! video/x-raw, format=I420 ! appsink drop=true sync=false max-buffer=1");
         
         camera_devices_.assign(cam_indices.begin(), cam_indices.end());
 
@@ -62,11 +71,8 @@ public:
             cout << "Camera device index in vector pos " << i << " : /dev/video" << camera_devices_[i] << endl;
         }
 
-        // --- BUCLE DE INICIALIZACIÓN ---
         for (size_t i = 0; i < camera_devices_.size(); i++) {
-            
-            // Crear publishers solo para cámaras normales
-            // Si hay térmica, asumimos que es la última del vector si thermal_index != -1
+
             bool is_thermal = (camera_devices_[i] == thermal_camera_index_) && (thermal_camera_index_ != -1);
 
             if(!is_thermal){
@@ -75,33 +81,45 @@ public:
                 publishers_.push_back(pub);
             }
 
-            cv::VideoCapture cap;
-            
-            if(i == 0) { WIDTH=1920; HEIGHT=1080; FPS=30; } // Config principal
-            else { WIDTH=1280; HEIGHT=720; FPS=30; }       // Config secundarias
+            string dev = to_string(camera_devices_[i]);
+            string w = to_string(camera_widths_[i]);
+            string h = to_string(camera_heights_[i]);
+            string fps = to_string(camera_fps_[i]);
+            string format = capture_formats_[i];
 
-            if(enable_jetson_){
-                // Configuration for jetson
-                string pipeline =
-                    "v4l2src device=/dev/video" + to_string(camera_devices_[i]) + " ! "
-                    "image/jpeg, width=" + to_string(WIDTH) + ", height=" + to_string(HEIGHT) + ", framerate=" + to_string(FPS) + "/1 !"
-                    "jpegparse ! " 
-                    "nvv4l2decoder ! video/x-raw(memory:NVMM) !"               
-                    "nvvidconv ! video/x-raw, format=BGRx ! "
-                    "videoconvert ! video/x-raw, format=BGR ! " 
-                    "appsink drop=true sync=false max-buffer=1";
+            cv::VideoCapture cap;
+            string pipeline = "";
+
+            if(device_ == "jetson"){
+
+                string template_key = "pipeline_templates." + format;
+                string raw_template = this->get_parameter(template_key).as_string();
+
+                if (raw_template.empty()) {
+                    RCLCPP_ERROR(this->get_logger(), "Template for format '%s' is missing in YAML!", format.c_str());
+                    continue;
+                }
+
+                pipeline = format_pipeline(raw_template, dev, w, h, fps);
+
+                cout << "Opening Jetson pipeline for cam " << i << ":\n" << pipeline << endl;
                 cap.open(pipeline, cv::CAP_GSTREAMER);
             }
-            else{
-                // Configuración para Laptop / PC Genérica
+            else if(device_ == "generic" || device_ == "raspberry"){
+                // Configuración para PC Genérica
                 cout << "Opening generic /dev/video" << camera_devices_[i] << endl;
                 cap.open(camera_devices_[i], cv::CAP_V4L2);
                 
                 if(cap.isOpened()){
-                    cap.set(cv::CAP_PROP_FRAME_WIDTH, WIDTH);
-                    cap.set(cv::CAP_PROP_FRAME_HEIGHT, HEIGHT);
-                    cap.set(cv::CAP_PROP_FPS, FPS);
+                    cap.set(cv::CAP_PROP_FRAME_WIDTH, stoi(w));
+                    cap.set(cv::CAP_PROP_FRAME_HEIGHT, stoi(h));
+                    cap.set(cv::CAP_PROP_FPS, stoi(fps));
                 }
+            }
+            else{
+                // Configuración para Laptop / PC Genérica
+                cout << "No device specified for /dev/video" << camera_devices_[i] << endl;
+                return;
             }
 
             if (!cap.isOpened()) {
@@ -127,6 +145,23 @@ public:
     }
 
 private:
+
+    string format_pipeline(std::string templ, const std::string& dev, const std::string& w, const std::string& h, const std::string& fps) {
+        auto replace_all = [](std::string& str, const std::string& from, const std::string& to) {
+            size_t start_pos = 0;
+            while((start_pos = str.find(from, start_pos)) != std::string::npos) {
+                str.replace(start_pos, from.length(), to);
+                start_pos += to.length();
+            }
+        };
+        
+        replace_all(templ, "{dev}", dev);
+        replace_all(templ, "{w}", w);
+        replace_all(templ, "{h}", h);
+        replace_all(templ, "{fps}", fps);
+        
+        return templ;
+    }
     // --- CALLBACK DE VIDEO  ---
     void cameras_callback() {
         // Calcular el límite correcto para iterar
@@ -231,11 +266,14 @@ private:
 
 private:    
     int num_cam_s_;
-    vector<int> camera_devices_;
-    bool enable_jetson_;
+    string device_;
     bool thermal_enabled_;
     int thermal_camera_index_;
-    int WIDTH, HEIGHT, FPS;
+    vector<int> camera_devices_;
+    vector<std::string> capture_formats_;
+    vector<int64_t> camera_widths_;
+    vector<int64_t> camera_heights_;
+    vector<int64_t> camera_fps_;
 
     vector<rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr> publishers_;
     vector<cv::VideoCapture> cameras_;
