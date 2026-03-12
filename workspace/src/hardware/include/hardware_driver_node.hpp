@@ -3,9 +3,11 @@
 #include <algorithm>
 #include <array>
 #include <bitset>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <ctime>
 #include <memory>
 #include <rclcpp/logging.hpp>
 #include <string>
@@ -17,7 +19,7 @@
 
 #include <geometry_msgs/msg/twist.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
-
+#include <diagnostic_msgs/msg/diagnostic_array.hpp>
 #include "hardware/msg/joint_control.hpp"
 
 #include "commands.hpp"
@@ -114,8 +116,33 @@ struct DCState {
 using namespace CommandsNC;
 
 // =============================================================================
-// Declaration
+// HardwareDiagnostics
+// Holds the last-known diagnostic state written by the tick thread (I2C
+// callbacks and error recovery).  Wrapped in Guarded<> so it is safe to
+// snapshot from a future MultiThreadedExecutor timer callback without changes
+// to the write sites.
+//
+// NOTE: with the current SingleThreadedExecutor all writes and the diag timer
+// run on the same thread — the mutex has zero contention.  If the executor is
+// ever changed to MultiThreadedExecutor this wrapper already provides safety.
 // =============================================================================
+
+struct HardwareDiagnostics {
+  // Connection
+  bool     i2c_connected{false};
+  int      reconnect_attempts{0};
+
+  // Byte-loss counter reported by the MCU (populated when ERROR message added)
+  uint32_t tx_byte_loss_count{0};
+  uint32_t rx_byte_loss_count{0};
+
+  // Set to true by any write site so diagTick() knows a publish is warranted.
+  bool updated{false};
+
+  void markUpdated() { updated = true; }
+  bool anyUpdated()  const { return updated; }
+  void clearUpdated()      { updated = false; }
+};
 
 class HardwareDriverNode : public rclcpp::Node {
 public:
@@ -125,7 +152,9 @@ public:
 private:
   // --- Unit conversion helpers ----------------------------------------------
   int32_t radToSteps(double rad) const;
-  double  stepsToRad(int32_t steps) const;
+
+  template<typename T>
+  double stepsToRad(T steps) const;
   /// Differential drive: [m/s, rad/s] → [left_pct, right_pct] clamped [-100,100]
   std::pair<float, float> twistToMotorPct(double linear, double angular) const;
 
@@ -147,10 +176,10 @@ private:
   // --- Publishing -----------------------------------------------------------
   void publishJointFeedback();
   void publishDCFeedback();
+  void publishDiagnostics();
 
-  // =========================================================================
-  // Members
-  // =========================================================================
+  void diagTick();
+
   Protocol_Handler_I2C stepper_micro{this->get_logger()};
 
   int steps_per_revolution{40000};
@@ -172,7 +201,13 @@ private:
 
   // Timing counters
   int ticks_since_feedback_poll_{0};
-  static constexpr int feedback_poll_interval_ticks_{3};
+  static constexpr int feedback_poll_interval_ticks_{4};
+
+  int ticks_since_feedback_publish_joint_{0};
+  static constexpr int feedback_publish_joint_interval_ticks_{250};
+
+  int ticks_since_feedback_publish_dc_{0};
+  static constexpr int feedback_publish_dc_interval_ticks_{250};
 
   int ticks_since_update_{0};
   static constexpr int update_interval_ticks_{3};
@@ -184,6 +219,17 @@ private:
   // to send the full state regardless of updated bits.
   bool needs_full_resync_{true};
 
+  // Diagnostics state — written by tick thread, snapshotted by diag timer.
+  // Safe for MultiThreadedExecutor via Guarded<>.
+  Guarded<HardwareDiagnostics> diag_data_;
+
+  // diagTick() increments this each call; when it reaches diag_force_ticks_
+  // a publish is forced even if nothing changed (keeps aggregator alive at ~1 Hz).
+  int  diag_ticks_since_pub_{0};
+  // At diag_hz_=5 this gives a forced publish every 5 ticks = 1 Hz.
+  static constexpr int  diag_force_ticks_{5};
+  static constexpr double diag_hz_{5.0};
+
   // ROS interfaces
   rclcpp::QoS qos_cmd_{rclcpp::QoS(1).best_effort()};
   rclcpp::QoS qos_feedback_{rclcpp::QoS(10).reliable()};
@@ -192,6 +238,8 @@ private:
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr      vel_state_pub_;
   rclcpp::Subscription<hardware::msg::JointControl>::SharedPtr joint_cmd_sub_;
   rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr   joint_state_pub_;
+  rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr   error_state_pub_;
+  rclcpp::TimerBase::SharedPtr diag_timer_;
 };
 
 // =============================================================================
@@ -232,6 +280,13 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
 
   joint_state_pub_ = this->create_publisher<sensor_msgs::msg::JointState>(
       "hardware_node/joint_states", qos_feedback_);
+
+  error_state_pub_ = this->create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
+    "hardware_node/diagnostic_feed", qos_feedback_);
+
+  diag_timer_ = this->create_wall_timer(
+      std::chrono::duration<double>(1.0 / diag_hz_),
+      std::bind(&HardwareDriverNode::diagTick, this));
 }
 
 // -----------------------------------------------------------------------------
@@ -265,11 +320,13 @@ inline void HardwareDriverNode::tick() {
   }
 
   // 5. Publish feedback if I2C callbacks updated the feedback structs
-  if (feedback_joints.anyUpdated()) {
+  if (feedback_joints.anyUpdated() || ++ticks_since_feedback_publish_joint_ >= feedback_publish_joint_interval_ticks_) {
+    ticks_since_feedback_publish_joint_ = 0;
     publishJointFeedback();
     feedback_joints.clearUpdated(feedback_joints.updated);
   }
-  if (feedback_dc.anyUpdated()) {
+  if (feedback_dc.anyUpdated() || ++ticks_since_feedback_publish_dc_ >= feedback_publish_dc_interval_ticks_) {
+    ticks_since_feedback_publish_dc_ = 0;
     publishDCFeedback();
     feedback_dc.clearUpdated(feedback_dc.updated);
   }
@@ -376,7 +433,8 @@ inline int32_t HardwareDriverNode::radToSteps(double rad) const {
   return static_cast<int32_t>(std::llround(rad / (2.0 * M_PI) * steps_per_revolution));
 }
 
-inline double HardwareDriverNode::stepsToRad(int32_t steps) const {
+template<typename T>
+inline double HardwareDriverNode::stepsToRad(T steps) const {
   return static_cast<double>(steps) * (2.0 * M_PI) / steps_per_revolution;
 }
 
@@ -386,6 +444,20 @@ inline double HardwareDriverNode::stepsToRad(int32_t steps) const {
 // These run on the tick thread — write only to feedback_* structs, O(1), no locks.
 // -----------------------------------------------------------------------------
 inline void HardwareDriverNode::generateCallbacks() {
+
+  stepper_micro.read_callbacks.emplace(
+      ReadCommandsNC::BYTELOSS,
+      [this](const uint8_t *data, size_t size) {
+        bool ok = ReadCommandsNC::dispatch_one<ReadCommandsNC::BYTELOSS>(
+            data, size, [&](const auto &info) {
+              auto &[p0, p1] = info;
+              diag_data_.with([&p0, &p1](HardwareDiagnostics &d){
+                d.tx_byte_loss_count = p0;
+                d.rx_byte_loss_count = p1;
+              });
+            });
+        if (!ok) RCLCPP_WARN(get_logger(), "BYTELOSS size mismatch (got %zu)", size);
+      });
 
   // POSITION: steps → rad
   stepper_micro.read_callbacks.emplace(
@@ -409,13 +481,11 @@ inline void HardwareDriverNode::generateCallbacks() {
         bool ok = ReadCommandsNC::dispatch_one<ReadCommandsNC::SPEED>(
             data, size, [&](const auto &info) {
               auto &[s0, s1, s2, s3] = info;
-              auto c = [&](float s) {
-                return static_cast<double>(s) * (2.0 * M_PI) / steps_per_revolution;
-              };
-              feedback_joints.setSpeed(0, c(s0));
-              feedback_joints.setSpeed(1, c(s1));
-              feedback_joints.setSpeed(2, c(s2));
-              feedback_joints.setSpeed(3, c(s3));
+              
+              feedback_joints.setSpeed(0, stepsToRad(s0));
+              feedback_joints.setSpeed(1, stepsToRad(s1));
+              feedback_joints.setSpeed(2, stepsToRad(s2));
+              feedback_joints.setSpeed(3, stepsToRad(s3));
             });
         if (!ok) RCLCPP_WARN(get_logger(), "SPEED size mismatch (got %zu)", size);
       });
@@ -427,13 +497,11 @@ inline void HardwareDriverNode::generateCallbacks() {
         bool ok = ReadCommandsNC::dispatch_one<ReadCommandsNC::ACCEL>(
             data, size, [&](const auto &info) {
               auto &[a0, a1, a2, a3] = info;
-              auto c = [&](int32_t a) {
-                return static_cast<double>(a) * (2.0 * M_PI) / steps_per_revolution;
-              };
-              feedback_joints.setAcceleration(0, c(a0));
-              feedback_joints.setAcceleration(1, c(a1));
-              feedback_joints.setAcceleration(2, c(a2));
-              feedback_joints.setAcceleration(3, c(a3));
+
+              feedback_joints.setAcceleration(0, stepsToRad(a0));
+              feedback_joints.setAcceleration(1, stepsToRad(a1));
+              feedback_joints.setAcceleration(2, stepsToRad(a2));
+              feedback_joints.setAcceleration(3, stepsToRad(a3));
             });
         if (!ok) RCLCPP_WARN(get_logger(), "ACCEL size mismatch (got %zu)", size);
       });
@@ -483,9 +551,10 @@ inline void HardwareDriverNode::jointCommandCallback(
         RCLCPP_WARN(get_logger(), "Joint index out of range: %s", msg->joint_names[i].c_str());
         continue;
       }
-      // msg fields are already in rad / rad/s
+      // msg fields are already in rad / rad/s / rad/s*s
       if (i < msg->position.size()) d.setPosition(idx, msg->position[i]);
       if (i < msg->velocity.size()) d.setSpeed(idx,    msg->velocity[i]);
+      if (i < msg->acceleration.size()) d.setAcceleration(idx, msg->acceleration[i]);
     }
   });
 }
@@ -496,8 +565,18 @@ inline bool HardwareDriverNode::errorRecovery() {
   wait_counter_ = 0;
   if (stepper_micro.reconnect()) {
     needs_full_resync_ = true;
+    diag_data_.with([](HardwareDiagnostics &d) {
+      d.i2c_connected = true;
+      d.reconnect_attempts = 0;
+      d.markUpdated();
+    });
     return true;
   }
+  diag_data_.with([](HardwareDiagnostics &d) {
+    ++d.reconnect_attempts;
+    d.i2c_connected = false;
+    d.markUpdated();
+  });
   return false;
 }
 
@@ -522,4 +601,77 @@ inline void HardwareDriverNode::publishDCFeedback() {
   msg.linear.x  = feedback_dc.linear;
   msg.angular.z = feedback_dc.angular;
   vel_state_pub_->publish(msg);
+}
+
+inline void HardwareDriverNode::diagTick() {
+  bool changed = diag_data_.with([](HardwareDiagnostics &d) {
+    return d.anyUpdated();
+  });
+
+  bool force = (++diag_ticks_since_pub_ >= diag_force_ticks_);
+
+  if (changed || force) {
+    diag_ticks_since_pub_ = 0;
+    publishDiagnostics();
+    diag_data_.with([](HardwareDiagnostics &d) { d.clearUpdated(); });
+  }
+}
+
+// -----------------------------------------------------------------------------
+// publishDiagnostics — builds and publishes the DiagnosticArray from a
+// snapshot of diag_data_.  Add KeyValue entries here when MCU error messages
+// are implemented.
+// -----------------------------------------------------------------------------
+inline void HardwareDriverNode::publishDiagnostics() {
+  auto snap = diag_data_.snapshot();
+
+  diagnostic_msgs::msg::DiagnosticArray array_msg;
+  array_msg.header.stamp = this->now();
+  {
+  diagnostic_msgs::msg::DiagnosticStatus status;
+  status.name      = this->get_name();
+  status.hardware_id = stepper_micro.getDevice();
+
+  if (snap.i2c_connected) {
+    status.level   = diagnostic_msgs::msg::DiagnosticStatus::OK;
+    status.message = "Connected";
+  } else {
+    status.level   = diagnostic_msgs::msg::DiagnosticStatus::ERROR;
+    status.message = "I2C disconnected";
+  }
+
+  // Reconnect attempt counter — always visible in rqt_robot_monitor
+  diagnostic_msgs::msg::KeyValue kv_reconnects;
+  kv_reconnects.key   = "reconnect_attempts";
+  kv_reconnects.value = std::to_string(snap.reconnect_attempts);
+  status.values.push_back(kv_reconnects);
+  array_msg.status.push_back(status);
+  }
+
+  {
+  diagnostic_msgs::msg::DiagnosticStatus status;
+  status.name      = "Byte Loss";
+  status.hardware_id = stepper_micro.getDevice();
+
+  if (snap.i2c_connected) {
+    status.level   = diagnostic_msgs::msg::DiagnosticStatus::OK;
+    status.message = "Info";
+  }
+
+  // Reconnect attempt counter — always visible in rqt_robot_monitor
+  diagnostic_msgs::msg::KeyValue kv_reconnects_tx, kv_reconnects_rx;
+  kv_reconnects_tx.key   = "tx_byte_loss";
+  kv_reconnects_tx.value = std::to_string(snap.tx_byte_loss_count);
+  status.values.push_back(kv_reconnects_tx);
+
+  kv_reconnects_rx.key   = "tx_byte_loss";
+  kv_reconnects_rx.value = std::to_string(snap.rx_byte_loss_count);
+  status.values.push_back(kv_reconnects_rx);
+
+  array_msg.status.push_back(status);
+  }
+
+  // TODO: add motor error flags here when MCU error message is implemented
+
+  error_state_pub_->publish(array_msg);
 }

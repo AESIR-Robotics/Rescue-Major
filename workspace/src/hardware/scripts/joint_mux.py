@@ -170,7 +170,7 @@ class JointControlInterface(TeleopInterface):
         msg.header.frame_id = 'world'
         msg.joint_names, msg.position = list(self.joint_names), list(self.positions)
         msg.velocity, msg.effort = list(self.velocities), list(self.efforts)
-        msg.acceleration = [20000.0] * len(self.joint_names)
+        msg.acceleration = [math.pi] * len(self.joint_names)
         self.pub.publish(msg)
         self.last_publish_time = time.time()
     

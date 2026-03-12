@@ -11,6 +11,7 @@ find_package(rclpy              REQUIRED)
 find_package(rclcpp             REQUIRED)
 find_package(std_msgs           REQUIRED)
 find_package(geometry_msgs      REQUIRED)
+find_package(diagnostic_msgs    REQUIRED)
 find_package(control_msgs       REQUIRED)
 find_package(trajectory_msgs    REQUIRED)
 find_package(sensor_msgs        REQUIRED)
@@ -42,6 +43,7 @@ ament_target_dependencies(dc_motors
   trajectory_msgs
   sensor_msgs
   geometry_msgs
+  diagnostic_msgs
   control_msgs
 )
 

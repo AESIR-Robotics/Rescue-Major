@@ -77,7 +77,7 @@ template <ReadCommand CMD> struct packetSend  { using type = void; };
 template <ReadCommand CMD> struct packetReturn { using type = void; };
 
 template <> struct packetSend<BYTELOSS>      { using type = std::tuple<>;   }; 
-template <> struct packetReturn<BYTELOSS>    { using type = std::tuple<uint32_t>;   }; // Amount of bytes lost
+template <> struct packetReturn<BYTELOSS>    { using type = std::tuple<uint32_t, uint32_t>;   }; // Amount of bytes lost
 
 template <> struct packetSend<SPEED>      { using type = std::tuple<>; };
 template <> struct packetReturn<SPEED>    { using type = std::tuple<float, float, float, float>; }; // speed per motor
