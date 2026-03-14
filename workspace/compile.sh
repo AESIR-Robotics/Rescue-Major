@@ -46,7 +46,7 @@ source ../.venv/bin/activate
 
 colcon build --packages-select vision_opencv --cmake-args -DCMAKE_BUILD_TYPE=Release
 colcon build --packages-select hardware --cmake-args -DCMAKE_BUILD_TYPE=Release
-soruce install/setup.bash
+source install/setup.bash
 colcon build --packages-select teleoperation --cmake-args -DCMAKE_BUILD_TYPE=Release
 colcon build --packages-select vision --cmake-args -DCMAKE_BUILD_TYPE=Release
 
