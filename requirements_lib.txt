@@ -1,0 +1,11 @@
+libopencv-dev
+libwebsocketpp-dev 
+libboost-all-dev 
+libssl-dev tmux 
+ros-humble-rosbridge-server 
+ros-humble-cv-bridge 
+ros-humble-control-msgs 
+libzbar0 
+portaudio19-dev
+i2c-tools 
+libi2c-dev

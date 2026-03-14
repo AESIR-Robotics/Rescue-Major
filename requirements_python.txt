@@ -4,12 +4,12 @@ av2
 ultralytics
 pyzbar
 DateTime
-lark
-empy==3.3.4
 websockets
-numpy<2
 pyaudio
 pyyaml
 opencv-python
-serial
+pyserial
 pyzbar
+lark
+numpy<2
+empy==3.3.4

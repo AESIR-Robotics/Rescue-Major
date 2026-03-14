@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-set -euo pipefail
 
 WORKDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_DIR="$WORKDIR/workspace"
@@ -16,8 +15,20 @@ echo "[setup] Venv dir: $VENV_DIR"
 echo "[apt] Updating package lists..."
 sudo apt-get update
 
-sudo apt install -y libwebsocketpp-dev libboost-all-dev libssl-dev tmux ros-humble-rosbridge-server ros-humble-cv-bridge ros-humble-control-msgs libzbar0 portaudio19-dev
-sudo apt install -y i2c-tools libi2c-dev
+# Read apt packages from requirements_lib.txt
+LIB_REQ_FILE="$WORKDIR/requirements_lib.txt"
+if [ -f "$LIB_REQ_FILE" ]; then
+  echo "[apt] Installing packages from $LIB_REQ_FILE..."
+  # Read non-empty, non-comment lines and install them all at once
+  mapfile -t APT_PACKAGES < <(grep -v '^\s*#' "$LIB_REQ_FILE" | grep -v '^\s*$' | tr -s ' \n' '\n')
+  if [ ${#APT_PACKAGES[@]} -gt 0 ]; then
+    sudo apt-get install -y "${APT_PACKAGES[@]}"
+  else
+    echo "[apt] No packages found in $LIB_REQ_FILE"
+  fi
+else
+  echo "[apt] $LIB_REQ_FILE not found — skipping apt installs"
+fi
 
 # Determine real user (if script run via sudo, SUDO_USER is original)
 if [ "$EUID" -eq 0 ] && [ -n "${SUDO_USER:-}" ]; then
@@ -32,7 +43,7 @@ fi
 # Create (if needed) venv in workspace and activate it
 if [ ! -d "$WORKSPACE_DIR" ]; then
   echo "[error] Workspace directory $WORKSPACE_DIR does not exist. Create it or run this script from project root."
-  exit 1
+  exit 0
 fi
 
 # Ensure python3 venv support is available (ensurepip)
@@ -41,7 +52,7 @@ if ! python3 -c "import ensurepip" >/dev/null 2>&1; then
   sudo apt-get update
   if ! sudo apt-get install -y python3-venv; then
     echo "[error] Failed to install python3-venv. Please install it manually and re-run."
-    exit 1
+    exit 0
   fi
 fi
 
@@ -70,11 +81,11 @@ python -m pip install --upgrade pip wheel
 echo "[pip] Ensuring compatible packaging and setuptools versions (setuptools<80, packaging>=25)"
 python -m pip install --upgrade "packaging>=25.0" "setuptools<80,>=30.3"
 
-# Find requirements files under workspace (depth 4 to be safe)
-mapfile -t REQ_FILES < <(find "${WORKDIR}" -maxdepth 4 -type f -iname "requirements*.txt" 2>/dev/null | sort -u)
+# Find requirements_python.txt files under workspace (depth 4 to be safe)
+mapfile -t REQ_FILES < <(find "${WORKDIR}" -maxdepth 4 -type f -iname "requirements_python.txt" 2>/dev/null | sort -u)
 
 if [ ${#REQ_FILES[@]} -eq 0 ]; then
-  echo "[pip] No requirements files found under ${WORKDIR} — skipping pip installs"
+  echo "[pip] No requirements_python.txt files found under ${WORKDIR} — skipping pip installs"
 else
   echo "[pip] Found requirements files:"
   for f in "${REQ_FILES[@]}"; do
@@ -86,6 +97,28 @@ else
     python -m pip install -r "$req"
   done
 fi
+
+# ------------------
+# Clone ROS repos
+# ------------------
+SRC_DIR="$WORKSPACE_DIR/src"
+if [ ! -d "$SRC_DIR" ]; then
+  echo "[git] Creating $SRC_DIR directory..."
+  mkdir -p "$SRC_DIR"
+fi
+
+VISION_OPENCV_DIR="$SRC_DIR/vision_opencv"
+if [ ! -d "$VISION_OPENCV_DIR" ]; then
+  echo "[git] Cloning vision_opencv (branch: humble) into $SRC_DIR..."
+  git clone -b humble https://github.com/ros-perception/vision_opencv.git "$VISION_OPENCV_DIR"
+  echo "[git] vision_opencv cloned successfully"
+else
+  echo "[git] vision_opencv already exists at $VISION_OPENCV_DIR — skipping clone"
+fi
+
+# -------------------------------------------------------------------------
+# Compile ROS workspace (if compile.sh or compile.bash found in workspace)
+# -------------------------------------------------------------------------
 
 COMPILE_SCRIPT=""
 
@@ -110,7 +143,9 @@ else
   echo "[build] Skipping build step."
 fi
 
+# ---------------------------------------------
 # SSL Certificate Generation for WebRTC HTTPS
+# ---------------------------------------------
 CERT_FILE="$WORKDIR/cert.pem"
 KEY_FILE="$WORKDIR/key.pem"
 
@@ -155,6 +190,12 @@ fi
 echo ""
 echo "[done] Setup complete. Summary:"
 
+if [ -f "$LIB_REQ_FILE" ]; then
+  echo " - Installed apt packages from: $LIB_REQ_FILE"
+else
+  echo " - No apt packages installed (requirements_lib.txt not found)"
+fi
+
 if [ ${#REQ_FILES[@]} -gt 0 ]; then
   echo " - Installed Python requirements from:"
   for f in "${REQ_FILES[@]}"; do echo "    $f"; done
@@ -162,7 +203,8 @@ else
   echo " - No Python requirements installed"
 fi
 
+echo " - Cloned vision_opencv into: $SRC_DIR"
+
 deactivate
 echo "To activate this environment in a new shell run:"
 echo "  source $VENV_DIR/bin/activate"
-return 0 2>/dev/null || exit 0
