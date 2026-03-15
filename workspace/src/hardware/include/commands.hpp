@@ -57,7 +57,7 @@ template <> struct packetReturn<SPEED>    { using type = std::tuple<>;          
 template <> struct packetSend<POSITION>   { using type = std::tuple<uint8_t, int32_t>;  }; // motor mask, position
 template <> struct packetReturn<POSITION> { using type = std::tuple<>;                  };
 
-template <> struct packetSend<ACCEL>   { using type = std::tuple<uint8_t, int32_t>;  }; // motor mask, position
+template <> struct packetSend<ACCEL>   { using type = std::tuple<uint8_t, float>;  }; // motor mask, position
 template <> struct packetReturn<ACCEL> { using type = std::tuple<>;                  };
 
 template <> struct packetSend<DCVEL>    { using type = std::tuple<float, float>; };
@@ -88,7 +88,7 @@ template <> struct packetReturn<POSITION> {
 };
 
 template <> struct packetSend<ACCEL>   { using type = std::tuple<>;  }; // motor mask, position
-template <> struct packetReturn<ACCEL> { using type = std::tuple<int32_t, int32_t, int32_t, int32_t>; };
+template <> struct packetReturn<ACCEL> { using type = std::tuple<float, float, float, float>; };
 
 template <> struct packetSend<DCVEL>    { using type = std::tuple<>; };
 template <> struct packetReturn<DCVEL>  { using type = std::tuple<float, float>; };

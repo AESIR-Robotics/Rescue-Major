@@ -9,6 +9,7 @@
 #include <memory>
 //#include <mutex>
 #include <queue>
+#include <sstream>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -37,6 +38,7 @@ using deadline_t = stdclock::time_point;  ///< Absolute deadline used internally
 // =============================================================================
 // Declaration
 // =============================================================================
+std::string bytes_to_hex_string(const uint8_t* buf, size_t size);
 
 class Protocol_Handler_I2C {
 public:
@@ -78,12 +80,12 @@ public:
   bool addCommand(std::unique_ptr<CommandsNC::Command> &&input);
 
   // TODO: add sequencing to the protocol
-  bool sendQueue(micros timeout = micros(6000), micros timePerMsg = micros(1000));
+  bool sendQueue(micros timeout = micros(8000), micros timePerMsg = micros(2000));
 
   /// Read pending messages until there are none left.
   /// Returns true if at least one message was dispatched, false on I/O error
   /// or if no messages were available.
-  bool readPending(micros timeout = micros(6000), micros timePerMsg = micros(1000));
+  bool readPending(micros timeout = micros(8000), micros timePerMsg = micros(2000));
 
   bool connected() const;
   const std::string &getDevice() const;
@@ -142,6 +144,22 @@ private:
 // =============================================================================
 // Inline definitions
 // =============================================================================
+
+inline std::string bytes_to_hex_string(const uint8_t* buf, size_t size)
+{
+    std::ostringstream ss;
+
+    for (size_t i = 0; i < size; i++) {
+        ss << "0x"
+           << std::hex
+           << std::setw(2)
+           << std::setfill('0')
+           << static_cast<int>(buf[i])
+           << " ";
+    }
+
+    return ss.str();
+}
 
 inline Protocol_Handler_I2C::Protocol_Handler_I2C(rclcpp::Logger log,
                                                    const std::string &device_in,
@@ -502,9 +520,10 @@ inline size_t Protocol_Handler_I2C::readData(uint8_t *buffer, size_t length,
   size_t total = 0;
 
   while (total < length) {
+
+    // RCLCPP_DEBUG(logger, "Reading new chunk...");
     // Refill internal buffer when exhausted
     if (internal_pos >= INTERNAL_BUF_SIZE) {
-      //RCLCPP_DEBUG(logger, "Reading new chunk...");
 
       // Wait until the fd is ready to read, consuming only the remaining budget.
       if (stdclock::now() >= deadline) {
@@ -538,17 +557,26 @@ inline size_t Protocol_Handler_I2C::readData(uint8_t *buffer, size_t length,
       msg[1].buf   = skipmsg;
 
       struct i2c_rdwr_ioctl_data ioctl_data {};
-      ioctl_data.msgs  = msg;
-      ioctl_data.nmsgs = 2;
-
-      int ret = ioctl(i2c_fd, I2C_RDWR, &ioctl_data);
-      if (ret != static_cast<int>(ioctl_data.nmsgs)) {
-        closeI2C();
-        error_state = Error_State::IO_ERROR;
-        return total;
+      ioctl_data.nmsgs = 1;
+      int ret{};
+      
+      // This should had been a repeated start but sadly due to design of i2c
+      // this is prohibited, thus forcing me to do messages one by one :/
+      for(size_t i = 0; i < 2; i ++){
+        ioctl_data.msgs  = &msg[i];
+        ret = ioctl(i2c_fd, I2C_RDWR, &ioctl_data);
+        if (ret != static_cast<int>(ioctl_data.nmsgs)) {
+          RCLCPP_ERROR(logger, "I2C ioctl failed: %s", strerror(errno));
+          closeI2C();
+          error_state = Error_State::IOCTL_FAILED;
+          return total;
+        }
       }
 
       internal_pos = 0;
+      
+      //RCLCPP_DEBUG(logger, "%s", bytes_to_hex_string(internal_buf, INTERNAL_BUF_SIZE).data());
+
     }
 
     size_t available = INTERNAL_BUF_SIZE - internal_pos;

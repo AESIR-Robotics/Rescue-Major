@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <ctime>
 #include <memory>
+#include <ratio>
 #include <rclcpp/logging.hpp>
 #include <string>
 #include <unordered_map>
@@ -247,7 +248,7 @@ private:
 // =============================================================================
 
 inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
-  this->declare_parameter<std::string>("i2c_port", "/dev/i2c-7");
+  this->declare_parameter<std::string>("i2c_port", "/dev/i2c-1");
   this->declare_parameter<int>("i2c_address", 0x30);
   this->declare_parameter<int>("flipper_revolution", 40000);
   this->declare_parameter<std::vector<std::string>>(
