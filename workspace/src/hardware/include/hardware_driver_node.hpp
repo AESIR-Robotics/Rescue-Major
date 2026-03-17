@@ -9,7 +9,6 @@
 #include <cstdint>
 #include <ctime>
 #include <memory>
-#include <ratio>
 #include <rclcpp/logging.hpp>
 #include <string>
 #include <unordered_map>
@@ -42,7 +41,7 @@ struct StepperState {
   // -------------------------------------------------------------------
   std::array<double, N> position{};
   std::array<double, N> speed{};
-  std::array<double, N> acceleration{};
+  std::array<double, N> acceleration{M_PI};
   std::array<double, N> effort{};   // reserved for future use
 
   // One bit per motor per field.
@@ -156,7 +155,7 @@ private:
 
   template<typename T>
   double stepsToRad(T steps) const;
-  /// Differential drive: [m/s, rad/s] → [left_pct, right_pct] clamped [-100,100]
+  /// Differential drive: [m/s, rad/s]  [left_pct, right_pct] clamped [-100,100]
   std::pair<float, float> twistToMotorPct(double linear, double angular) const;
 
   // --- Setup ----------------------------------------------------------------
@@ -187,7 +186,7 @@ private:
   static constexpr int steppers{4};
 
   double track_width_m{1.25};    ///< Distance between wheels [m]
-  double velocity_scale{1.0};   ///< (m/s or rad/s) → percent on MCU
+  double velocity_scale{1.0};   ///< (m/s or rad/s)  percent on MCU
 
   std::vector<std::string> joint_names{"flipper_0", "flipper_1", "flipper_2", "flipper_3"};
 
@@ -367,8 +366,11 @@ inline void HardwareDriverNode::enqueueJointInfo(const StepperState<4> &snap) {
           radToSteps(snap.position[i]) % steps_per_revolution);
       groups[key] |= static_cast<uint8_t>(1u << i);
     }
-    for (auto &[key, mask] : groups)
-      stepper_micro.addCommand(std::make_unique<positionW>(positionW::packet{mask, key}));
+    for (auto &[key, mask] : groups){
+      auto cmand = std::make_unique<positionW>(positionW::packet{mask, key});
+      //RCLCPP_INFO(this->get_logger(), "%s", cmand->info().c_str());
+      stepper_micro.addCommand(std::move(cmand));
+    }
   }
 
   // Speed
@@ -383,7 +385,7 @@ inline void HardwareDriverNode::enqueueJointInfo(const StepperState<4> &snap) {
     }
     for (auto &[key, mask] : groups){
       auto cmand = std::make_unique<speedW>(speedW::packet{mask, values[key]});
-      //RCLCPP_INFO(this->get_logger(), cmand->info().c_str());
+      //RCLCPP_INFO(this->get_logger(), "%s", cmand->info().c_str());
       stepper_micro.addCommand(std::move(cmand));
     }
   }
@@ -398,8 +400,12 @@ inline void HardwareDriverNode::enqueueJointInfo(const StepperState<4> &snap) {
       groups[key] |= static_cast<uint8_t>(1u << i);
       values.insert_or_assign(key, val);
     }
-    for (auto &[key, mask] : groups)
-      stepper_micro.addCommand(std::make_unique<accelW>(accelW::packet{mask, values[key]}));
+    for (auto &[key, mask] : groups){
+      auto cmand = std::make_unique<accelW>(accelW::packet{mask, values[key]});
+      //RCLCPP_INFO(this->get_logger(), "%s", cmand->info().c_str());
+      stepper_micro.addCommand(std::move(cmand));
+
+    }
   }
 }
 
@@ -441,7 +447,7 @@ inline double HardwareDriverNode::stepsToRad(T steps) const {
 
 // -----------------------------------------------------------------------------
 // generateCallbacks
-// All MCU-unit → SI conversion happens here.
+// All MCU-unit  SI conversion happens here.
 // These run on the tick thread — write only to feedback_* structs, O(1), no locks.
 // -----------------------------------------------------------------------------
 inline void HardwareDriverNode::generateCallbacks() {
@@ -460,7 +466,7 @@ inline void HardwareDriverNode::generateCallbacks() {
         if (!ok) RCLCPP_WARN(get_logger(), "BYTELOSS size mismatch (got %zu)", size);
       });
 
-  // POSITION: steps → rad
+  // POSITION: steps  rad
   stepper_micro.read_callbacks.emplace(
       ReadCommandsNC::POSITION,
       [this](const uint8_t *data, size_t size) {
@@ -475,7 +481,7 @@ inline void HardwareDriverNode::generateCallbacks() {
         if (!ok) RCLCPP_WARN(get_logger(), "POSITION size mismatch (got %zu)", size);
       });
 
-  // SPEED: steps/s → rad/s
+  // SPEED: steps/s  rad/s
   stepper_micro.read_callbacks.emplace(
       ReadCommandsNC::SPEED,
       [this](const uint8_t *data, size_t size) {
@@ -491,7 +497,7 @@ inline void HardwareDriverNode::generateCallbacks() {
         if (!ok) RCLCPP_WARN(get_logger(), "SPEED size mismatch (got %zu)", size);
       });
 
-  // ACCEL: steps/s² → rad/s²
+  // ACCEL: steps/s2  rad/s2
   stepper_micro.read_callbacks.emplace(
       ReadCommandsNC::ACCEL,
       [this](const uint8_t *data, size_t size) {
@@ -507,7 +513,7 @@ inline void HardwareDriverNode::generateCallbacks() {
         if (!ok) RCLCPP_WARN(get_logger(), "ACCEL size mismatch (got %zu)", size);
       });
 
-  // DCVEL: [left_pct, right_pct] → [m/s, rad/s]
+  // DCVEL: [left_pct, right_pct]  [m/s, rad/s]
   // Inverse of twistToMotorPct:
   //   linear  = (right + left) / (2 * velocity_scale)
   //   angular = (right - left) / (track_width_m * velocity_scale)
@@ -552,10 +558,11 @@ inline void HardwareDriverNode::jointCommandCallback(
         RCLCPP_WARN(get_logger(), "Joint index out of range: %s", msg->joint_names[i].c_str());
         continue;
       }
+
       // msg fields are already in rad / rad/s / rad/s*s
-      if (i < msg->position.size()) d.setPosition(idx, msg->position[i]);
-      if (i < msg->velocity.size()) d.setSpeed(idx,    msg->velocity[i]);
-      if (i < msg->acceleration.size()) d.setAcceleration(idx, msg->acceleration[i]);
+      d.setPosition(idx, msg->position[i]);
+      d.setSpeed(idx,    msg->velocity[i]);
+      d.setAcceleration(idx, msg->acceleration[i]);
     }
   });
 }

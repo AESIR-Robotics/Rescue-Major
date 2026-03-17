@@ -221,7 +221,6 @@ template <typename T> struct GeneralInstruction : Command {
 
     return oss.str();
 
-    return oss.str();
   }
 
   size_t  getPckSize() override { return T::hasID ? size + 1 : size; }

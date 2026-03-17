@@ -80,12 +80,12 @@ public:
   bool addCommand(std::unique_ptr<CommandsNC::Command> &&input);
 
   // TODO: add sequencing to the protocol
-  bool sendQueue(micros timeout = micros(8000), micros timePerMsg = micros(2000));
+  bool sendQueue(micros timeout = micros(8000), micros timePerMsg = micros(4000));
 
   /// Read pending messages until there are none left.
   /// Returns true if at least one message was dispatched, false on I/O error
   /// or if no messages were available.
-  bool readPending(micros timeout = micros(8000), micros timePerMsg = micros(2000));
+  bool readPending(micros timeout = micros(8000), micros timePerMsg = micros(4000));
 
   bool connected() const;
   const std::string &getDevice() const;
@@ -288,12 +288,12 @@ inline bool Protocol_Handler_I2C::readPending(micros timeout, micros timePerMsg)
   while (stdclock::now() + timePerMsg < dl) {
     auto res = readOneMessage(dl);
     if (res == ReadResult::OK_DISPATCHED) {
-      RCLCPP_DEBUG(logger, "Message dispatched successfully");
+      //RCLCPP_DEBUG(logger, "Message dispatched successfully");
       dispatched_any = true;
       continue;
     }
     if (res == ReadResult::NO_MESSAGE) {
-      RCLCPP_DEBUG(logger, "No message available to read");
+      //RCLCPP_DEBUG(logger, "No message available to read");
       break;
     }
     if (res == ReadResult::NO_SYNC) {
@@ -385,7 +385,7 @@ inline Protocol_Handler_I2C::ReadResult Protocol_Handler_I2C::readOneMessage(dea
   //RCLCPP_DEBUG(logger, "Received and Calculated CRCs: 0x%02X, 0x%02X", recv_crc, calculated_crc);
 
   if (recv_crc != calculated_crc) {
-    RCLCPP_WARN(logger, "CRC mismatch: Inst, Size, ReadCRC n CalcCRC: 0x%02X, %03i, 0x%02X, 0x%02X", inst, length, recv_crc, calculated_crc);
+    //RCLCPP_WARN(logger, "CRC mismatch: Inst, Size, ReadCRC n CalcCRC: 0x%02X, %03i, 0x%02X, 0x%02X", inst, length, recv_crc, calculated_crc);
     return ReadResult::CRC_MISMATCH;
   }
 
@@ -463,20 +463,20 @@ inline size_t Protocol_Handler_I2C::writeData(const uint8_t *data,
 
   size_t total{0};
 
-  RCLCPP_DEBUG(logger, "Writing a message with %zu bytes", length);
+  //RCLCPP_DEBUG(logger, "Writing a message with %zu bytes", length);
   while (total < length) {
     // Wait until the fd is ready to write, consuming only the remaining budget.
     if (stdclock::now() >= deadline) {
       RCLCPP_WARN(logger,
                   "Send timeout (pre-poll) from device %s at address %d: "
-                  "expected %zu bytes, got %zu",
+                  "expected %zu bytes, got %zu (write)",
                   device.c_str(), slave_addr, length, total);
       break;
     }
     if (!waitFdReady(POLLOUT, deadline)) {
       RCLCPP_WARN(logger,
                   "Send poll timeout/error from device %s at address %d: "
-                  "expected %zu bytes, got %zu",
+                  "expected %zu bytes, got %zu (write)",
                   device.c_str(), slave_addr, length, total);
       break;
     }
@@ -521,22 +521,23 @@ inline size_t Protocol_Handler_I2C::readData(uint8_t *buffer, size_t length,
 
   while (total < length) {
 
-    // RCLCPP_DEBUG(logger, "Reading new chunk...");
     // Refill internal buffer when exhausted
     if (internal_pos >= INTERNAL_BUF_SIZE) {
+
+      //RCLCPP_DEBUG(logger, "Reading new chunk, time left: %li", std::chrono::duration_cast<micros>(deadline - stdclock::now()).count());
 
       // Wait until the fd is ready to read, consuming only the remaining budget.
       if (stdclock::now() >= deadline) {
         RCLCPP_WARN(logger,
                     "Read timeout (pre-poll) from device %s at address %d: "
-                    "expected %zu bytes, got %zu",
+                    "expected %zu bytes, got %zu (read)",
                     device.c_str(), slave_addr, length, total);
         break;
       }
       if (!waitFdReady(POLLIN, deadline)) {
         RCLCPP_WARN(logger,
                     "Read poll timeout/error from device %s at address %d: "
-                    "expected %zu bytes, got %zu",
+                    "expected %zu bytes, got %zu (read)",
                     device.c_str(), slave_addr, length, total);
         break;
       }
@@ -610,7 +611,7 @@ inline bool Protocol_Handler_I2C::waitFdReady(short events, deadline_t deadline)
 
   int ret = ppoll(&pfd, 1, &ts, nullptr);
   if (ret < 0) {
-    RCLCPP_DEBUG(logger, "ppoll error: %s", strerror(errno));
+    RCLCPP_ERROR(logger, "ppoll error: %s", strerror(errno));
     error_state = Error_State::IO_ERROR;
     return false;
   }
