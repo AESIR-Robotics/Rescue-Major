@@ -180,7 +180,7 @@ private:
 
   void diagTick();
 
-  Protocol_Handler_I2C stepper_micro{this->get_logger()};
+  Protocol_Handler_I2C stepper_micro;
 
   int steps_per_revolution{40000};
   static constexpr int steppers{4};
@@ -263,6 +263,11 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
   this->get_parameter("joint_names",        joint_names);
   this->get_parameter("track_width_m",      track_width_m);
   this->get_parameter("velocity_scale",     velocity_scale);
+
+  stepper_micro.setLogger(
+      [this](const std::string &msg) { RCLCPP_INFO( get_logger(), "%s", msg.c_str()); },
+      [this](const std::string &msg) { RCLCPP_WARN( get_logger(), "%s", msg.c_str()); },
+      [this](const std::string &msg) { RCLCPP_ERROR(get_logger(), "%s", msg.c_str()); });
 
   stepper_micro.init(i2c_port_, slave_addr_);
   generateCallbacks();
