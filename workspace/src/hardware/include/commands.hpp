@@ -57,7 +57,7 @@ template <> struct packetReturn<SPEED>    { using type = std::tuple<>;          
 template <> struct packetSend<POSITION>   { using type = std::tuple<uint8_t, int32_t>;  }; // motor mask, position
 template <> struct packetReturn<POSITION> { using type = std::tuple<>;                  };
 
-template <> struct packetSend<ACCEL>   { using type = std::tuple<uint8_t, int32_t>;  }; // motor mask, position
+template <> struct packetSend<ACCEL>   { using type = std::tuple<uint8_t, float>;  }; // motor mask, position
 template <> struct packetReturn<ACCEL> { using type = std::tuple<>;                  };
 
 template <> struct packetSend<DCVEL>    { using type = std::tuple<float, float>; };
@@ -77,7 +77,7 @@ template <ReadCommand CMD> struct packetSend  { using type = void; };
 template <ReadCommand CMD> struct packetReturn { using type = void; };
 
 template <> struct packetSend<BYTELOSS>      { using type = std::tuple<>;   }; 
-template <> struct packetReturn<BYTELOSS>    { using type = std::tuple<uint32_t>;   }; // Amount of bytes lost
+template <> struct packetReturn<BYTELOSS>    { using type = std::tuple<uint32_t, uint32_t>;   }; // Amount of bytes lost
 
 template <> struct packetSend<SPEED>      { using type = std::tuple<>; };
 template <> struct packetReturn<SPEED>    { using type = std::tuple<float, float, float, float>; }; // speed per motor
@@ -88,7 +88,7 @@ template <> struct packetReturn<POSITION> {
 };
 
 template <> struct packetSend<ACCEL>   { using type = std::tuple<>;  }; // motor mask, position
-template <> struct packetReturn<ACCEL> { using type = std::tuple<int32_t, int32_t, int32_t, int32_t>; };
+template <> struct packetReturn<ACCEL> { using type = std::tuple<float, float, float, float>; };
 
 template <> struct packetSend<DCVEL>    { using type = std::tuple<>; };
 template <> struct packetReturn<DCVEL>  { using type = std::tuple<float, float>; };
@@ -221,7 +221,6 @@ template <typename T> struct GeneralInstruction : Command {
 
     return oss.str();
 
-    return oss.str();
   }
 
   size_t  getPckSize() override { return T::hasID ? size + 1 : size; }

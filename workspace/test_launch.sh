@@ -58,9 +58,9 @@ tmux set-option -t "$session_name" default-command "$ENV_CMD"
 # |    0     |──────────┤
 # │          │    2     │
 # └──────────┴──────────┘
-tmux split-window -v
-tmux select-pane -t 1
 tmux split-window -h
+tmux select-pane -t 1
+tmux split-window -v
 tmux select-pane -t 0
 
 # Comandos

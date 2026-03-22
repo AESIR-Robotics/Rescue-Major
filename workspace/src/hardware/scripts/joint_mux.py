@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Dual-mode keyboard teleoperation: Joint Control + Twist Control"""
 
-import sys, select, termios, tty, math, time, os, signal, subprocess
+import sys, select, termios, tty, math, time, os, signal, subprocess, socket
 from abc import ABC, abstractmethod
 import rclpy
 from rclpy.node import Node
@@ -170,7 +170,7 @@ class JointControlInterface(TeleopInterface):
         msg.header.frame_id = 'world'
         msg.joint_names, msg.position = list(self.joint_names), list(self.positions)
         msg.velocity, msg.effort = list(self.velocities), list(self.efforts)
-        msg.acceleration = [20000.0] * len(self.joint_names)
+        msg.acceleration = [math.pi] * len(self.joint_names)
         self.pub.publish(msg)
         self.last_publish_time = time.time()
     
@@ -321,89 +321,28 @@ class DualTeleopNode(Node):
         self.running = True
 
         self.debug_log = deque(maxlen=10)
+        
+        # Rendering optimization
+        self.last_render_content = None
+        self.force_full_render = True 
 
         # --- Deadman state ---
-        self.deadman_triggered_ = False
         self.operator_deadman_triggered_ = False
-        self.last_tmux_check_ = 0.0
-        self.tmux_check_interval_ = 0.5  
         self.last_key_time = time.time()
-
-        # Detectar si estamos dentro de tmux
-        self.tmux_env = os.environ.get("TMUX")
-        self.tmux_socket_=""
-        if self.tmux_env:
-            self.tmux_socket_ = self.tmux_env.split(",")[0]
-            try:
-                result = subprocess.run(
-                    ["tmux", "-S", self.tmux_socket_,
-                    "display-message", "-p", "#{session_name}"],
-                    capture_output=True,
-                    text=True,
-                    timeout=0.5
-                )
-                if result.returncode == 0:
-                    self.tmux_session_ = result.stdout.strip()
-            except Exception as e:
-                self.debug(f"Failed to get session: {e}")
-        self.debug(self.tmux_env)
-        self.debug(self.tmux_socket_)
         
-
-        # SIGHUP handler (solo útil fuera de tmux o si tmux muere)
+        # SIGHUP handler 
         signal.signal(signal.SIGHUP, self._handle_sighup)
+
+        self.debug_log.append("Started control interface")
     
     def _handle_sighup(self, signum, frame):
+        self.debug("SIGHUP received")
         self.stopInterf()
         self.running = False
 
     def debug(self, msg):
         t = time.strftime("%H:%M:%S")
         self.debug_log.append(f"[{t}] {msg}")
-
-    def _tmux_has_client(self) -> bool:
-        if not self.tmux_socket_ or not self.tmux_session_:
-            return True  # no estamos en tmux
-
-        try:
-            result = subprocess.run(
-                ["tmux", "-S", self.tmux_socket_,
-                "list-clients", "-t", self.tmux_session_],
-                capture_output=True,
-                text=True,
-                timeout=0.5
-            )
-
-            if result.returncode != 0:
-                self.debug(f"tmux error: {result.stderr.strip()}")
-                return False
-
-            clients = result.stdout.strip().splitlines()
-            return len(clients) > 0
-
-        except Exception as e:
-            self.debug(f"tmux exception: {e}")
-            return False
-    
-    def _check_connection_deadman(self):
-        if self.tmux_env:
-            now = time.time()
-            if now - self.last_tmux_check_ > self.tmux_check_interval_:
-                self.last_tmux_check_ = now
-
-                if not self._tmux_has_client():
-                    if not self.deadman_triggered_:
-                        self.debug("User de-ttached from tmux")
-                        self.deadman_triggered_ = True
-                        self.stopInterf()
-                    return False
-                
-                if self.deadman_triggered_:
-                    self.debug("User re-attached to tmux")
-                    self.deadman_triggered_ = False
-
-
-        return True
 
     def stopInterf(self):
         self.twist_interface.stop()
@@ -416,42 +355,76 @@ class DualTeleopNode(Node):
         self.current_interface = interface
         self.current_interface.active = True
         self.current_interface.on_activate()
+        self.force_full_render = True  # Force full re-render on mode switch
     
-    def render(self):
-        sys.stdout.write(CLEAR)
-        sys.stdout.write(MOVE_TOP)
-        sys.stdout.write(self.current_interface.render())
-        sys.stdout.write(GREEN + '\n\nDEBUG INFO:\n' + YELLOW)
-        sys.stdout.write('\n'.join(self.debug_log))
-        sys.stdout.write('\n')
-        sys.stdout.write('\033[J')
+    def render(self, force_full=False):
+        """
+        Render interface with incremental updates to reduce flicker.
+        Only does full clear/redraw when necessary.
+        """
+        # Build current frame content
+        content_lines = []
+        content_lines.append(self.current_interface.render())
+        
+        # Deadman status indicators
+        status_line = '\n\n' + clr(BOLD, 'STATUS: ')
+        if self.operator_deadman_triggered_:
+            status_line += clr(YELLOW, 'INACTIVITY TIMEOUT')
+        else:
+            status_line += clr(GREEN, 'Active')
+        content_lines.append(status_line)
+        
+        content_lines.append(GREEN + '\n\nDEBUG LOG:\n' + RESET_CLR)
+        content_lines.append(YELLOW + '\n'.join(self.debug_log) + RESET_CLR + '\n')
+        
+        current_content = ''.join(content_lines)
+        
+        # Determine if we need full render or can do incremental
+        needs_full_render = (
+            force_full or 
+            self.force_full_render or 
+            self.last_render_content is None or
+            len(current_content) != len(self.last_render_content)
+        )
+        
+        if needs_full_render:
+            # Full render: clear screen and redraw everything
+            sys.stdout.write(CLEAR)
+            sys.stdout.write(MOVE_TOP)
+            sys.stdout.write(current_content)
+            sys.stdout.write('\033[J')  # Clear to end of screen
+            self.force_full_render = False
+        else:
+            # Incremental render: only update if content changed
+            if current_content != self.last_render_content:
+                # Content changed but same length - overwrite in place
+                sys.stdout.write(MOVE_TOP)
+                sys.stdout.write(current_content)
+        
         sys.stdout.flush()
+        self.last_render_content = current_content
 
     def run(self):
         print(CLEAR, end='')
         try:
             self.last_key_time = time.time()
             while rclpy.ok() and self.running:
-                if not self._check_connection_deadman():
-                    self.render()
-                    rclpy.spin_once(self, timeout_sec=0.0)
-                    continue
-
+                # Get key FIRST (highest priority for responsiveness)
                 key = self.keyboard.get_key(timeout=0.05)
 
-                # Operator dead man
+                # Operator deadman
                 if key != '':
                     self.operator_deadman_triggered_ = False
                     self.last_key_time = time.time()
 
+                # Inactivity deadman
                 now = time.time()
-                if now - self.last_key_time > 60.0 and not (self.deadman_triggered_ or self.operator_deadman_triggered_):
+                if now - self.last_key_time > 3.0 and not self.operator_deadman_triggered_:
                     self.operator_deadman_triggered_=True
                     self.debug("Inactivity detected, stopping everything")
                     self.stopInterf()
 
-                
-
+                # Handle keys
                 if key in ('\x03', '\x1b'):
                     self.running = False
                     break
@@ -461,11 +434,13 @@ class DualTeleopNode(Node):
                     self.switch_interface(self.twist_interface)
                 elif key:
                     self.current_interface.handle_key(key)
-                if not self.deadman_triggered_:
-                    self.current_interface.update()
+                
+                self.current_interface.update()
+                
                 self.render()
                 rclpy.spin_once(self, timeout_sec=0.0)
         finally:
+            self.stopInterf()
             self.keyboard.restore()
             print('\n\n' + clr(YELLOW, 'Terminal restored. Bye!') + '\n')
 

@@ -59,8 +59,9 @@ tmux split-window -h
 # Comandos
 tmux send-keys -t 0 "ros2 run rosbridge_server rosbridge_websocket --ros-args --param ssl:=true --param certfile:=\"$HOME/aesir/cert.pem\" --param keyfile:=\"$HOME/aesir/key.pem\" --param port:=9090 --param address:=\"0.0.0.0\"" Enter
 tmux send-keys -t 1 "python3 src/teleoperation/scripts/server_rtc.py --cert-file ~/aesir/cert.pem --key-file ~/aesir/key.pem --host 0.0.0.0 --port 8081" Enter
-tmux send-keys -t 2 "ros2 run hardware dc_motors" Enter
-#tmux send-keys -t 2 "ros2 run hardware dc_motors --ros-args --log-level debug" Enter
+#tmux send-keys -t 2 "ros2 run hardware dc_motors" Enter
+ 
+tmux send-keys -t 2 "ros2 run hardware dc_motors --ros-args --log-level debug --log-level rcl:=warn --log-level rclcpp:=warn" Enter
 tmux send-keys -t 3 "ros2 launch vision vision.launch.py" Enter
 
 # Pane 1 (bottom-left): run teleoperation command_server.py
