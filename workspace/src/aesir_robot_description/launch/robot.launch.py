@@ -26,7 +26,7 @@ def generate_launch_description():
         output='screen'
     )
 
-    # Abre RViz
+    # Open RViz
     node_rviz = Node(
         package='rviz2',
         executable='rviz2',
