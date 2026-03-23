@@ -9,9 +9,9 @@ class InputHandler {
     this.prevButtonsByPad = {};
     this.listeners = Object.create(null);
     
-    this.robotAPI = robotAPI;  // Reference to RobotAPI for ROS communication
-    this.actionMap = {};       // { 'key': { type, data_type, topics, payload } }
-    this.localFunctions = {};  // { 'function_name': callback }
+    this.robotAPI = robotAPI;
+    this.actionMap = {};
+    this.localFunctions = {};
     
     this._setupKeyboard();
     this._setupGamepadEvents();
@@ -244,18 +244,15 @@ class InputHandler {
     let leftTrigger = 0;
     let rightTrigger = 0;
     
-    // Axes: izquierdo = axes[4], derecho = axes[5]
     if (gp.axes.length > 5) {
-      // Asegurar que el valor esté en rango [0, 1]
       leftTrigger = Math.max(0, gp.axes[4] || 0);
       rightTrigger = Math.max(0, gp.axes[5] || 0);
     }
     
-    // Fallback to button values (buttons 6 and 7) si los axes no funcionan
     if (leftTrigger < 0.05 && rightTrigger < 0.05) {
-      if (gp.buttons.length > 7) {
-        leftTrigger = gp.buttons[6]?.value || (gp.buttons[6]?.pressed ? 1 : 0);
-        rightTrigger = gp.buttons[7]?.value || (gp.buttons[7]?.pressed ? 1 : 0);
+      if (gp.buttons && gp.buttons.length > 7) {
+        leftTrigger = typeof gp.buttons[6].value !== 'undefined' ? gp.buttons[6].value : (gp.buttons[6].pressed ? 1 : 0);
+        rightTrigger = typeof gp.buttons[7].value !== 'undefined' ? gp.buttons[7].value : (gp.buttons[7].pressed ? 1 : 0);
       }
     }
     
@@ -273,45 +270,29 @@ class InputHandler {
     infoPanel.scrollTop = infoPanel.scrollHeight;
   }
 
-  // Setup ROS connection and API
   let robotAPI = null;
   let inputHandler = null;
-  let motorTopic = null;
+  let cmdVelTopic = null;
+  let jointCommandTopic = null;
   let isControlEnabled = false;
-  let velocityInterval = null;
+  let controlInterval = null;
   
-  // Variables locales para control adicional (a,b,c,d)
-  let motorVars = { a: 0, b: 0, c: 0, d: 0 };
+  const UPDATE_INTERVAL = 100;  // 10Hz
   
-  // Variables para control de velocidad con gatillos y aceleración
-  let currentVelocity = { x: 0, y: 0 };  
-  const ACCELERATION_TIME = 0.5;  
-  const MAX_VELOCITY = 100;
-  const UPDATE_INTERVAL = 100;  // 100ms = 10Hz
-  const ACCELERATION_STEP = (MAX_VELOCITY / ACCELERATION_TIME) * (UPDATE_INTERVAL / 1000);
+  // Flipper joint names (standard ROS naming)
+  const FLIPPER_JOINTS = [
+    'front_left_flipper_joint',
+    'front_right_flipper_joint',
+    'rear_left_flipper_joint',
+    'rear_right_flipper_joint'
+  ];
   
-  // Variables para giro cerrado (bumpers B4 y B5)
-  let closedTurnState = { left: false, right: false };  // B4 = left, B5 = right  
-  
-  // Función para cambiar las 4 variables simultáneamente
-  window.setMotorVars = function(values) {
-    if (Array.isArray(values) && values.length === 4) {
-      motorVars.a = values[0];
-      motorVars.b = values[1];
-      motorVars.c = values[2];
-      motorVars.d = values[3];
-      log(`Motor vars: a=${motorVars.a}, b=${motorVars.b}, c=${motorVars.c}, d=${motorVars.d}`);
-    }
-  };
-  
-  // Función para resetear variables (tecla 's')
-  window.resetMotorVars = function() {
-    motorVars.a = 0;
-    motorVars.b = 0;
-    motorVars.c = 0;
-    motorVars.d = 0;
-    log('Motor vars reset to 0');
-  };
+  // Flipper state
+  let flipperPositions = [0, 0, 0, 0];
+  let flipperDirection = 1;  // 1 = add, 0 = subtract
+  const FLIPPER_STEP = 1.0;
+  const FLIPPER_VELOCITY = 1.0;
+  const FLIPPER_ACCELERATION = 0.5;
 
   function initializeROS(rosbridgeHost = location.hostname, rosbridgePort = 9090) {
     if (typeof ROSLIB === 'undefined') {
@@ -336,27 +317,29 @@ class InputHandler {
       robotAPI = new RobotAPI(ros);
       inputHandler = new InputHandler({ robotAPI });
       
-      // Load keyboard keymaps
+      // Create topics for motor control
+      cmdVelTopic = robotAPI.getOrCreateTopic(
+        '/hardware_node/cmd_vel',
+        'geometry_msgs/msg/Twist'
+      );
+      jointCommandTopic = robotAPI.getOrCreateTopic(
+        '/hardware_node/joint_command',
+        'hardware/msg/JointControl'
+      );
+      
+      log('Motor control topics ready');
+      log('  - /hardware_node/cmd_vel (Twist)');
+      log('  - /hardware_node/joint_command (JointControl)');
+      
+      registerFlipperFunctions();
+      setupKeyboardBindings();
+      
+      // Load keyboard keymaps for other functions
       fetch('static/keys_map_keyboard.json')
         .then(r => r.json())
         .then(config => {
           inputHandler.loadActions(config);
           log(`Keyboard actions loaded: ${Object.keys(inputHandler.actionMap).length} mappings`);
-          setupKeyboardBindings();
-          
-          // Get motor topic for joystick control (formato: "x,y,a,b,c,d")
-          motorTopic = robotAPI.getOrCreateTopic('/all_motors', 'std_msgs/String');
-          log('Motor control topic ready (/all_motors)');
-          
-          // Registrar funciones locales para InputHandler
-          inputHandler.registerLocalFunction('setMotorVars', (payload) => {
-            if (payload.data) window.setMotorVars(payload.data);
-          });
-          inputHandler.registerLocalFunction('resetMotorVars', () => {
-            window.resetMotorVars();
-          });
-          
-          // Load controller keymaps
           return fetch('static/keys_map_controller.json');
         })
         .then(r => r.json())
@@ -365,7 +348,6 @@ class InputHandler {
           inputHandler.controllerActionMap = controllerConfig;
           log(`Controller actions loaded: ${Object.keys(controllerConfig).length} mappings`);
           
-          // Setup gamepad button handler
           inputHandler.on('buttonDown', (padIndex, buttonIndex) => {
             const buttonId = String(buttonIndex);
             const action = inputHandler.controllerActionMap[buttonId];
@@ -392,9 +374,9 @@ class InputHandler {
 
     ros.on('close', () => {
       log('Disconnected from ROS');
-      if (velocityInterval) {
-        clearInterval(velocityInterval);
-        velocityInterval = null;
+      if (controlInterval) {
+        clearInterval(controlInterval);
+        controlInterval = null;
       }
     });
 
@@ -407,8 +389,8 @@ class InputHandler {
     window.addEventListener('keydown', (e) => {
       if (!inputHandler) return;
       
-      const key = e.key.toLowerCase();
-      const result = inputHandler.executeAction(key);
+      const key = e.key;
+      const result = inputHandler.executeAction(key.toLowerCase());
       
       if (result.success) {
         if (result.count > 1) {
@@ -418,121 +400,100 @@ class InputHandler {
         } else {
           log(`Key '${key}' -> ${result.type}`);
         }
-      } else if (result.error !== `Action "${key}" not mapped`) {
+      } else if (result.error !== `Action "${key.toLowerCase()}" not mapped`) {
         log(`Key '${key}' failed: ${result.error}`);
       }
     });
   }
-
-  function getTargetVelocityFromTriggers() {
-    if (!inputHandler) return { x: 0, y: 0 };
+  
+  function modifyFlipperPosition(index) {
+    const delta = flipperDirection === 1 ? FLIPPER_STEP : -FLIPPER_STEP;
+    flipperPositions[index] += delta;
+    log(`${FLIPPER_JOINTS[index]}: ${flipperPositions[index].toFixed(2)}`);
+  }
+  
+  function sendCmdVel(linear, angular) {
+    if (!cmdVelTopic) return;
+    const msg = new ROSLIB.Message({
+      linear: { x: linear, y: 0.0, z: 0.0 },
+      angular: { x: 0.0, y: 0.0, z: angular }
+    });
+    try {
+      cmdVelTopic.publish(msg);
+    } catch (e) {
+      console.error('cmd_vel publish error:', e);
+    }
+  }
+  
+  function registerFlipperFunctions() {
+    inputHandler.registerLocalFunction('toggleFlipperDirection', () => {
+      flipperDirection = flipperDirection === 1 ? 0 : 1;
+      log(`Flipper direction: ${flipperDirection === 1 ? 'ADD' : 'SUBTRACT'}`);
+    });
     
+    inputHandler.registerLocalFunction('modifyFlipper', (payload) => {
+      if (typeof payload.index === 'number') {
+        modifyFlipperPosition(payload.index);
+      }
+    });
+    
+    inputHandler.registerLocalFunction('resetFlipperPositions', () => {
+      flipperPositions = [0, 0, 0, 0];
+      log('Flipper positions reset to 0');
+    });
+    
+    inputHandler.registerLocalFunction('sendCmdVel', (payload) => {
+      const linear = payload.linear ?? 0;
+      const angular = payload.angular ?? 0;
+      sendCmdVel(linear, angular);
+    });
+  }
+
+  function publishControlMessages() {
+    if (!cmdVelTopic || !jointCommandTopic || !inputHandler) return;
+    
+    // Read gamepad inputs
     const { leftTrigger, rightTrigger } = inputHandler.readTriggers();
     const { x: joystickX } = inputHandler.readJoystick();
     
-    // Determinar velocidad base según gatillos
-    let baseVelocity = 0;
+    // Calculate velocities for Twist message
+    // Linear: right trigger (0 to 1) - left trigger (0 to -1)
+    const linearX = rightTrigger - leftTrigger;
+    // Angular: joystick X (-1 left, 0 center, 1 right)
+    const angularZ = joystickX;
     
-    if (rightTrigger > 0.1) {
-      // Gatillo derecho: velocidad positiva
-      baseVelocity = MAX_VELOCITY;
-    } else if (leftTrigger > 0.1) {
-      // Gatillo izquierdo: velocidad negativa
-      baseVelocity = -MAX_VELOCITY;
-    }
-    
-    if (baseVelocity === 0) {
-      return { x: 0, y: 0 };
-    }
-    
-    // direction  joystick X
-    // rigth (75%, 0%)
-    // leftizquierda (0%, 75%)
-    const absX = Math.abs(joystickX);
-    let multiplierX, multiplierY;
-    
-    if (joystickX >= 0) {
-      multiplierX = 1 - absX * 0.25;  
-      multiplierY = 1 - absX;         
-    } else {
-      multiplierX = 1 - absX;         
-      multiplierY = 1 - absX * 0.25;  
-    }
-    
-    return { 
-      x: baseVelocity * multiplierX, 
-      y: baseVelocity * multiplierY 
-    };
-  }
-
-  // Aplica aceleración gradual hacia la velocidad objetivo
-  function applyAcceleration(current, target) {
-    if (current < target) {
-      // Acelerando hacia adelante
-      return Math.min(current + ACCELERATION_STEP, target);
-    } else if (current > target) {
-      // Desacelerando o acelerando hacia atrás
-      return Math.max(current - ACCELERATION_STEP, target);
-    }
-    return current;
-  }
-
-  function readBumperState() {
-    if (!inputHandler || inputHandler.gamepadIndex == null) return;
-    const gp = navigator.getGamepads()[inputHandler.gamepadIndex];
-    if (!gp || gp.buttons.length < 6) return;
-    
-    // Button 4 = Left Bumper (LB), Button 5 = Right Bumper (RB)
-    closedTurnState.left = gp.buttons[4]?.pressed || false;
-    closedTurnState.right = gp.buttons[5]?.pressed || false;
-  }
-
-  function publishTriggerVelocities() {
-    if (!motorTopic || !inputHandler) return;
-    
-    // Leer estado de bumpers para giro cerrado
-    readBumperState();
-    
-    // Obtener velocidad objetivo basada en gatillos
-    const target = getTargetVelocityFromTriggers();
-    
-    // Aplicar aceleración gradual
-    currentVelocity.x = applyAcceleration(currentVelocity.x, target.x);
-    currentVelocity.y = applyAcceleration(currentVelocity.y, target.y);
-    
-    // Velocidades finales a enviar
-    let finalX = Math.round(currentVelocity.x);
-    let finalY = Math.round(currentVelocity.y);
-    
-    // Override con giro cerrado si los bumpers están presionados
-    if (closedTurnState.left) {
-      finalX = -MAX_VELOCITY;
-      finalY = MAX_VELOCITY;
-    } else if (closedTurnState.right) {
-      finalX = MAX_VELOCITY;
-      finalY = -MAX_VELOCITY;
-    }
-    
-    // Formato: "vx,vy,a,b,c,d" - velocidades de -100 a 100
-    const dataString = [
-      finalX,
-      finalY,
-      motorVars.a,
-      motorVars.b,
-      motorVars.c,
-      motorVars.d
-    ].join(',');
-    
-    const message = new ROSLIB.Message({ data: dataString });
+    // Publish cmd_vel (Twist)
+    const twistMsg = new ROSLIB.Message({
+      linear: { x: linearX, y: 0.0, z: 0.0 },
+      angular: { x: 0.0, y: 0.0, z: angularZ }
+    });
     
     try {
-      motorTopic.publish(message);
+      cmdVelTopic.publish(twistMsg);
     } catch (e) {
-      console.error('Trigger velocity publish error:', e);
+      console.error('cmd_vel publish error:', e);
+    }
+    
+    // Publish joint_command (JointControl)
+    const jointMsg = new ROSLIB.Message({
+      header: {
+        stamp: { sec: 0, nanosec: 0 },
+        frame_id: ''
+      },
+      joint_names: FLIPPER_JOINTS,
+      position: flipperPositions.slice(),
+      velocity: [FLIPPER_VELOCITY, FLIPPER_VELOCITY, FLIPPER_VELOCITY, FLIPPER_VELOCITY],
+      acceleration: [FLIPPER_ACCELERATION, FLIPPER_ACCELERATION, FLIPPER_ACCELERATION, FLIPPER_ACCELERATION],
+      effort: []
+    });
+    
+    try {
+      jointCommandTopic.publish(jointMsg);
+    } catch (e) {
+      console.error('joint_command publish error:', e);
     }
   }
 
-  // Control button to enable/disable joystick velocity publishing
   const startButton = document.getElementById('start-communication');
   if (startButton) {
     startButton.addEventListener('click', () => {
@@ -541,29 +502,28 @@ class InputHandler {
       log('Control ' + (isControlEnabled ? 'ENABLED' : 'DISABLED'));
       
       if (!isControlEnabled) {
-        if (velocityInterval) {
-          clearInterval(velocityInterval);
-          velocityInterval = null;
+        if (controlInterval) {
+          clearInterval(controlInterval);
+          controlInterval = null;
         }
-        // Reset current velocity and send stop command
-        currentVelocity.x = 0;
-        currentVelocity.y = 0;
-        if (motorTopic) {
-          const stopMsg = new ROSLIB.Message({ data: '0,0,0,0,0,0' });
-          motorTopic.publish(stopMsg);
+        // Send stop commands
+        if (cmdVelTopic) {
+          const stopTwist = new ROSLIB.Message({
+            linear: { x: 0.0, y: 0.0, z: 0.0 },
+            angular: { x: 0.0, y: 0.0, z: 0.0 }
+          });
+          cmdVelTopic.publish(stopTwist);
         }
       } else {
-        // Start publishing trigger velocities at 10Hz
-        if (!velocityInterval) {
-          velocityInterval = setInterval(publishTriggerVelocities, UPDATE_INTERVAL);
+        if (!controlInterval) {
+          controlInterval = setInterval(publishControlMessages, UPDATE_INTERVAL);
         }
       }
     });
   } else {
-    log('Warning: Start button not found (id: start-btn or start-communication)');
+    log('Warning: Start button not found (id: start-communication)');
   }
 
-  // Expose executeAction globally 
   window.executeAction = (actionId) => {
     if (!inputHandler) {
       console.warn('InputHandler not initialized');
@@ -572,7 +532,6 @@ class InputHandler {
     return inputHandler.executeAction(actionId);
   };
 
-  // Toggle server microphone with dynamic button update
   window.toggleServerMic = () => {
     const button = document.getElementById('toggle-speaker');
     if (!button) return;
@@ -583,7 +542,6 @@ class InputHandler {
     const result = window.executeAction(actionId);
     
     if (result.success) {
-      // Update button appearance
       button.textContent = isMuted ? 'Mute Server' : 'Unmute Server';
       button.style.backgroundColor = isMuted ? '#dc3545' : '#6c757d';
       log(`Server microphone ${isMuted ? 'unmuted' : 'muted'}`);
@@ -591,14 +549,20 @@ class InputHandler {
       log(`Failed to toggle server mic: ${result.error || 'unknown error'}`);
     }
   };
+  
+  window.getFlipperState = () => ({
+    positions: flipperPositions.slice(),
+    direction: flipperDirection,
+    joints: FLIPPER_JOINTS
+  });
 
-  // Emergency stop on page unload
   window.addEventListener('beforeunload', () => {
-    currentVelocity.x = 0;
-    currentVelocity.y = 0;
-    if (motorTopic) {
+    if (cmdVelTopic) {
       try {
-        motorTopic.publish(new ROSLIB.Message({ data: '0,0,0,0,0,0' }));
+        cmdVelTopic.publish(new ROSLIB.Message({
+          linear: { x: 0.0, y: 0.0, z: 0.0 },
+          angular: { x: 0.0, y: 0.0, z: 0.0 }
+        }));
       } catch (e) {
         console.error('Error publishing emergency stop:', e);
       }
@@ -607,7 +571,6 @@ class InputHandler {
     if (inputHandler) inputHandler.dispose();
   });
 
-  // Initialize on load
   log('Initializing application...');
   initializeROS();
 })();
