@@ -32,11 +32,18 @@ def generate_launch_description():
         arguments=["effort_controller", "--inactive"],
         output="screen",
     )
-    # ------------------------------------------------------
+    
+    spawn_velocity = Node(
+        package="controller_manager",
+        executable="spawner",
+        arguments=["velocity_controller", "--inactive"],
+        output="screen",
+    )
 
     return LaunchDescription([
         base_launch,
         spawn_position, 
-        spawn_effort,   
+        #spawn_effort,   
+        spawn_velocity,
         servo_launch
     ])

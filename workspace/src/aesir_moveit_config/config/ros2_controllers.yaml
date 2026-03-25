@@ -15,6 +15,10 @@ controller_manager:
     effort_controller:
       type: forward_command_controller/ForwardCommandController
 
+    # 4. Used for raw Joint-by-Joint Velocity
+    velocity_controller:
+      type: forward_command_controller/ForwardCommandController
+
     joint_state_broadcaster:
       type: joint_state_broadcaster/JointStateBroadcaster
 
@@ -56,3 +60,14 @@ effort_controller:
       - joint_5
       - joint_6
     interface_name: effort
+
+velocity_controller:
+  ros__parameters:
+    joints:
+      - joint_1
+      - joint_2
+      - joint_3
+      - joint_4
+      - joint_5
+      - joint_6
+    interface_name: velocity
