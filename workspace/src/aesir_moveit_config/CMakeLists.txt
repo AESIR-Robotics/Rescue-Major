@@ -28,6 +28,7 @@ install(TARGETS arm_command_node
 
 install(PROGRAMS
   scripts/test_teleop.py
+  scripts/test_teleop_joints.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
