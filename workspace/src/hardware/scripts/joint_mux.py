@@ -208,8 +208,8 @@ class JointControlInterface(TeleopInterface):
 
 class TwistControlInterface(TeleopInterface):
     MOVE_BINDINGS = {
-        'i': (1,0,0,0), 'o': (1,0,0,-1), 'j': (0,0,0,1), 'l': (0,0,0,-1),
-        'u': (1,0,0,1), ',': (-1,0,0,0), '.': (-1,0,0,1), 'm': (-1,0,0,-1), 'k': (0,0,0,0),
+        'i': (1,0,0,0), 'o': (1,0,0,1), 'j': (0,0,0,-1), 'l': (0,0,0,1),
+        'u': (1,0,0,-1), ',': (-1,0,0,0), '.': (-1,0,0,1), 'm': (-1,0,0,-1), 'k': (0,0,0,0),
     }
     
     def __init__(self, node, topic):
