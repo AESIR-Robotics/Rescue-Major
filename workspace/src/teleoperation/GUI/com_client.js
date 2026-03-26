@@ -243,7 +243,7 @@ class InputHandler {
     
     let leftTrigger = 0;
     let rightTrigger = 0;
-    
+
     if (gp.axes.length > 5) {
       leftTrigger = Math.max(0, gp.axes[4] || 0);
       rightTrigger = Math.max(0, gp.axes[5] || 0);
@@ -277,7 +277,7 @@ class InputHandler {
   let isControlEnabled = false;
   let controlInterval = null;
   
-  const UPDATE_INTERVAL = 100;  // 10Hz
+  const UPDATE_INTERVAL = 50;  // 20Hz 
   
   // Flipper joint names (standard ROS naming)
   const FLIPPER_JOINTS = [
