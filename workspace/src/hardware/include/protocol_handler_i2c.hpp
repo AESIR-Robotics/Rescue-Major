@@ -133,10 +133,11 @@ private:
   };
 
   size_t     sendNext(deadline_t deadline);
-  ReadResult readOneMessage(deadline_t deadline);
+  /// Assumes sync byte (0xAA) has already been found and stored in synced_byte_.
+  ReadResult readOneMessage(micros timePerMsg);
   uint8_t    getMsgCRC(const header &msg_head, uint8_t *pckage, size_t size);
-  ReadResult ReadHeader(header &output, deadline_t deadline);
-  bool       syncMessage(uint8_t &first, deadline_t deadline);
+  /// Reads the rest of the header after the sync byte has already been found.
+  ReadResult ReadHeader(header &output, deadline_t hdr_dl);
   /// Wait until i2c_fd is ready for I/O or the deadline expires.
   /// Uses ppoll() for nanosecond-resolution timeout.
   bool       waitFdReady(short events, deadline_t deadline);
@@ -161,6 +162,11 @@ private:
   uint8_t internal_buf[INTERNAL_BUF_SIZE];
   // Start "full" so the first readData call immediately fetches a chunk.
   size_t internal_pos = INTERNAL_BUF_SIZE;
+
+  // Sync state — readPending finds 0xAA and stores it here so readOneMessage
+  // can consume it without re-scanning. Cleared after each message attempt.
+  bool    sync_pending_ { false };
+  uint8_t synced_byte_  { 0x00 };
 
   constexpr static unsigned int max_queue{50};
 
@@ -413,8 +419,29 @@ inline bool Protocol_Handler_I2C::readPending(micros timeout, micros timePerMsg)
   const deadline_t dl = stdclock::now() + timeout;
   bool dispatched_any = false;
 
-  while (stdclock::now() + timePerMsg < dl) {
-    auto res = readOneMessage(dl);
+  while (true) {
+    // Find sync byte using the full remaining deadline — this is not charged
+    // against timePerMsg. Only enter the message path if budget still allows it.
+    if (!sync_pending_) {
+      // Scan for 0xAA sync byte — consumes the global deadline, not timePerMsg.
+      bool found = false;
+      uint8_t byte = 0;
+      while (stdclock::now() < dl) {
+        if (readData(&byte, 1, dl) != 1) break;
+        if (byte == 0xAA) { found = true; break; }
+      }
+      if (!found) {
+        logWarn("Could not sync to message HEADER");
+        break;
+      }
+      synced_byte_  = byte;
+      sync_pending_ = true;
+    }
+
+    // Sync found — check budget before committing to reading a full message.
+    if (stdclock::now() + timePerMsg >= dl) break;
+
+    auto res = readOneMessage(timePerMsg);
     if (res == ReadResult::OK_DISPATCHED) {
       //logInfo("Message dispatched successfully");
       dispatched_any = true;
@@ -424,16 +451,12 @@ inline bool Protocol_Handler_I2C::readPending(micros timeout, micros timePerMsg)
       //logInfo("No message available to read");
       break;
     }
-    if (res == ReadResult::NO_SYNC) {
-      logWarn("Could not sync to message HEADER");
-      break;
-    }
     if (res == ReadResult::CRC_MISMATCH) {
       //logWarn("CRC mismatch for received message, dropping it");
       continue;
     }
     logError("I/O error occurred while reading message");
-    if(error_state == Error_State::NONE)
+    if (error_state == Error_State::NONE)
       error_state = Error_State::IO_ERROR;
     return false;
   }
@@ -441,19 +464,23 @@ inline bool Protocol_Handler_I2C::readPending(micros timeout, micros timePerMsg)
   return dispatched_any;
 }
 
-inline Protocol_Handler_I2C::ReadResult Protocol_Handler_I2C::readOneMessage(deadline_t deadline) {
+inline Protocol_Handler_I2C::ReadResult Protocol_Handler_I2C::readOneMessage(micros timePerMsg) {
   if (!connected()) {
+    sync_pending_ = false;
     return ReadResult::ERROR_IO;
   }
 
+  // Per-message deadline starts now — sync was already found by readPending.
+  const deadline_t msg_dl = stdclock::now() + timePerMsg;
+
   header msg_head;
-  auto state = ReadHeader(msg_head, deadline);
+  auto state = ReadHeader(msg_head, msg_dl);
   if (state != ReadResult::OK_DISPATCHED) {
     return state;
   }
 
-  uint8_t inst   = std::get<1>(msg_head);
-  uint8_t length = std::get<2>(msg_head);
+  const uint8_t inst   = std::get<1>(msg_head);
+  const uint8_t length = std::get<2>(msg_head);
 
   // Guard against malformed length before touching the stack buffer.
   if (length > MAX_PAYLOAD_SIZE) {
@@ -466,7 +493,7 @@ inline Protocol_Handler_I2C::ReadResult Protocol_Handler_I2C::readOneMessage(dea
   // leaving out_buffer[0] uninitialised).
   // Stack-allocated: MAX_PAYLOAD_SIZE + 1 (CRC) = 61 bytes worst case.
   std::array<uint8_t, MAX_PAYLOAD_SIZE + 1> out_buffer{};
-  auto num = readData(out_buffer.data(), length + 1, deadline);
+  auto num = readData(out_buffer.data(), length + 1, msg_dl);
   if (num != static_cast<size_t>(length + 1)) {
     return ReadResult::ERROR_IO;
   }
@@ -488,49 +515,24 @@ inline Protocol_Handler_I2C::ReadResult Protocol_Handler_I2C::readOneMessage(dea
 }
 
 inline Protocol_Handler_I2C::ReadResult
-Protocol_Handler_I2C::ReadHeader(header &output, deadline_t deadline) {
-  // I just realized, no message cannot appear at the end of a message
-  constexpr int MAX_NO_MESSAGE_RETRIES = 2;
-  int retries = 0;
-  do {
+Protocol_Handler_I2C::ReadHeader(header &output, deadline_t hdr_dl) {
 
-    if (retries > 1)
-      if (internal_pos >= tuple_size(header{}) || retries > MAX_NO_MESSAGE_RETRIES) {
-        // second retry and no message message did not start on the previous chunk
-        // or there has been too many retries
-        return ReadResult::NO_MESSAGE;
-      }
+  uint8_t header_buf[sizeof(output)];
+  header_buf[0] = synced_byte_;   // 0xAA — already validated by readPending
+  sync_pending_ = false;           // consumed
 
-    uint8_t header_buf[sizeof(output)];
-    header_buf[0] = 0x00;
-    if (!syncMessage(header_buf[0], deadline) || header_buf[0] != 0xAA) {
-      return ReadResult::NO_SYNC;
-    }
-    auto num = readData(header_buf + 1, sizeof(header_buf) - 1, deadline);
-    if (num != (sizeof(header_buf) - 1)) {
-      return ReadResult::ERROR_IO;
-    }
-    unpack_tuple_from_buffer(output, header_buf);
+  auto num = readData(header_buf + 1, sizeof(header_buf) - 1, hdr_dl);
+  if (num != (sizeof(header_buf) - 1)) {
+    return ReadResult::ERROR_IO;
+  }
+  unpack_tuple_from_buffer(output, header_buf);
 
-    retries++;
-  } while (output == header{0xAA, 0x00, calcCRC({0xAA, 0x00}, 0)});
+  // Sentinel check: if the MCU had nothing to send it emits 0xAA 0x00 CRC.
+  // readPending will re-sync on the next iteration.
+  if (output == header{0xAA, 0x00, calcCRC({0xAA, 0x00}, 0)})
+    return ReadResult::NO_MESSAGE;
 
   return ReadResult::OK_DISPATCHED;
-}
-
-inline bool Protocol_Handler_I2C::syncMessage(uint8_t &first, deadline_t deadline) {
-  uint8_t byte;
-  while (stdclock::now() < deadline) {
-    if (readData(&byte, 1, deadline) != 1) {
-      return false;
-    }
-    first = byte;
-    if (byte == 0xAA) {
-      return true;
-    }
-  }
-  logInfo("Sync byte not found within timeout");
-  return false;
 }
 
 inline uint8_t Protocol_Handler_I2C::getMsgCRC(const header &msg_head,
