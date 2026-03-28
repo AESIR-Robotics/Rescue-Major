@@ -280,13 +280,22 @@ class InputHandler {
   const UPDATE_INTERVAL = 50;  // 20Hz 
   
   // Flipper joint names (standard ROS naming)
+  /*
   const FLIPPER_JOINTS = [
-    'front_left_flipper_joint',
-    'front_right_flipper_joint',
-    'rear_left_flipper_joint',
-    'rear_right_flipper_joint'
+    'front_left_flipper_joint', 0
+    'front_right_flipper_joint', 1
+    'rear_left_flipper_joint', 2
+    'rear_right_flipper_joint' 3
   ];
-  
+  */
+
+  const FLIPPER_JOINTS = [
+    '0',
+    '1',
+    '2',
+    '3'
+  ];
+
   // Flipper state
   let flipperPositions = [0, 0, 0, 0];
   let flipperDirection = 1;  // 1 = add, 0 = subtract
