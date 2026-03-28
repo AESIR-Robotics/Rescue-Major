@@ -146,6 +146,24 @@ Publish TwistStamped messages to `/servo_node/delta_twist_cmds`:
 ros2 topic pub -r 10 /servo_node/delta_twist_cmds geometry_msgs/msg/TwistStamped "{header: {frame_id: 'base_link'}, twist: {linear: {x: 0.1, y: 0.0, z: 0.0}, angular: {x: 0.0, y: 0.0, z: 0.2}}}"
 ```
 
+### Hardware Brigde: TopicBrigdeHardware
+This package includes a custom `ros2_control` System Interface that acts as a bridge. Instead of talking to a specific driver, it packages MoveIt’s trajectory commands into a custom ROS 2 message and "screams" them over a topic for a Serial/Hardware node to consume.
+
+#### Communication Interface
+
+| Topic | Type | Direction | Descrition |
+| :--- | :--- | :--- | :--- |
+| `/comands_hardware` | `hardware/mgs/JointControl` | **OUT** | Contains position, velocity, acceleration, and effort for all 6 joints. |
+| `harware_brigde/set_acceleration` | `std_msgs/msg/Float64MultiArray` | **IN** | Used to update joint acceleration limits at runtime. |
+
+
+#### Setting Joint Acceleration
+To update the acceleration for all 6 joints at once, publish a Float64MultiArray containing exactly 6 values (one per joint in radians/sec²):
+
+```bash
+ros2 topic pub --once /hardware_bridge/set_acceleration std_msgs/msg/Float64MultiArray "{data: [2.0, 2.0, 1.5, 1.5, 1.0, 1.0]}"
+```
+
 ### Switching Between Control Modes
 
 #### Pause Commander Node

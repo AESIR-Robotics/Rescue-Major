@@ -1,0 +1,9 @@
+<library path="aesir_moveit_config">
+  <class name="aesir_plugin/TopicBridgeHardware" 
+         type="aesir_plugin::TopicBridgeHardware" 
+         base_class_type="hardware_interface::SystemInterface">
+    <description>
+      Puente customizado para enviar comandos de ros2_control a un tópico el nodo de hardware.
+    </description>
+  </class>
+</library>
