@@ -280,15 +280,6 @@ class InputHandler {
   const UPDATE_INTERVAL = 50;  // 20Hz 
   
   // Flipper joint names (standard ROS naming)
-  /*
-  const FLIPPER_JOINTS = [
-    'front_left_flipper_joint', 0
-    'front_right_flipper_joint', 1
-    'rear_left_flipper_joint', 2
-    'rear_right_flipper_joint' 3
-  ];
-  */
- 
   const FLIPPER_JOINTS = [
     'flipper_0',
     'flipper_1',
@@ -297,9 +288,9 @@ class InputHandler {
   ];
 
   // Flipper state
-  let flipperPositions = [0, 0, 0, 0];
+  let flipperPositions = [0.0, 0.0, 0.0, 0.0];
   let flipperDirection = 1;  // 1 = add, 0 = subtract
-  const FLIPPER_STEP = 1.0;
+  const FLIPPER_STEP = 0.1;  // Incrementos pequeños en radianes
   const FLIPPER_VELOCITY = 1.0;
   const FLIPPER_ACCELERATION = 0.5;
 
@@ -417,7 +408,11 @@ class InputHandler {
   
   function modifyFlipperPosition(index) {
     const delta = flipperDirection === 1 ? FLIPPER_STEP : -FLIPPER_STEP;
-    flipperPositions[index] += delta;
+    let newPos = flipperPositions[index] + delta;
+    if (newPos < 0.0) newPos = 0.0;
+    if (newPos > 2 * Math.PI) newPos = 2 * Math.PI;
+    
+    flipperPositions[index] = newPos;
     log(`${FLIPPER_JOINTS[index]}: ${flipperPositions[index].toFixed(2)}`);
   }
   
