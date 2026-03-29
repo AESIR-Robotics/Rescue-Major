@@ -165,8 +165,10 @@ private:
 
   // Sync state — readPending finds 0xAA and stores it here so readOneMessage
   // can consume it without re-scanning. Cleared after each message attempt.
-  bool    sync_pending_ { false };
-  uint8_t synced_byte_  { 0x00 };
+  bool      sync_pending_ { false };
+  uint8_t   synced_byte_  { 0x00 };
+  u_int32_t lost_bytes  { 0 };
+  u_int32_t total_attmp  { 0 };
 
   constexpr static unsigned int max_queue{50};
 
@@ -419,7 +421,7 @@ inline bool Protocol_Handler_I2C::readPending(micros timeout, micros timePerMsg)
   const deadline_t dl = stdclock::now() + timeout;
   bool dispatched_any = false;
 
-  while (true) {
+  while (stdclock::now() < dl) {
     // Find sync byte using the full remaining deadline — this is not charged
     // against timePerMsg. Only enter the message path if budget still allows it.
     if (!sync_pending_) {
@@ -428,18 +430,27 @@ inline bool Protocol_Handler_I2C::readPending(micros timeout, micros timePerMsg)
       uint8_t byte = 0;
       while (stdclock::now() < dl) {
         if (readData(&byte, 1, dl) != 1) break;
+        if (byte != 0xBB) { lost_bytes++; }
+        total_attmp++;
         if (byte == 0xAA) { found = true; break; }
       }
+      
       if (!found) {
-        logWarn("Could not sync to message HEADER");
+        logWarn("Could not sync to message HEADER: lost %i, total %i", lost_bytes, total_attmp);
+        total_attmp = 0;
         break;
       }
+      total_attmp = 0;
       synced_byte_  = byte;
       sync_pending_ = true;
     }
 
     // Sync found — check budget before committing to reading a full message.
     if (stdclock::now() + timePerMsg >= dl) break;
+    if(lost_bytes > 1){
+      logWarn("Skipped %i bytes in sync", lost_bytes - 1);
+    }
+    lost_bytes = 0;
 
     auto res = readOneMessage(timePerMsg);
     if (res == ReadResult::OK_DISPATCHED) {
