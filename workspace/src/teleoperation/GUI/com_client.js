@@ -288,12 +288,12 @@ class InputHandler {
     'rear_right_flipper_joint' 3
   ];
   */
-
+ 
   const FLIPPER_JOINTS = [
-    '0',
-    '1',
-    '2',
-    '3'
+    'flipper_0',
+    'flipper_1',
+    'flipper_2',
+    'flipper_3'
   ];
 
   // Flipper state
