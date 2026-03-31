@@ -23,7 +23,7 @@
 #include "hardware/msg/joint_control.hpp"
 
 #include "commands.hpp"
-#include "protocol_handler_i2c.hpp"
+#include "protocol_handler.hpp"
 #include "tuple_utils.hpp"
 
 // =============================================================================
