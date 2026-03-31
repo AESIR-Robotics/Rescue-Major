@@ -28,11 +28,11 @@ public:
 
         // Device type: "jetson" | "generic" | "raspberry"
         this->declare_parameter<std::string>("device", "generic");
-        this->declare_parameter<std::vector<long int>>("camera_devices_index", {0});
-        this->declare_parameter<std::vector<std::string>>("capture_formats_", {"MJPG", "MJPG", "YUYV"});
-        this->declare_parameter<std::vector<int64_t>>("camera_widths", {1920});
-        this->declare_parameter<std::vector<int64_t>>("camera_heights", {1080});
-        this->declare_parameter<std::vector<int64_t>>("camera_fps", {30});
+        this->declare_parameter<std::vector<long int>>("cameras_devices_index", {0, 2});
+        this->declare_parameter<std::vector<std::string>>("cameras_formats_", {"MJPG", "MJPG", "YUYV"});
+        this->declare_parameter<std::vector<int64_t>>("cameras_widths", {1920, 1920});
+        this->declare_parameter<std::vector<int64_t>>("cameras_heights", {1080, 1080});
+        this->declare_parameter<std::vector<int64_t>>("cameras_fps", {30, 30});
 
         // Thermal camera (-1 = disabled)
         this->declare_parameter<int>("thermal_camera_index", -1);
@@ -41,11 +41,11 @@ public:
         std::vector<long int> cam_indices;
 
         this->get_parameter("device", device_);
-        this->get_parameter("camera_devices_index", cam_indices);
-        this->get_parameter("capture_formats_", capture_formats_);
-        this->get_parameter("camera_widths", camera_widths_);
-        this->get_parameter("camera_heights", camera_heights_);
-        this->get_parameter("camera_fps", camera_fps_);
+        this->get_parameter("cameras_devices_index", cam_indices);
+        this->get_parameter("cameras_formats_", capture_formats_);
+        this->get_parameter("cameras_widths", camera_widths_);
+        this->get_parameter("cameras_heights", camera_heights_);
+        this->get_parameter("cameras_fps", camera_fps_);
         this->get_parameter("thermal_camera_index", thermal_camera_index_);
         this->get_parameter("thermal_enable", thermal_enabled_);
 
