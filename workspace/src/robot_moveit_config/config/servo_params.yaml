@@ -1,0 +1,32 @@
+/**:
+  ros__parameters:
+    moveit_servo:
+      move_group_name: "arm"
+      planning_frame: "arm_base_link"
+      ee_frame_name: "link_6"  # Correct end-effector
+      robot_link_command_frame: "arm_base_link"
+      
+      # Vital unlocks to prevent silent freezing
+      use_gazebo: false
+      joint_topic: "/joint_states"
+      status_topic: "status"
+      is_primary_planning_scene_monitor: false
+
+      command_in_type: "unitless"
+      scale:
+        linear: 1.0
+        rotational: 1.0
+        joint: 1.0
+
+      command_out_topic: "/arm_controller/joint_trajectory"
+      command_out_type: "trajectory_msgs/JointTrajectory"
+
+      publish_joint_positions: true
+      publish_joint_velocities: true
+      publish_joint_accelerations: false
+      publish_period: 0.034
+
+      low_pass_filter_coeff: 2.0
+      
+      check_collisions: true
+      collision_check_rate: 10.0

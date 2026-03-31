@@ -6,7 +6,7 @@ import xacro
 
 def generate_launch_description():
     pkg_name = 'aesir_robot_description' 
-    urdf_file = os.path.join(get_package_share_directory(pkg_name), 'urdf', 'rescue_robot_foxglove.urdf.xacro')
+    urdf_file = os.path.join(get_package_share_directory(pkg_name), 'urdf', 'arm.urdf.xacro')
 
     robot_description_content = xacro.process_file(urdf_file).toxml()
     robot_description = {
