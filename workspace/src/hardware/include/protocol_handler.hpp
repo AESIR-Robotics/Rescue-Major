@@ -41,7 +41,7 @@ using LogFn      = std::function<void(const std::string &)>;
 //   - Protocol-level error (IO_ERROR)
 // =============================================================================
 
-template <typename Transport>
+template <typename Transport, typename Identifier>
 class Protocol_Handler : public Transport {
 public:
 
@@ -49,7 +49,7 @@ public:
   using tail   = std::tuple<uint8_t>;                    // CRC
 
   // callbacks must be non-blocking, O(1) — no locks, no I/O, no heavy computation
-  std::unordered_map<ReadCommandsNC::ReadCommand,
+  std::unordered_map<Identifier,
                      std::function<void(const uint8_t *, size_t)>> read_callbacks{};
   std::unordered_map<WriteCommandsNC::WriteCommand,
                      std::function<void(const uint8_t *, size_t)>> write_callbacks{};
@@ -140,15 +140,27 @@ public:
   }
 };
 
+// =============================================================================
+// Convenience alias — the only concrete type callers should use directly
+// =============================================================================
 #include "i2c_transport.hpp"
-using Protocol_Handler_I2C = Protocol_Handler<I2C_Transport>;
+template<typename Identifier>
+using Protocol_Handler_I2C = Protocol_Handler<I2C_Transport, Identifier>;
+
+#include "can_transport.hpp"
+template<typename Identifier>
+using Protocol_Handler_CAN = Protocol_Handler<CAN_Transport, Identifier>;
+
+#include "serial_transport.hpp"
+template<typename Identifier>
+using Protocol_Handler_SERIAL = Protocol_Handler<Serial_Transport, Identifier>;
 
 // =============================================================================
 // Template definitions
 // =============================================================================
 
-template <typename Transport>
-void Protocol_Handler<Transport>::setupInstructionCallbacks() {
+template <typename Transport, typename Identifier>
+void Protocol_Handler<Transport, Identifier>::setupInstructionCallbacks() {
   instruction_callback.emplace(1, [](const uint8_t *pckg, size_t size) {
     (void)pckg; (void)size;
   });
@@ -159,13 +171,13 @@ void Protocol_Handler<Transport>::setupInstructionCallbacks() {
   });
   instruction_callback.emplace(3, [this](const uint8_t *pckg, size_t size) {
     uint8_t id = pckg[0];
-    auto it = read_callbacks.find(static_cast<ReadCommandsNC::ReadCommand>(id));
+    auto it = read_callbacks.find(static_cast<Identifier>(id));
     if (it != read_callbacks.end()) it->second(pckg + 1, size - 1);
   });
 }
 
-template <typename Transport>
-bool Protocol_Handler<Transport>::addCommand(
+template <typename Transport, typename Identifier>
+bool Protocol_Handler<Transport, Identifier>::addCommand(
     std::unique_ptr<CommandsNC::Command> &&input) {
   if (sending.size() < max_queue) {
     sending.push(std::move(input));
@@ -174,8 +186,8 @@ bool Protocol_Handler<Transport>::addCommand(
   return false;
 }
 
-template <typename Transport>
-bool Protocol_Handler<Transport>::sendQueue(micros timeout, micros timePerMsg) {
+template <typename Transport, typename Identifier>
+bool Protocol_Handler<Transport, Identifier>::sendQueue(micros timeout, micros timePerMsg) {
   if (!this->connected()) return false;
 
   const deadline_t dl = stdclock::now() + timeout;
@@ -199,8 +211,8 @@ bool Protocol_Handler<Transport>::sendQueue(micros timeout, micros timePerMsg) {
   return true;
 }
 
-template <typename Transport>
-size_t Protocol_Handler<Transport>::sendNext(deadline_t deadline) {
+template <typename Transport, typename Identifier>
+size_t Protocol_Handler<Transport, Identifier>::sendNext(deadline_t deadline) {
   if (!this->connected() || sending.empty()) return 0;
 
   auto size = sending.front()->getPckSize();
@@ -223,8 +235,8 @@ size_t Protocol_Handler<Transport>::sendNext(deadline_t deadline) {
   return sent;
 }
 
-template <typename Transport>
-bool Protocol_Handler<Transport>::readPending(micros timeout, micros timePerMsg) {
+template <typename Transport, typename Identifier>
+bool Protocol_Handler<Transport, Identifier>::readPending(micros timeout, micros timePerMsg) {
   if (!this->connected()) return false;
 
   const deadline_t dl = stdclock::now() + timeout;
@@ -269,9 +281,9 @@ bool Protocol_Handler<Transport>::readPending(micros timeout, micros timePerMsg)
   return dispatched_any;
 }
 
-template <typename Transport>
-typename Protocol_Handler<Transport>::ReadResult
-Protocol_Handler<Transport>::readOneMessage(micros timePerMsg) {
+template <typename Transport, typename Identifier>
+typename Protocol_Handler<Transport, Identifier>::ReadResult
+Protocol_Handler<Transport, Identifier>::readOneMessage(micros timePerMsg) {
   if (!this->connected()) return ReadResult::IO_ERROR;
 
   const deadline_t msg_dl = stdclock::now() + timePerMsg;
@@ -301,9 +313,9 @@ Protocol_Handler<Transport>::readOneMessage(micros timePerMsg) {
   return ReadResult::OK_DISPATCHED;
 }
 
-template <typename Transport>
-typename Protocol_Handler<Transport>::ReadResult
-Protocol_Handler<Transport>::ReadHeader(header &output, deadline_t hdr_dl) {
+template <typename Transport, typename Identifier>
+typename Protocol_Handler<Transport, Identifier>::ReadResult
+Protocol_Handler<Transport, Identifier>::ReadHeader(header &output, deadline_t hdr_dl) {
   uint8_t header_buf[sizeof(output)];
   header_buf[0] = synced_byte_;  // 0xAA already validated by readPending
 
@@ -318,8 +330,8 @@ Protocol_Handler<Transport>::ReadHeader(header &output, deadline_t hdr_dl) {
   return ReadResult::OK_DISPATCHED;
 }
 
-template <typename Transport>
-uint8_t Protocol_Handler<Transport>::getMsgCRC(const header &msg_head,
+template <typename Transport, typename Identifier>
+uint8_t Protocol_Handler<Transport, Identifier>::getMsgCRC(const header &msg_head,
                                                 uint8_t *pckage, size_t size) {
   uint8_t tmp[sizeof(header)];
   pack_tuple_to_buffer(msg_head, tmp);
@@ -328,8 +340,8 @@ uint8_t Protocol_Handler<Transport>::getMsgCRC(const header &msg_head,
   return crc;
 }
 
-template <typename Transport>
-void Protocol_Handler<Transport>::dispatchInput(uint8_t inst, uint8_t *pckg,
+template <typename Transport, typename Identifier>
+void Protocol_Handler<Transport, Identifier>::dispatchInput(uint8_t inst, uint8_t *pckg,
                                                  size_t size) {
   auto it = instruction_callback.find(inst);
   if (it != instruction_callback.end()) it->second(pckg, size);

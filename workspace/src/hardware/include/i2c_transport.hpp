@@ -1,6 +1,6 @@
 #pragma once
 
-#include <array>
+//#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -78,7 +78,7 @@ protected:
   /// Returns bytes read (may be < length on timeout or bus error).
   size_t readData(uint8_t *buffer, size_t length, deadline_t deadline);
 
-  void close();
+  void disconnect();
 
   // Exposed to Protocol_Handler so it can set transport error on protocol faults
   // that imply a transport problem (e.g. partial read after an ioctl failure).
@@ -124,7 +124,7 @@ inline I2C_Transport::I2C_Transport(const std::string &device_in, int slave_addr
   if (!device.empty()) connect();
 }
 
-inline I2C_Transport::~I2C_Transport() noexcept { close(); }
+inline I2C_Transport::~I2C_Transport() noexcept { disconnect(); }
 
 inline bool I2C_Transport::init(const std::string &device_in, int slave_addr_in) {
   device     = device_in;
@@ -141,7 +141,7 @@ inline bool I2C_Transport::reconnect() {
 }
 
 inline bool I2C_Transport::connect() {
-  close();
+  disconnect();
   transport_error_ = Transport_Error::NONE;
   if (!isValidConfig()) {
     transport_error_ = Transport_Error::INVALID_CONFIG;
@@ -161,13 +161,13 @@ inline bool I2C_Transport::connect() {
       transport_error_ = Transport_Error::LOCK_FAILED;
       logError("Failed to lock file");
     }
-    close();
+    disconnect();
     return false;
   }
 
   if (ioctl(i2c_fd, I2C_SLAVE, slave_addr) < 0) {
     transport_error_ = Transport_Error::IOCTL_FAILED;
-    close();
+    disconnect();
     return false;
   }
 
@@ -175,7 +175,7 @@ inline bool I2C_Transport::connect() {
   return true;
 }
 
-inline void I2C_Transport::close() {
+inline void I2C_Transport::disconnect() {
   if (i2c_fd >= 0) {
     ::close(i2c_fd);
     i2c_fd = -1;
@@ -206,7 +206,7 @@ inline bool I2C_Transport::waitFdReady(short events, deadline_t deadline) {
   int ret = ppoll(&pfd, 1, &ts, nullptr);
   if (ret < 0) {
     if (errno == EBADF) {
-      close();
+      disconnect();
       transport_error_ = Transport_Error::FD_INVALID;
     }
     return false;
@@ -240,7 +240,7 @@ inline size_t I2C_Transport::writeData(const uint8_t *data, size_t length,
   iod.nmsgs = 1;
 
   if (ioctl(i2c_fd, I2C_RDWR, &iod) != static_cast<int>(iod.nmsgs)) {
-    close();
+    disconnect();
     transport_error_ = Transport_Error::IOCTL_FAILED;
     return 0;
   }
@@ -301,7 +301,7 @@ inline size_t I2C_Transport::readData(uint8_t *buffer, size_t length,
       iod.msgs = &msgs[i];
       if (ioctl(i2c_fd, I2C_RDWR, &iod) != static_cast<int>(iod.nmsgs)) {
         logError("I2C ioctl failed: %s", strerror(errno));
-        close();
+        disconnect();
         transport_error_ = Transport_Error::IOCTL_FAILED;
         return false;
       }

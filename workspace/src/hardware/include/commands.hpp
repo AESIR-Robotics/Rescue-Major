@@ -98,6 +98,50 @@ template <> struct packetReturn<DCACCEL>  { using type = std::tuple<float, float
 
 } // namespace ReadCommandsNC
 
+// --- WriteCommandsNC --------------------------------------------------------
+namespace WriteCommandsESP {
+
+enum WriteCommand : uint8_t { BYTELOSS = 0X00, SPEED = 0x01, POSITION = 0x02, ACCEL = 0x03 };
+
+template <WriteCommand CMD> struct packetSend   { using type = void; };
+template <WriteCommand CMD> struct packetReturn { using type = void; };
+
+template <> struct packetSend<BYTELOSS>      { using type = std::tuple<>;   }; 
+template <> struct packetReturn<BYTELOSS>    { using type = std::tuple<>;   };
+
+template <> struct packetSend<SPEED>      { using type = std::tuple<float>;    }; // motor mask, speed
+template <> struct packetReturn<SPEED>    { using type = std::tuple<>;         };
+
+template <> struct packetSend<POSITION>   { using type = std::tuple<int32_t>;  }; // motor mask, position
+template <> struct packetReturn<POSITION> { using type = std::tuple<>;         };
+
+template <> struct packetSend<ACCEL>   { using type = std::tuple<float>;  }; // motor mask, position
+template <> struct packetReturn<ACCEL> { using type = std::tuple<>;       };
+
+} // namespace WriteCommandsNC
+
+// --- ReadCommandsNC ---------------------------------------------------------
+namespace ReadCommandsESP {
+
+enum ReadCommand : uint8_t { BYTELOSS = 0X00, SPEED = 0x01, POSITION = 0x02, ACCEL = 0x03 };
+
+template <ReadCommand CMD> struct packetSend  { using type = void; };
+template <ReadCommand CMD> struct packetReturn { using type = void; };
+
+template <> struct packetSend<BYTELOSS>      { using type = std::tuple<>;   }; 
+template <> struct packetReturn<BYTELOSS>    { using type = std::tuple<uint32_t>;   }; // Amount of bytes lost
+
+template <> struct packetSend<SPEED>      { using type = std::tuple<>; };
+template <> struct packetReturn<SPEED>    { using type = std::tuple<float>; }; // speed per motor
+
+template <> struct packetSend<POSITION>   { using type = std::tuple<>; };
+template <> struct packetReturn<POSITION> { using type = std::tuple<int32_t>; }; // position per motor
+
+template <> struct packetSend<ACCEL>   { using type = std::tuple<>;  }; // motor mask, position
+template <> struct packetReturn<ACCEL> { using type = std::tuple<float>; };
+
+} // namespace ReadCommandsNC
+
 // --- CommandsNC -------------------------------------------------------------
 namespace CommandsNC {
 
@@ -134,6 +178,22 @@ template <ReadCommandsNC::ReadCommand ID> struct CmdInter<ID> {
   constexpr static bool   hasID = true;
   using sending   = typename ReadCommandsNC::packetSend<ID>::type;
   using returning = typename ReadCommandsNC::packetReturn<ID>::type;
+};
+
+template <WriteCommandsESP::WriteCommand ID> struct CmdInter<ID> {
+  constexpr static uint8_t instruction = 2;
+  constexpr static uint8_t id   = ID;
+  constexpr static bool   hasID = true;
+  using sending   = typename WriteCommandsESP::packetSend<ID>::type;
+  using returning = typename WriteCommandsESP::packetReturn<ID>::type;
+};
+
+template <ReadCommandsESP::ReadCommand ID> struct CmdInter<ID> {
+  constexpr static uint8_t instruction = 3;
+  constexpr static uint8_t id   = ID;
+  constexpr static bool   hasID = true;
+  using sending   = typename ReadCommandsESP::packetSend<ID>::type;
+  using returning = typename ReadCommandsESP::packetReturn<ID>::type;
 };
 
 // Command: polymorphic base
@@ -239,6 +299,12 @@ using WriteInst = GeneralInstruction<CmdInter<T>>;
 template <ReadCommandsNC::ReadCommand T>
 using ReadInst = GeneralInstruction<CmdInter<T>>;
 
+template <WriteCommandsESP::WriteCommand T>
+using WriteInstESP = GeneralInstruction<CmdInter<T>>;
+
+template <ReadCommandsESP::ReadCommand T>
+using ReadInstESP = GeneralInstruction<CmdInter<T>>;
+
 } // namespace CommandsNC
 
 // ---------------------------------------------------------------------------
@@ -246,6 +312,26 @@ using ReadInst = GeneralInstruction<CmdInter<T>>;
 // ---------------------------------------------------------------------------
 
 namespace ReadCommandsNC {
+
+/// Deserialise a read-response payload and invoke handle(tuple).
+/// Returns false if the payload size does not match the expected type.
+template <ReadCommand ID, typename HandlerFunc>
+inline bool dispatch_one(const uint8_t *data, size_t size, HandlerFunc &&handle) {
+  using payload = typename packetReturn<ID>::type;
+
+  if (size != tuple_size(payload{})) {
+    return false;
+  }
+
+  payload p;
+  unpack_tuple_from_buffer(p, data);
+  handle(std::move(p));
+  return true;
+}
+
+} // namespace ReadCommandsNC
+
+namespace ReadCommandsESP {
 
 /// Deserialise a read-response payload and invoke handle(tuple).
 /// Returns false if the payload size does not match the expected type.
