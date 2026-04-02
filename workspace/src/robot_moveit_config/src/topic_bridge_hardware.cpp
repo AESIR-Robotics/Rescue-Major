@@ -14,6 +14,21 @@
 namespace aesir_plugin
 {
 
+// Conversion helpers
+//  ros_to_hw : ROS [-π, π]  →  Hardware [0, 2π]   (add π)
+//  hw_to_ros : Hardware [0, 2π]  →  ROS [-π, π]   (subtract π, then normalise)
+static inline double ros_to_hw(double rad)
+{
+  return rad + M_PI;
+}
+
+static inline double hw_to_ros(double rad)
+{
+  // Subtract π then normalise to [-π, π] in case hardware sends values
+  // slightly outside [0, 2π]
+  return std::fmod(rad - M_PI + M_PI, 2.0 * M_PI) - M_PI;
+}
+
 class TopicBridgeHardware : public hardware_interface::SystemInterface
 {
 private:
@@ -80,6 +95,39 @@ public:
     // -----------------------------------------------------------------
     node_ = std::make_shared<rclcpp::Node>("hw_bridge_node");
 
+    // Read initial values from URDF if present
+    // initial_value is expressed in ROS radians [-π, π], but store as hardware
+    for (size_t i = 0; i < nr_joints; ++i) {
+      for (const auto& state_interface : info_.joints[i].state_interfaces) {
+        if (state_interface.name == hardware_interface::HW_IF_POSITION) {
+          if (!state_interface.initial_value.empty()) {
+            try {
+              double initial_val = std::stod(state_interface.initial_value);
+              
+              hw_states_[i]        = initial_val;
+              latest_hw_states_[i] = initial_val;
+              hw_commands_[i]      = initial_val;
+
+              RCLCPP_INFO(
+                node_->get_logger(),
+                "Joint '%s' initialized to %.4f from URDF",
+                info_.joints[i].name.c_str(),
+                initial_val
+              );
+            } catch (const std::exception& e) {
+              RCLCPP_WARN(
+                node_->get_logger(),
+                "Failed to parse initial_value for joint '%s': %s",
+                info_.joints[i].name.c_str(),
+                e.what()
+              );
+            }
+          }
+          break;
+        }
+      }
+    }
+
     // Publisher: JointControl commands
     command_pub_ = node_->create_publisher<hardware::msg::JointControl>(
       "/commands_hardware", 10);
@@ -118,7 +166,8 @@ public:
           for (size_t j = 0; j < info_.joints.size(); ++j) {
             if (info_.joints[j].name == msg->name[i]) {
               if (i < msg->position.size()) {
-                latest_hw_states_[j] = msg->position[i];
+                // Hardware [0, 2π]  →  ROS [-π, π]
+                latest_hw_states_[j] = hw_to_ros(msg->position[i]);
               }
               if (i < msg->velocity.size()) {
                 latest_hw_vel_states_[j] = msg->velocity[i];
@@ -210,8 +259,11 @@ public:
     }
 
     for (size_t i = 0; i < info_.joints.size(); ++i) {
+      // ROS [-π, π]  →  Hardware [0, 2π]
+      double pos_cmd = ros_to_hw(hw_commands_[i]);
+
       msg.joint_names.push_back(info_.joints[i].name);
-      msg.position.push_back(hw_commands_[i]);
+      msg.position.push_back(pos_cmd);
       msg.velocity.push_back(hw_vel_cmds_[i]);
       msg.acceleration.push_back(acc_snapshot[i]);
       msg.effort.push_back(hw_eff_cmds_[i]);
