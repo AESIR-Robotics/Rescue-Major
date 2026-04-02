@@ -113,7 +113,7 @@ struct DCState {
   void markAllUpdated() { updated.set(); }
 };
 
-using namespace CommandsNC;
+using namespace Cmd;
 
 // =============================================================================
 // HardwareDiagnostics
@@ -166,8 +166,10 @@ private:
   void jointCommandCallback(const hardware::msg::JointControl::SharedPtr msg);
 
   // --- Command preparation --------------------------------------------------
+  static constexpr int number_arms{7};
   void prepareCommands();
-  void enqueueJointInfo(const StepperState<10> &snap);
+  void enqueueFlipperInfo(const StepperState<4> &snap);
+  void enqueueArmInfo(const StepperState<number_arms> &snap);
   void enqueueDCInfo(const DCState &snap);
 
   // --- Error recovery -------------------------------------------------------
@@ -180,10 +182,8 @@ private:
 
   void diagTick();
 
-  static constexpr int number_arms{7};
-
-  Protocol_Handler_I2C<ReadCommandsNC::ReadCommand> stepper_micro;
-  std::array<Protocol_Handler_CAN<ReadCommandsESP::ReadCommand>, number_arms> stepper_arms;
+  Protocol_Handler_I2C<> stepper_micro;
+  std::array<Protocol_Handler_CAN<>, number_arms> stepper_arms;
 
   int steps_per_revolution{40000};
   static constexpr int steppers{10};
@@ -197,12 +197,16 @@ private:
   };
 
   // Desired state — written by ROS callbacks, snapshotted by tick
-  Guarded<StepperState<steppers>> in_joints;
+  // Desired state — flippers (I2C) and arms (CAN) kept separate so their
+  // updated bits do not cross-contaminate and error recovery is independent.
+  Guarded<StepperState<4>>             in_flipper;   ///< I2C stepper (4 motors)
+  Guarded<StepperState<number_arms>>   in_arms;      ///< CAN arm joints (7 motors)
   Guarded<DCState>                in_dc;
 
   // Feedback state — written by I2C callbacks, read by publish methods.
   // Entirely on the tick thread: no mutex needed.
-  StepperState<steppers> feedback_joints;
+  StepperState<4>            feedback_flipper;  ///< Feedback from I2C stepper
+  StepperState<number_arms>  feedback_arms;     ///< Feedback from CAN arms
   DCState                feedback_dc;
 
   // Timing counters
@@ -284,43 +288,33 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
       [this](const std::string &msg) { RCLCPP_ERROR(get_logger(), "%s", msg.c_str()); });
 
       stepper_arms[i].init("can0", 0 - i, i, /*channel=*/0);
+        
+      using Cmd::ESP32::Read;
+      const auto logger = [this](const char* fmt, auto... args) {
+        RCLCPP_WARN(get_logger(), fmt, args...);
+      };
       
       stepper_arms[i].read_callbacks.emplace(
-      ReadCommandsESP::POSITION,
-      [this](const uint8_t *data, size_t size) {
-        bool ok = ReadCommandsESP::dispatch_one<ReadCommandsESP::POSITION>(
-            data, size, [&](const auto &info) {
-              auto &[p0] = info;
-              feedback_joints.setPosition(0, stepsToRad(p0));
-            });
-        if (!ok) RCLCPP_WARN(get_logger(), "POSITION size mismatch (got %zu)", size);
-      });
-
-    stepper_arms[i].read_callbacks.emplace(
-        ReadCommandsESP::SPEED,
-        [this](const uint8_t *data, size_t size) {
-          bool ok = ReadCommandsESP::dispatch_one<ReadCommandsESP::SPEED>(
-              data, size, [&](const auto &info) {
-                auto &[s0] = info;
-                
-                feedback_joints.setSpeed(0, stepsToRad(s0));
-              });
-          if (!ok) RCLCPP_WARN(get_logger(), "SPEED size mismatch (got %zu)", size);
-        });
-
-    stepper_arms[i].read_callbacks.emplace(
-        ReadCommandsESP::ACCEL,
-        [this](const uint8_t *data, size_t size) {
-          bool ok = ReadCommandsESP::dispatch_one<ReadCommandsESP::ACCEL>(
-              data, size, [&](const auto &info) {
-                auto &[a0] = info;
-
-                feedback_joints.setAcceleration(0, stepsToRad(a0));
-              });
-          if (!ok) RCLCPP_WARN(get_logger(), "ACCEL size mismatch (got %zu)", size);
-        });
+        Read::POSITION,
+        Cmd::make_callback<Read::POSITION>([this, i](const auto &info) {
+          auto &[p0] = info;
+          feedback_arms.setPosition(i, stepsToRad(p0));
+        }, logger));
 
 
+      stepper_arms[i].read_callbacks.emplace(
+        Read::SPEED,
+        Cmd::make_callback<Read::SPEED>([this, i](const auto &info) {
+          auto &[s0] = info;
+          feedback_arms.setSpeed(i, stepsToRad(s0));
+        }, logger));
+
+      stepper_arms[i].read_callbacks.emplace(
+        Read::ACCEL,
+        Cmd::make_callback<Read::ACCEL>([this, i](const auto &info) {
+          auto &[a0] = info;
+          feedback_arms.setAcceleration(i, stepsToRad(a0));
+        }, logger));
   }
 
   generateCallbacks();
@@ -361,14 +355,15 @@ inline void HardwareDriverNode::tick() {
   // 3. Periodic feedback poll
   if (ticks_since_feedback_poll_++ >= feedback_poll_interval_ticks_) {
     ticks_since_feedback_poll_ = 0;
-    stepper_micro.addCommand(std::make_unique<ReadInst<ReadCommandsNC::POSITION>>());
-    stepper_micro.addCommand(std::make_unique<ReadInst<ReadCommandsNC::SPEED>>());
-    stepper_micro.addCommand(std::make_unique<ReadInst<ReadCommandsNC::ACCEL>>());
-    stepper_micro.addCommand(std::make_unique<ReadInst<ReadCommandsNC::DCVEL>>());
+    stepper_micro.addCommand(std::make_unique<ReadInst<Cmd::Teensy::Read::POSITION>>());
+    stepper_micro.addCommand(std::make_unique<ReadInst<Cmd::Teensy::Read::SPEED>>());
+    stepper_micro.addCommand(std::make_unique<ReadInst<Cmd::Teensy::Read::ACCEL>>());
+    stepper_micro.addCommand(std::make_unique<ReadInst<Cmd::Teensy::Read::DCVEL>>());
   }
 
   // 4. Send commands when something changed, periodically, or on resync
-  bool joints_changed = in_joints.with([](auto &d) { return d.anyUpdated(); });
+  bool joints_changed = in_flipper.with([](auto &d) { return d.anyUpdated(); })
+                     || in_arms.with(   [](auto &d) { return d.anyUpdated(); });
   bool dc_changed     = in_dc.with(    [](auto &d) { return d.anyUpdated(); });
   bool periodic       = (ticks_since_update_++ >= update_interval_ticks_);
 
@@ -378,10 +373,12 @@ inline void HardwareDriverNode::tick() {
   }
 
   // 5. Publish feedback if I2C callbacks updated the feedback structs
-  if (feedback_joints.anyUpdated() || ++ticks_since_feedback_publish_joint_ >= feedback_publish_joint_interval_ticks_) {
+  if (feedback_flipper.anyUpdated() || feedback_arms.anyUpdated() ||
+      ++ticks_since_feedback_publish_joint_ >= feedback_publish_joint_interval_ticks_) {
     ticks_since_feedback_publish_joint_ = 0;
     publishJointFeedback();
-    feedback_joints.clearUpdated(feedback_joints.updated);
+    feedback_flipper.clearUpdated(feedback_flipper.updated);
+    feedback_arms.clearUpdated(feedback_arms.updated);
   }
   if (feedback_dc.anyUpdated() || ++ticks_since_feedback_publish_dc_ >= feedback_publish_dc_interval_ticks_) {
     ticks_since_feedback_publish_dc_ = 0;
@@ -393,55 +390,45 @@ inline void HardwareDriverNode::tick() {
 // -----------------------------------------------------------------------------
 inline void HardwareDriverNode::prepareCommands() {
   // Snapshot under lock — no I/O while holding the mutex.
-  auto joints_snap = in_joints.snapshot();
+  auto flipper_snap = in_flipper.snapshot();
+  auto arms_snap    = in_arms.snapshot();
   auto dc_snap     = in_dc.snapshot();
 
   if (needs_full_resync_) {
-    joints_snap.markAllUpdated();
+    flipper_snap.markAllUpdated();
+    arms_snap.markAllUpdated();
     dc_snap.markAllUpdated();
     needs_full_resync_ = false;
   }
 
-  enqueueJointInfo(joints_snap);
+  enqueueFlipperInfo(flipper_snap);
+  enqueueArmInfo(arms_snap);
   enqueueDCInfo(dc_snap);
 
-  // Clear only the bits we snapshotted — preserve any bits set concurrently.
-  in_joints.with([&](auto &d) { d.clearUpdated(joints_snap.updated); });
-  in_dc.with(    [&](auto &d) { d.clearUpdated(dc_snap.updated);    });
+  in_flipper.with([&](auto &d) { d.clearUpdated(flipper_snap.updated); });
+  in_arms.with(  [&](auto &d) { d.clearUpdated(arms_snap.updated);    });
+  in_dc.with(    [&](auto &d) { d.clearUpdated(dc_snap.updated);      });
 }
 
 // -----------------------------------------------------------------------------
-inline void HardwareDriverNode::enqueueJointInfo(const StepperState<10> &snap) {
-  using positionW = WriteInst<WriteCommandsNC::POSITION>;
-  using speedW    = WriteInst<WriteCommandsNC::SPEED>;
-  using accelW    = WriteInst<WriteCommandsNC::ACCEL>;
-
-  using positionE = WriteInstESP<WriteCommandsESP::POSITION>;
-  using speedE    = WriteInstESP<WriteCommandsESP::SPEED>;
-  using accelE    = WriteInstESP<WriteCommandsESP::ACCEL>;
+inline void HardwareDriverNode::enqueueFlipperInfo(const StepperState<4> &snap) {
+  using positionW = WriteInst<Cmd::Teensy::Write::POSITION>;
+  using speedW    = WriteInst<Cmd::Teensy::Write::SPEED>;
+  using accelW    = WriteInst<Cmd::Teensy::Write::ACCEL>;
 
   constexpr int flippers = 4;
-  // Position — group motors with identical target into one masked command
+
   if (snap.updatedPosition()) {
-    
     std::unordered_map<int32_t, uint8_t> groups;
     for (int i = 0; i < flippers; ++i) {
       int32_t key = snap.position[i] < 0 ? -1 : static_cast<int32_t>(
           radToSteps(snap.position[i]) % steps_per_revolution);
       groups[key] |= static_cast<uint8_t>(1u << i);
     }
-    for (auto &[key, mask] : groups){
-      auto cmand = std::make_unique<positionW>(positionW::packet{mask, key});
-      //RCLCPP_INFO(this->get_logger(), "%s", cmand->info().c_str());
-      stepper_micro.addCommand(std::move(cmand));
-    }
-    for(int i = flippers; i < steppers; i++){
-      auto cmand = std::make_unique<positionE>(positionE::packet(snap.position[i]));
-      stepper_arms[i-flippers].addCommand(std::move(cmand));
-    }
+    for (auto &[key, mask] : groups)
+      stepper_micro.addCommand(std::make_unique<positionW>(positionW::packet{mask, key}));
   }
 
-  // Speed
   if (snap.updatedSpeed()) {
     std::unordered_map<int32_t, uint8_t> groups;
     std::unordered_map<int32_t, float>   values;
@@ -451,18 +438,10 @@ inline void HardwareDriverNode::enqueueJointInfo(const StepperState<10> &snap) {
       groups[key] |= static_cast<uint8_t>(1u << i);
       values.insert_or_assign(key, val);
     }
-    for (auto &[key, mask] : groups){
-      auto cmand = std::make_unique<speedW>(speedW::packet{mask, values[key]});
-      //RCLCPP_INFO(this->get_logger(), "%s", cmand->info().c_str());
-      stepper_micro.addCommand(std::move(cmand));
-    }
-    for(int i = flippers; i < steppers; i++){
-      auto cmand = std::make_unique<speedE>(speedE::packet(snap.speed[i]));
-      stepper_arms[i-flippers].addCommand(std::move(cmand));
-    }
+    for (auto &[key, mask] : groups)
+      stepper_micro.addCommand(std::make_unique<speedW>(speedW::packet{mask, values[key]}));
   }
 
-  // Acceleration
   if (snap.updatedAccel()) {
     std::unordered_map<int32_t, uint8_t> groups;
     std::unordered_map<int32_t, float>   values;
@@ -472,23 +451,33 @@ inline void HardwareDriverNode::enqueueJointInfo(const StepperState<10> &snap) {
       groups[key] |= static_cast<uint8_t>(1u << i);
       values.insert_or_assign(key, val);
     }
-    for (auto &[key, mask] : groups){
-      auto cmand = std::make_unique<accelW>(accelW::packet{mask, values[key]});
-      //RCLCPP_INFO(this->get_logger(), "%s", cmand->info().c_str());
-      stepper_micro.addCommand(std::move(cmand));
+    for (auto &[key, mask] : groups)
+      stepper_micro.addCommand(std::make_unique<accelW>(accelW::packet{mask, values[key]}));
+  }
+}
 
-    }
-    for(int i = flippers; i < steppers; i++){
-      auto cmand = std::make_unique<accelE>(accelE::packet(snap.acceleration[i]));
-      stepper_arms[i-flippers].addCommand(std::move(cmand));
-    }
+inline void HardwareDriverNode::enqueueArmInfo(const StepperState<number_arms> &snap) {
+  using positionE = WriteInstESP<Cmd::ESP32::Write::POSITION>;
+  using speedE    = WriteInstESP<Cmd::ESP32::Write::SPEED>;
+  using accelE    = WriteInstESP<Cmd::ESP32::Write::ACCEL>;
+
+  for (int i = 0; i < number_arms; ++i) {
+    if (snap.updatedPosition())
+      stepper_arms[i].addCommand(
+          std::make_unique<positionE>(positionE::packet{snap.position[i]}));
+    if (snap.updatedSpeed())
+      stepper_arms[i].addCommand(
+          std::make_unique<speedE>(speedE::packet{snap.speed[i]}));
+    if (snap.updatedAccel())
+      stepper_arms[i].addCommand(
+          std::make_unique<accelE>(accelE::packet{snap.acceleration[i]}));
   }
 }
 
 // -----------------------------------------------------------------------------
 inline void HardwareDriverNode::enqueueDCInfo(const DCState &snap) {
   if (!snap.anyUpdated()) return;
-  using dcvelW = WriteInst<WriteCommandsNC::DCVEL>;
+  using dcvelW = WriteInst<Cmd::Teensy::Write::DCVEL>;
   auto [left_pct, right_pct] = twistToMotorPct(snap.linear, snap.angular);
   auto cmand = std::make_unique<dcvelW>(dcvelW::packet{left_pct, right_pct});
   stepper_micro.addCommand(std::move(cmand));
@@ -527,86 +516,69 @@ inline double HardwareDriverNode::stepsToRad(T steps) const {
 // These run on the tick thread — write only to feedback_* structs, O(1), no locks.
 // -----------------------------------------------------------------------------
 inline void HardwareDriverNode::generateCallbacks() {
+  using Cmd::Teensy::Read;
+
+  const auto logger = [this](const char* fmt, auto... args) {
+        RCLCPP_WARN(get_logger(), fmt, args...);
+      };
 
   stepper_micro.read_callbacks.emplace(
-      ReadCommandsNC::BYTELOSS,
-      [this](const uint8_t *data, size_t size) {
-        bool ok = ReadCommandsNC::dispatch_one<ReadCommandsNC::BYTELOSS>(
-            data, size, [&](const auto &info) {
-              auto &[p0, p1] = info;
-              diag_data_.with([&p0, &p1](HardwareDiagnostics &d){
-                d.tx_byte_loss_count = p0;
-                d.rx_byte_loss_count = p1;
-              });
-            });
-        if (!ok) RCLCPP_WARN(get_logger(), "BYTELOSS size mismatch (got %zu)", size);
-      });
+      Read::BYTELOSS,
+      Cmd::make_callback<Read::BYTELOSS>([&](const auto &info) {
+        auto &[p0, p1] = info;
+        diag_data_.with([&p0, &p1](HardwareDiagnostics &d){
+          d.tx_byte_loss_count = p0;
+          d.rx_byte_loss_count = p1;
+        });
+      }, logger));
 
   // POSITION: steps  rad
   stepper_micro.read_callbacks.emplace(
-      ReadCommandsNC::POSITION,
-      [this](const uint8_t *data, size_t size) {
-        bool ok = ReadCommandsNC::dispatch_one<ReadCommandsNC::POSITION>(
-            data, size, [&](const auto &info) {
-              auto &[p0, p1, p2, p3] = info;
-              feedback_joints.setPosition(0, stepsToRad(p0));
-              feedback_joints.setPosition(1, stepsToRad(p1));
-              feedback_joints.setPosition(2, stepsToRad(p2));
-              feedback_joints.setPosition(3, stepsToRad(p3));
-            });
-        if (!ok) RCLCPP_WARN(get_logger(), "POSITION size mismatch (got %zu)", size);
-      });
+      Read::POSITION,
+      Cmd::make_callback<Read::POSITION>([&](const auto &info) {
+        auto &[p0, p1, p2, p3] = info;
+        feedback_flipper.setPosition(0, stepsToRad(p0));
+        feedback_flipper.setPosition(1, stepsToRad(p1));
+        feedback_flipper.setPosition(2, stepsToRad(p2));
+        feedback_flipper.setPosition(3, stepsToRad(p3));
+      }, logger));
 
   // SPEED: steps/s  rad/s
   stepper_micro.read_callbacks.emplace(
-      ReadCommandsNC::SPEED,
-      [this](const uint8_t *data, size_t size) {
-        bool ok = ReadCommandsNC::dispatch_one<ReadCommandsNC::SPEED>(
-            data, size, [&](const auto &info) {
-              auto &[s0, s1, s2, s3] = info;
-              
-              feedback_joints.setSpeed(0, stepsToRad(s0));
-              feedback_joints.setSpeed(1, stepsToRad(s1));
-              feedback_joints.setSpeed(2, stepsToRad(s2));
-              feedback_joints.setSpeed(3, stepsToRad(s3));
-            });
-        if (!ok) RCLCPP_WARN(get_logger(), "SPEED size mismatch (got %zu)", size);
-      });
+      Read::SPEED,
+      Cmd::make_callback<Read::SPEED>([&](const auto &info) {
+        auto &[s0, s1, s2, s3] = info;
+        feedback_flipper.setSpeed(0, stepsToRad(s0));
+        feedback_flipper.setSpeed(1, stepsToRad(s1));
+        feedback_flipper.setSpeed(2, stepsToRad(s2));
+        feedback_flipper.setSpeed(3, stepsToRad(s3));
+      }, logger));
 
   // ACCEL: steps/s2  rad/s2
   stepper_micro.read_callbacks.emplace(
-      ReadCommandsNC::ACCEL,
-      [this](const uint8_t *data, size_t size) {
-        bool ok = ReadCommandsNC::dispatch_one<ReadCommandsNC::ACCEL>(
-            data, size, [&](const auto &info) {
-              auto &[a0, a1, a2, a3] = info;
-
-              feedback_joints.setAcceleration(0, stepsToRad(a0));
-              feedback_joints.setAcceleration(1, stepsToRad(a1));
-              feedback_joints.setAcceleration(2, stepsToRad(a2));
-              feedback_joints.setAcceleration(3, stepsToRad(a3));
-            });
-        if (!ok) RCLCPP_WARN(get_logger(), "ACCEL size mismatch (got %zu)", size);
-      });
+      Read::ACCEL,
+      Cmd::make_callback<Read::ACCEL>([&](const auto &info) {
+        auto &[a0, a1, a2, a3] = info;
+        feedback_flipper.setAcceleration(0, stepsToRad(a0));
+        feedback_flipper.setAcceleration(1, stepsToRad(a1));
+        feedback_flipper.setAcceleration(2, stepsToRad(a2));
+        feedback_flipper.setAcceleration(3, stepsToRad(a3));
+      }, logger));
 
   // DCVEL: [left_pct, right_pct]  [m/s, rad/s]
   // Inverse of twistToMotorPct:
   //   linear  = (right + left) / (2 * velocity_scale)
   //   angular = (right - left) / (track_width_m * velocity_scale)
   stepper_micro.read_callbacks.emplace(
-      ReadCommandsNC::DCVEL,
-      [this](const uint8_t *data, size_t size) {
-        bool ok = ReadCommandsNC::dispatch_one<ReadCommandsNC::DCVEL>(
-            data, size, [&](const auto &info) {
-              auto &[left_pct, right_pct] = info;
-              double scale = (velocity_scale > 0.0) ? velocity_scale : 1.0;
-              double l = static_cast<double>(left_pct);
-              double r = static_cast<double>(right_pct);
-              feedback_dc.setLinear( (r + l) / (2.0 * scale));
-              feedback_dc.setAngular((r - l) / (track_width_m * scale));
-            });
-        if (!ok) RCLCPP_WARN(get_logger(), "DCVEL size mismatch (got %zu)", size);
-      });
+      Read::DCVEL,
+      Cmd::make_callback<Read::DCVEL>([&](const auto &info) {
+        auto &[left_pct, right_pct] = info;
+        double scale = (velocity_scale > 0.0) ? velocity_scale : 1.0;
+        double l = static_cast<double>(left_pct);
+        double r = static_cast<double>(right_pct);
+        feedback_dc.setLinear( (r + l) / (2.0 * scale));
+        feedback_dc.setAngular((r - l) / (track_width_m * scale));
+      }, logger));
 }
 
 // -----------------------------------------------------------------------------
@@ -622,23 +594,28 @@ inline void HardwareDriverNode::cmdVelCallback(
 inline void HardwareDriverNode::jointCommandCallback(
     const hardware::msg::JointControl::SharedPtr msg) {
       // Usar with solo cuando se esta cambiando ya que puede haber otro tipos de joints que no son los steppers
-  in_joints.with([&](StepperState<steppers> &d) {
+  // Write to in_flipper (idx 0-3) or in_arms (idx 4-10) depending on joint index.
+  in_flipper.with([&](StepperState<4> &d) {
     for (size_t i = 0; i < msg->joint_names.size(); ++i) {
       auto it = std::find(joint_names.begin(), joint_names.end(), msg->joint_names[i]);
-      if (it == joint_names.end()) {
-        RCLCPP_WARN(get_logger(), "Unknown joint: %s", msg->joint_names[i].c_str());
-        continue;
-      }
+      if (it == joint_names.end()) continue;
       int idx = static_cast<int>(std::distance(joint_names.begin(), it));
-      if (idx >= steppers) {
-        RCLCPP_WARN(get_logger(), "Joint index out of range: %s", msg->joint_names[i].c_str());
-        continue;
-      }
-
-      // msg fields are already in rad / rad/s / rad/s*s
+      if (idx >= 4) continue;  // handled by in_arms below
       d.setPosition(idx, msg->position[i]);
       d.setSpeed(idx,    msg->velocity[i]);
       d.setAcceleration(idx, msg->acceleration[i]);
+    }
+  });
+  in_arms.with([&](StepperState<number_arms> &d) {
+    for (size_t i = 0; i < msg->joint_names.size(); ++i) {
+      auto it = std::find(joint_names.begin(), joint_names.end(), msg->joint_names[i]);
+      if (it == joint_names.end()) continue;
+      int idx = static_cast<int>(std::distance(joint_names.begin(), it));
+      if (idx < 4 || idx >= steppers) continue;  // flipper range handled above
+      int arm_idx = idx - 4;
+      d.setPosition(arm_idx, msg->position[i]);
+      d.setSpeed(arm_idx,    msg->velocity[i]);
+      d.setAcceleration(arm_idx, msg->acceleration[i]);
     }
   });
 }
@@ -672,10 +649,15 @@ inline void HardwareDriverNode::publishJointFeedback() {
   msg.position.resize(steppers);
   msg.velocity.resize(steppers);
   msg.effort.resize(steppers);
-  for (int i = 0; i < steppers; ++i) {
-    msg.position[i] = feedback_joints.position[i];
-    msg.velocity[i] = feedback_joints.speed[i];
-    msg.effort[i]   = feedback_joints.effort[i];
+  for (int i = 0; i < 4; ++i) {
+    msg.position[i] = feedback_flipper.position[i];
+    msg.velocity[i] = feedback_flipper.speed[i];
+    msg.effort[i]   = feedback_flipper.effort[i];
+  }
+  for (int i = 0; i < number_arms; ++i) {
+    msg.position[4+i] = feedback_arms.position[i];
+    msg.velocity[4+i] = feedback_arms.speed[i];
+    msg.effort[4+i]   = feedback_arms.effort[i];
   }
   joint_state_pub_->publish(msg);
 }

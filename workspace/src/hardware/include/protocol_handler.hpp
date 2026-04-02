@@ -18,6 +18,8 @@
 // included transitively. Declare them here too so this file is self-contained
 // when used with a non-I2C transport.
 #include <functional>
+
+
 using micros    = std::chrono::microseconds;
 using stdclock  = std::chrono::steady_clock;
 using deadline_t = stdclock::time_point;
@@ -41,7 +43,7 @@ using LogFn      = std::function<void(const std::string &)>;
 //   - Protocol-level error (IO_ERROR)
 // =============================================================================
 
-template <typename Transport, typename Identifier>
+template <typename Transport, typename ReadEnum, typename WriteEnum>
 class Protocol_Handler : public Transport {
 public:
 
@@ -49,9 +51,9 @@ public:
   using tail   = std::tuple<uint8_t>;                    // CRC
 
   // callbacks must be non-blocking, O(1) — no locks, no I/O, no heavy computation
-  std::unordered_map<Identifier,
+  std::unordered_map<ReadEnum,
                      std::function<void(const uint8_t *, size_t)>> read_callbacks{};
-  std::unordered_map<WriteCommandsNC::WriteCommand,
+  std::unordered_map<WriteEnum,
                      std::function<void(const uint8_t *, size_t)>> write_callbacks{};
 
   // ── Forwarding constructor — passes args to Transport ─────────────────────
@@ -63,7 +65,7 @@ public:
 
   // ── Public API ─────────────────────────────────────────────────────────────
 
-  bool addCommand(std::unique_ptr<CommandsNC::Command> &&input);
+  bool addCommand(std::unique_ptr<Cmd::Command> &&input);
 
   /// Flush the outbound queue. Sends at most one full frame per call.
   bool sendQueue(micros timeout = micros(8000), micros timePerMsg = micros(4000));
@@ -103,7 +105,7 @@ private:
   uint32_t total_attmp_ { 0 };
 
   constexpr static unsigned int max_queue { 50 };
-  std::queue<std::unique_ptr<CommandsNC::Command>> sending;
+  std::queue<std::unique_ptr<Cmd::Command>> sending;
 
   std::unordered_map<uint8_t, std::function<void(const uint8_t *, size_t)>>
       instruction_callback{};
@@ -144,41 +146,45 @@ public:
 // Convenience alias — the only concrete type callers should use directly
 // =============================================================================
 #include "i2c_transport.hpp"
-template<typename Identifier>
-using Protocol_Handler_I2C = Protocol_Handler<I2C_Transport, Identifier>;
+template<typename ReadID = Cmd::Teensy::Read, typename WriteID = Cmd::Teensy::Write>
+using Protocol_Handler_I2C = Protocol_Handler<I2C_Transport, ReadID, WriteID>;
+
 
 #include "can_transport.hpp"
-template<typename Identifier>
-using Protocol_Handler_CAN = Protocol_Handler<CAN_Transport, Identifier>;
+// CAN_Transport does not use flock — each instance opens its own socket
+// and uses a hardware RX filter (rx_id) for isolation. Multiple instances
+// on the same interface are safe because the kernel routes frames by ID.
+template<typename ReadID = Cmd::ESP32::Read, typename WriteID = Cmd::ESP32::Write>
+using Protocol_Handler_CAN = Protocol_Handler<CAN_Transport, ReadID, WriteID>;
 
 #include "serial_transport.hpp"
-template<typename Identifier>
-using Protocol_Handler_SERIAL = Protocol_Handler<Serial_Transport, Identifier>;
+template<typename ReadID = Cmd::Teensy::Read, typename WriteID = Cmd::Teensy::Write>
+using Protocol_Handler_SERIAL = Protocol_Handler<Serial_Transport, ReadID, WriteID>;
 
 // =============================================================================
 // Template definitions
 // =============================================================================
 
-template <typename Transport, typename Identifier>
-void Protocol_Handler<Transport, Identifier>::setupInstructionCallbacks() {
+template <typename Transport, typename ReadEnum, typename WriteEnum>
+void Protocol_Handler<Transport, ReadEnum, WriteEnum>::setupInstructionCallbacks() {
   instruction_callback.emplace(1, [](const uint8_t *pckg, size_t size) {
     (void)pckg; (void)size;
   });
   instruction_callback.emplace(2, [this](const uint8_t *pckg, size_t size) {
     uint8_t id = pckg[0];
-    auto it = write_callbacks.find(static_cast<WriteCommandsNC::WriteCommand>(id));
+    auto it = write_callbacks.find(static_cast<WriteEnum>(id));
     if (it != write_callbacks.end()) it->second(pckg + 1, size - 1);
   });
   instruction_callback.emplace(3, [this](const uint8_t *pckg, size_t size) {
     uint8_t id = pckg[0];
-    auto it = read_callbacks.find(static_cast<Identifier>(id));
+    auto it = read_callbacks.find(static_cast<ReadEnum>(id));
     if (it != read_callbacks.end()) it->second(pckg + 1, size - 1);
   });
 }
 
-template <typename Transport, typename Identifier>
-bool Protocol_Handler<Transport, Identifier>::addCommand(
-    std::unique_ptr<CommandsNC::Command> &&input) {
+template <typename Transport, typename ReadEnum, typename WriteEnum>
+bool Protocol_Handler<Transport, ReadEnum, WriteEnum>::addCommand(
+    std::unique_ptr<Cmd::Command> &&input) {
   if (sending.size() < max_queue) {
     sending.push(std::move(input));
     return true;
@@ -186,8 +192,8 @@ bool Protocol_Handler<Transport, Identifier>::addCommand(
   return false;
 }
 
-template <typename Transport, typename Identifier>
-bool Protocol_Handler<Transport, Identifier>::sendQueue(micros timeout, micros timePerMsg) {
+template <typename Transport, typename ReadEnum, typename WriteEnum>
+bool Protocol_Handler<Transport, ReadEnum, WriteEnum>::sendQueue(micros timeout, micros timePerMsg) {
   if (!this->connected()) return false;
 
   const deadline_t dl = stdclock::now() + timeout;
@@ -211,8 +217,8 @@ bool Protocol_Handler<Transport, Identifier>::sendQueue(micros timeout, micros t
   return true;
 }
 
-template <typename Transport, typename Identifier>
-size_t Protocol_Handler<Transport, Identifier>::sendNext(deadline_t deadline) {
+template <typename Transport, typename ReadEnum, typename WriteEnum>
+size_t Protocol_Handler<Transport, ReadEnum, WriteEnum>::sendNext(deadline_t deadline) {
   if (!this->connected() || sending.empty()) return 0;
 
   auto size = sending.front()->getPckSize();
@@ -235,8 +241,8 @@ size_t Protocol_Handler<Transport, Identifier>::sendNext(deadline_t deadline) {
   return sent;
 }
 
-template <typename Transport, typename Identifier>
-bool Protocol_Handler<Transport, Identifier>::readPending(micros timeout, micros timePerMsg) {
+template <typename Transport, typename ReadEnum, typename WriteEnum>
+bool Protocol_Handler<Transport, ReadEnum, WriteEnum>::readPending(micros timeout, micros timePerMsg) {
   if (!this->connected()) return false;
 
   const deadline_t dl = stdclock::now() + timeout;
@@ -281,9 +287,9 @@ bool Protocol_Handler<Transport, Identifier>::readPending(micros timeout, micros
   return dispatched_any;
 }
 
-template <typename Transport, typename Identifier>
-typename Protocol_Handler<Transport, Identifier>::ReadResult
-Protocol_Handler<Transport, Identifier>::readOneMessage(micros timePerMsg) {
+template <typename Transport, typename ReadEnum, typename WriteEnum>
+typename Protocol_Handler<Transport, ReadEnum, WriteEnum>::ReadResult
+Protocol_Handler<Transport, ReadEnum, WriteEnum>::readOneMessage(micros timePerMsg) {
   if (!this->connected()) return ReadResult::IO_ERROR;
 
   const deadline_t msg_dl = stdclock::now() + timePerMsg;
@@ -313,9 +319,9 @@ Protocol_Handler<Transport, Identifier>::readOneMessage(micros timePerMsg) {
   return ReadResult::OK_DISPATCHED;
 }
 
-template <typename Transport, typename Identifier>
-typename Protocol_Handler<Transport, Identifier>::ReadResult
-Protocol_Handler<Transport, Identifier>::ReadHeader(header &output, deadline_t hdr_dl) {
+template <typename Transport, typename ReadEnum, typename WriteEnum>
+typename Protocol_Handler<Transport, ReadEnum, WriteEnum>::ReadResult
+Protocol_Handler<Transport, ReadEnum, WriteEnum>::ReadHeader(header &output, deadline_t hdr_dl) {
   uint8_t header_buf[sizeof(output)];
   header_buf[0] = synced_byte_;  // 0xAA already validated by readPending
 
@@ -330,8 +336,8 @@ Protocol_Handler<Transport, Identifier>::ReadHeader(header &output, deadline_t h
   return ReadResult::OK_DISPATCHED;
 }
 
-template <typename Transport, typename Identifier>
-uint8_t Protocol_Handler<Transport, Identifier>::getMsgCRC(const header &msg_head,
+template <typename Transport, typename ReadEnum, typename WriteEnum>
+uint8_t Protocol_Handler<Transport, ReadEnum, WriteEnum>::getMsgCRC(const header &msg_head,
                                                 uint8_t *pckage, size_t size) {
   uint8_t tmp[sizeof(header)];
   pack_tuple_to_buffer(msg_head, tmp);
@@ -340,8 +346,8 @@ uint8_t Protocol_Handler<Transport, Identifier>::getMsgCRC(const header &msg_hea
   return crc;
 }
 
-template <typename Transport, typename Identifier>
-void Protocol_Handler<Transport, Identifier>::dispatchInput(uint8_t inst, uint8_t *pckg,
+template <typename Transport, typename ReadEnum, typename WriteEnum>
+void Protocol_Handler<Transport, ReadEnum, WriteEnum>::dispatchInput(uint8_t inst, uint8_t *pckg,
                                                  size_t size) {
   auto it = instruction_callback.find(inst);
   if (it != instruction_callback.end()) it->second(pckg, size);

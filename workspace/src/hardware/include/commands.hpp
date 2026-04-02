@@ -12,151 +12,178 @@
 #include "tuple_utils.hpp"
 
 // ---------------------------------------------------------------------------
-// Declarations / externs
+// Cmd namespace
+//
+// Sub-namespaces:
+//   Cmd::NC   — Stepper (I2C, masked multi-motor) + DC motors
+//   Cmd::ESP  — Arm joints (CAN, single-motor per message)
+//
+// Aliases for brevity:
+//   using namespace Cmd;   // gives NC::, ESP::
+//   using NC::WriteInst;   // gives WriteInst<NC::SPEED> etc.
 // ---------------------------------------------------------------------------
 
-namespace WriteCommandsNC {
-  enum WriteCommand : uint8_t;
-  template <WriteCommand CMD> struct packetSend;
-  template <WriteCommand CMD> struct packetReturn;
-} // namespace WriteCommandsNC
+namespace Cmd {
 
-namespace ReadCommandsNC {
-  enum ReadCommand : uint8_t;
-  template <ReadCommand CMD> struct packetSend;
-  template <ReadCommand CMD> struct packetReturn;
-  template <ReadCommand ID, typename HandlerFunc>
-  bool dispatch_one(const uint8_t *data, size_t size, HandlerFunc &&handle);
-} // namespace ReadCommandsNC
+// Write Send/Return ------------------------------------------------
+template <auto CMD> struct WriteSendPkt   { using type = void; };
+template <auto CMD> struct WriteReturnPkt { using type = void; };
 
-namespace CommandsNC {
-  enum class StaticCommand : uint8_t;
-  template <auto u> struct CmdInter;
-  struct Command;
-  template <typename T> struct GeneralInstruction;
-} // namespace CommandsNC
+template <auto CMD> struct ReadSendPkt   { using type = void; };
+template <auto CMD> struct ReadReturnPkt { using type = void; };
 
-// ---------------------------------------------------------------------------
-// Templates
-// ---------------------------------------------------------------------------
+// ── (Stepper + DC) ────────────────────────────────────────────────────────
+namespace Teensy {
 
-// --- WriteCommandsNC --------------------------------------------------------
-namespace WriteCommandsNC {
-
-enum WriteCommand : uint8_t { BYTELOSS = 0X00, SPEED = 0x01, POSITION = 0x02, ACCEL = 0x03, DCVEL = 0x04, DCACCEL = 0x05 };
-
-template <WriteCommand CMD> struct packetSend   { using type = void; };
-template <WriteCommand CMD> struct packetReturn { using type = void; };
-
-template <> struct packetSend<BYTELOSS>      { using type = std::tuple<>;   }; 
-template <> struct packetReturn<BYTELOSS>    { using type = std::tuple<>;   };
-
-template <> struct packetSend<SPEED>      { using type = std::tuple<uint8_t, float>;    }; // motor mask, speed
-template <> struct packetReturn<SPEED>    { using type = std::tuple<>;                  };
-
-template <> struct packetSend<POSITION>   { using type = std::tuple<uint8_t, int32_t>;  }; // motor mask, position
-template <> struct packetReturn<POSITION> { using type = std::tuple<>;                  };
-
-template <> struct packetSend<ACCEL>   { using type = std::tuple<uint8_t, float>;  }; // motor mask, position
-template <> struct packetReturn<ACCEL> { using type = std::tuple<>;                  };
-
-template <> struct packetSend<DCVEL>    { using type = std::tuple<float, float>; };
-template <> struct packetReturn<DCVEL>  { using type = std::tuple<>; };
-
-template <> struct packetSend<DCACCEL>    { using type = std::tuple<float, float>; };
-template <> struct packetReturn<DCACCEL>  { using type = std::tuple<>; };
-
-} // namespace WriteCommandsNC
-
-// --- ReadCommandsNC ---------------------------------------------------------
-namespace ReadCommandsNC {
-
-enum ReadCommand : uint8_t { BYTELOSS = 0X00, SPEED = 0x01, POSITION = 0x02, ACCEL = 0x03, DCVEL = 0x04, DCACCEL = 0x05  };
-
-template <ReadCommand CMD> struct packetSend  { using type = void; };
-template <ReadCommand CMD> struct packetReturn { using type = void; };
-
-template <> struct packetSend<BYTELOSS>      { using type = std::tuple<>;   }; 
-template <> struct packetReturn<BYTELOSS>    { using type = std::tuple<uint32_t, uint32_t>;   }; // Amount of bytes lost
-
-template <> struct packetSend<SPEED>      { using type = std::tuple<>; };
-template <> struct packetReturn<SPEED>    { using type = std::tuple<float, float, float, float>; }; // speed per motor
-
-template <> struct packetSend<POSITION>   { using type = std::tuple<>; };
-template <> struct packetReturn<POSITION> {
-  using type = std::tuple<int32_t, int32_t, int32_t, int32_t>; // position per motor
+enum class Write : uint8_t {
+  BYTELOSS = 0x00,
+  SPEED    = 0x01,
+  POSITION = 0x02,
+  ACCEL    = 0x03,
+  DCVEL    = 0x04,
+  DCACCEL  = 0x05,
 };
 
-template <> struct packetSend<ACCEL>   { using type = std::tuple<>;  }; // motor mask, position
-template <> struct packetReturn<ACCEL> { using type = std::tuple<float, float, float, float>; };
-
-template <> struct packetSend<DCVEL>    { using type = std::tuple<>; };
-template <> struct packetReturn<DCVEL>  { using type = std::tuple<float, float>; };
-
-template <> struct packetSend<DCACCEL>    { using type = std::tuple<>; };
-template <> struct packetReturn<DCACCEL>  { using type = std::tuple<float, float>; };
-
-} // namespace ReadCommandsNC
-
-// --- WriteCommandsNC --------------------------------------------------------
-namespace WriteCommandsESP {
-
-enum WriteCommand : uint8_t { BYTELOSS = 0X00, SPEED = 0x01, POSITION = 0x02, ACCEL = 0x03 };
-
-template <WriteCommand CMD> struct packetSend   { using type = void; };
-template <WriteCommand CMD> struct packetReturn { using type = void; };
-
-template <> struct packetSend<BYTELOSS>      { using type = std::tuple<>;   }; 
-template <> struct packetReturn<BYTELOSS>    { using type = std::tuple<>;   };
-
-template <> struct packetSend<SPEED>      { using type = std::tuple<float>;    }; // motor mask, speed
-template <> struct packetReturn<SPEED>    { using type = std::tuple<>;         };
-
-template <> struct packetSend<POSITION>   { using type = std::tuple<int32_t>;  }; // motor mask, position
-template <> struct packetReturn<POSITION> { using type = std::tuple<>;         };
-
-template <> struct packetSend<ACCEL>   { using type = std::tuple<float>;  }; // motor mask, position
-template <> struct packetReturn<ACCEL> { using type = std::tuple<>;       };
-
-} // namespace WriteCommandsNC
-
-// --- ReadCommandsNC ---------------------------------------------------------
-namespace ReadCommandsESP {
-
-enum ReadCommand : uint8_t { BYTELOSS = 0X00, SPEED = 0x01, POSITION = 0x02, ACCEL = 0x03 };
-
-template <ReadCommand CMD> struct packetSend  { using type = void; };
-template <ReadCommand CMD> struct packetReturn { using type = void; };
-
-template <> struct packetSend<BYTELOSS>      { using type = std::tuple<>;   }; 
-template <> struct packetReturn<BYTELOSS>    { using type = std::tuple<uint32_t>;   }; // Amount of bytes lost
-
-template <> struct packetSend<SPEED>      { using type = std::tuple<>; };
-template <> struct packetReturn<SPEED>    { using type = std::tuple<float>; }; // speed per motor
-
-template <> struct packetSend<POSITION>   { using type = std::tuple<>; };
-template <> struct packetReturn<POSITION> { using type = std::tuple<int32_t>; }; // position per motor
-
-template <> struct packetSend<ACCEL>   { using type = std::tuple<>;  }; // motor mask, position
-template <> struct packetReturn<ACCEL> { using type = std::tuple<float>; };
-
-} // namespace ReadCommandsNC
-
-// --- CommandsNC -------------------------------------------------------------
-namespace CommandsNC {
-
-enum class StaticCommand : uint8_t {
-  Ping = 0x01,
+enum class Read : uint8_t {
+  BYTELOSS = 0x00,
+  SPEED    = 0x01,
+  POSITION = 0x02,
+  ACCEL    = 0x03,
+  DCVEL    = 0x04,
+  DCACCEL  = 0x05,
 };
+
+}
+
+template <> struct WriteSendPkt<Teensy::Write::BYTELOSS>   { using type = std::tuple<>; };
+template <> struct WriteReturnPkt<Teensy::Write::BYTELOSS> { using type = std::tuple<>; };
+
+template <> struct WriteSendPkt<Teensy::Write::SPEED>      { using type = std::tuple<uint8_t, float>; };   // mask, speed
+template <> struct WriteReturnPkt<Teensy::Write::SPEED>    { using type = std::tuple<>; };
+
+template <> struct WriteSendPkt<Teensy::Write::POSITION>   { using type = std::tuple<uint8_t, int32_t>; }; // mask, pos
+template <> struct WriteReturnPkt<Teensy::Write::POSITION> { using type = std::tuple<>; };
+
+template <> struct WriteSendPkt<Teensy::Write::ACCEL>      { using type = std::tuple<uint8_t, float>; };   // mask, accel
+template <> struct WriteReturnPkt<Teensy::Write::ACCEL>    { using type = std::tuple<>; };
+
+template <> struct WriteSendPkt<Teensy::Write::DCVEL>      { using type = std::tuple<float, float>; };
+template <> struct WriteReturnPkt<Teensy::Write::DCVEL>    { using type = std::tuple<>; };
+
+template <> struct WriteSendPkt<Teensy::Write::DCACCEL>    { using type = std::tuple<float, float>; };
+template <> struct WriteReturnPkt<Teensy::Write::DCACCEL>  { using type = std::tuple<>; };
+
+// Read Send/Return ------------------------------------
+template <> struct ReadSendPkt<Teensy::Read::BYTELOSS>   { using type = std::tuple<>; };
+template <> struct ReadReturnPkt<Teensy::Read::BYTELOSS> { using type = std::tuple<uint32_t, uint32_t>; }; // tx_loss, rx_loss
+
+template <> struct ReadSendPkt<Teensy::Read::SPEED>      { using type = std::tuple<>; };
+template <> struct ReadReturnPkt<Teensy::Read::SPEED>    { using type = std::tuple<float, float, float, float>; };
+
+template <> struct ReadSendPkt<Teensy::Read::POSITION>   { using type = std::tuple<>; };
+template <> struct ReadReturnPkt<Teensy::Read::POSITION> { using type = std::tuple<int32_t, int32_t, int32_t, int32_t>; };
+
+template <> struct ReadSendPkt<Teensy::Read::ACCEL>      { using type = std::tuple<>; };
+template <> struct ReadReturnPkt<Teensy::Read::ACCEL>    { using type = std::tuple<float, float, float, float>; };
+
+template <> struct ReadSendPkt<Teensy::Read::DCVEL>      { using type = std::tuple<>; };
+template <> struct ReadReturnPkt<Teensy::Read::DCVEL>    { using type = std::tuple<float, float>; };
+
+template <> struct ReadSendPkt<Teensy::Read::DCACCEL>    { using type = std::tuple<>; };
+template <> struct ReadReturnPkt<Teensy::Read::DCACCEL>  { using type = std::tuple<float, float>; };
+
+
+namespace ESP32{
+
+enum class Write : uint8_t {
+  BYTELOSS = 0x00,
+  SPEED    = 0x01,
+  POSITION = 0x02,
+  ACCEL    = 0x03,
+};
+
+enum class Read : uint8_t {
+  BYTELOSS = 0x00,
+  SPEED    = 0x01,
+  POSITION = 0x02,
+  ACCEL    = 0x03,
+};
+
+}
+
+template <> struct WriteSendPkt<ESP32::Write::BYTELOSS>   { using type = std::tuple<>; };
+template <> struct WriteReturnPkt<ESP32::Write::BYTELOSS> { using type = std::tuple<>; };
+
+template <> struct WriteSendPkt<ESP32::Write::SPEED>      { using type = std::tuple<float>; };
+template <> struct WriteReturnPkt<ESP32::Write::SPEED>    { using type = std::tuple<>; };
+
+template <> struct WriteSendPkt<ESP32::Write::POSITION>   { using type = std::tuple<int32_t>; };
+template <> struct WriteReturnPkt<ESP32::Write::POSITION> { using type = std::tuple<>; };
+
+template <> struct WriteSendPkt<ESP32::Write::ACCEL>      { using type = std::tuple<float>; };
+template <> struct WriteReturnPkt<ESP32::Write::ACCEL>    { using type = std::tuple<>; };
+
+
+template <> struct ReadSendPkt<ESP32::Read::BYTELOSS>   { using type = std::tuple<>; };
+template <> struct ReadReturnPkt<ESP32::Read::BYTELOSS> { using type = std::tuple<uint32_t>; };
+
+template <> struct ReadSendPkt<ESP32::Read::SPEED>      { using type = std::tuple<>; };
+template <> struct ReadReturnPkt<ESP32::Read::SPEED>    { using type = std::tuple<float>; };
+
+template <> struct ReadSendPkt<ESP32::Read::POSITION>   { using type = std::tuple<>; };
+template <> struct ReadReturnPkt<ESP32::Read::POSITION> { using type = std::tuple<int32_t>; };
+
+template <> struct ReadSendPkt<ESP32::Read::ACCEL>      { using type = std::tuple<>; };
+template <> struct ReadReturnPkt<ESP32::Read::ACCEL>    { using type = std::tuple<float>; };
+
+template <auto CMD>
+using read_type_t = typename ReadReturnPkt<CMD>::type;
+
+template <auto ID, typename HandlerFunc>
+inline bool dispatch_one(const uint8_t *data, size_t size, HandlerFunc &&handle) {
+  using payload = typename ReadReturnPkt<ID>::type;
+  if (size != tuple_size(payload{})) return false;
+  payload p;
+  unpack_tuple_from_buffer(p, data);
+  handle(std::move(p));
+  return true;
+}
+
+template <auto CMD, typename F, typename LogFn>
+auto make_callback(F&& f, LogFn&& log) {
+  return [func = std::forward<F>(f),
+          logger = std::forward<LogFn>(log)]
+         (const uint8_t* data, size_t size) {
+    
+    using info_t = read_type_t<CMD>;
+
+    bool ok = dispatch_one<CMD>(
+        data, size,
+        [&](const info_t& info) {  
+          func(info);
+        });
+
+    if (!ok) {
+      logger("%i size mismatch (got %zu)",
+             static_cast<int32_t>(CMD), size);
+    }
+  };
+}
+
+// ── Static commands (Ping etc.) ─────────────────────────────────────────────
+enum class Static : uint8_t { Ping = 0x01 };
+
 
 // CmdInter: maps a command enum value to wire-level metadata
-template <auto u> struct CmdInter {
+template <uint8_t num, auto u> struct CmdInter {
   constexpr static uint8_t instruction = 0;
+  constexpr static uint8_t id   = 0;
+  constexpr static bool   hasID = false;
   using sending   = void;
   using returning = void;
 };
 
-template <StaticCommand ID> struct CmdInter<ID> {
+template <Static ID> struct CmdInter<0, ID> {
   constexpr static uint8_t instruction = static_cast<uint8_t>(ID);
   constexpr static uint8_t id   = 0;
   constexpr static bool   hasID = false;
@@ -164,50 +191,39 @@ template <StaticCommand ID> struct CmdInter<ID> {
   using returning = std::tuple<>;
 };
 
-template <WriteCommandsNC::WriteCommand ID> struct CmdInter<ID> {
+// ── CmdInter — maps enum value to wire metadata ─────────────────────────────
+template <auto ID> struct CmdInter<2, ID> {
   constexpr static uint8_t instruction = 2;
-  constexpr static uint8_t id   = ID;
+  constexpr static uint8_t id   = static_cast<uint8_t>(ID);
   constexpr static bool   hasID = true;
-  using sending   = typename WriteCommandsNC::packetSend<ID>::type;
-  using returning = typename WriteCommandsNC::packetReturn<ID>::type;
+  using sending   = typename WriteSendPkt<ID>::type;
+  using returning = typename WriteReturnPkt<ID>::type;
 };
 
-template <ReadCommandsNC::ReadCommand ID> struct CmdInter<ID> {
+template <auto ID> struct CmdInter<3, ID> {
   constexpr static uint8_t instruction = 3;
-  constexpr static uint8_t id   = ID;
+  constexpr static uint8_t id   = static_cast<uint8_t>(ID);
   constexpr static bool   hasID = true;
-  using sending   = typename ReadCommandsNC::packetSend<ID>::type;
-  using returning = typename ReadCommandsNC::packetReturn<ID>::type;
+  using sending   = typename ReadSendPkt<ID>::type;
+  using returning = typename ReadReturnPkt<ID>::type;
 };
+//Write es 2
+//Read es 3
 
-template <WriteCommandsESP::WriteCommand ID> struct CmdInter<ID> {
-  constexpr static uint8_t instruction = 2;
-  constexpr static uint8_t id   = ID;
-  constexpr static bool   hasID = true;
-  using sending   = typename WriteCommandsESP::packetSend<ID>::type;
-  using returning = typename WriteCommandsESP::packetReturn<ID>::type;
-};
 
-template <ReadCommandsESP::ReadCommand ID> struct CmdInter<ID> {
-  constexpr static uint8_t instruction = 3;
-  constexpr static uint8_t id   = ID;
-  constexpr static bool   hasID = true;
-  using sending   = typename ReadCommandsESP::packetSend<ID>::type;
-  using returning = typename ReadCommandsESP::packetReturn<ID>::type;
-};
 
-// Command: polymorphic base
+// ── Command base ─────────────────────────────────────────────────────────────
 struct Command {
-  virtual void    pack(uint8_t *buffer) { (void)buffer; }
-  virtual std::string info()            { return ""; }
-  virtual size_t  getPckSize()          { return 0;  }
-  virtual uint8_t getInst()             { return 0;  }
-  virtual uint8_t getID()               { return 0;  }
-  virtual bool    hasID()               { return false; }
+  virtual void        pack(uint8_t *buffer) { (void)buffer; }
+  virtual std::string info()                { return "";    }
+  virtual size_t      getPckSize()          { return 0;     }
+  virtual uint8_t     getInst()             { return 0;     }
+  virtual uint8_t     getID()               { return 0;     }
+  virtual bool        hasID()               { return false; }
   virtual ~Command() = default;
 };
 
-// GeneralInstruction: typed concrete command
+// ── GeneralInstruction ───────────────────────────────────────────────────────
 template <typename T> struct GeneralInstruction : Command {
   using packet = typename T::sending;
 
@@ -226,61 +242,32 @@ template <typename T> struct GeneralInstruction : Command {
     }
   }
 
-  std::string info() override{
+  std::string info() override {
     std::ostringstream oss;
     oss << "Size: " << getPckSize() << " | ";
-
-    if constexpr (T::hasID) {
-        oss << "ID: " << static_cast<int>(id) << " | ";
-    }
-
+    if constexpr (T::hasID) oss << "ID: " << static_cast<int>(id) << " | ";
     oss << "Packet: (";
-
     std::apply([&oss](auto&&... args) {
       size_t n = 0;
-
-      auto print_arg = [&oss](auto&& value) {
-          using U = std::decay_t<decltype(value)>;
-
-          if constexpr (std::is_same_v<U, uint8_t> ||
-                        std::is_same_v<U, int8_t>  ||
-                        std::is_same_v<U, unsigned char> ||
-                        std::is_same_v<U, signed char>) {
-              oss << static_cast<int>(value);
-          } else {
-              oss << value;
-          }
+      auto print = [&oss](auto&& v) {
+        using U = std::decay_t<decltype(v)>;
+        if constexpr (std::is_same_v<U,uint8_t>  || std::is_same_v<U,int8_t> ||
+                      std::is_same_v<U,unsigned char> || std::is_same_v<U,signed char>)
+          oss << static_cast<int>(v);
+        else oss << v;
       };
-      
-      (void)print_arg;
-
-      ((print_arg(args),
-        oss << (++n < sizeof...(args) ? ", " : "")), ...);
-
+      ((print(args), oss << (++n < sizeof...(args) ? ", " : "")), ...);
     }, content);
-    
-    constexpr auto totalSize = T::hasID ? size + 1 : size;
-    std::array<uint8_t, totalSize> buffer;
-    pack(buffer.data());
-
+    oss << ")";
+    constexpr auto total = T::hasID ? size + 1 : size;
+    std::array<uint8_t, total> buf{};
+    pack(buf.data());
     oss << " | Raw: [";
-
-    for (size_t i = 0; i < totalSize; ++i) {
-        oss << "0x"
-            << std::hex
-            << std::uppercase
-            << std::setw(2)
-            << std::setfill('0')
-            << static_cast<int>(buffer[i]);
-
-        if (i + 1 < totalSize)
-          oss << " ";
-    }
-
+    for (size_t i = 0; i < total; ++i)
+      oss << "0x" << std::hex << std::uppercase << std::setw(2) << std::setfill('0')
+          << static_cast<int>(buf[i]) << (i+1 < total ? " " : "");
     oss << "]";
-
     return oss.str();
-
   }
 
   size_t  getPckSize() override { return T::hasID ? size + 1 : size; }
@@ -289,64 +276,13 @@ template <typename T> struct GeneralInstruction : Command {
   uint8_t getInst()    override { return T::instruction; }
 };
 
-// Convenient aliases
-template <StaticCommand T>
-using MiscInst = GeneralInstruction<CmdInter<T>>;
+// ── Convenient aliases ───────────────────────────────────────────────────────
+template <Static T>    using MiscInst     = GeneralInstruction<CmdInter<0, T>>;
 
-template <WriteCommandsNC::WriteCommand T>
-using WriteInst = GeneralInstruction<CmdInter<T>>;
+template <Teensy::Write T> using WriteInst    = GeneralInstruction<CmdInter<2, T>>;
+template <Teensy::Read  T> using ReadInst     = GeneralInstruction<CmdInter<3, T>>;
 
-template <ReadCommandsNC::ReadCommand T>
-using ReadInst = GeneralInstruction<CmdInter<T>>;
+template <ESP32::Write T> using WriteInstESP = GeneralInstruction<CmdInter<2, T>>;
+template <ESP32::Read  T> using ReadInstESP  = GeneralInstruction<CmdInter<3, T>>;
 
-template <WriteCommandsESP::WriteCommand T>
-using WriteInstESP = GeneralInstruction<CmdInter<T>>;
-
-template <ReadCommandsESP::ReadCommand T>
-using ReadInstESP = GeneralInstruction<CmdInter<T>>;
-
-} // namespace CommandsNC
-
-// ---------------------------------------------------------------------------
-// Inline definitions
-// ---------------------------------------------------------------------------
-
-namespace ReadCommandsNC {
-
-/// Deserialise a read-response payload and invoke handle(tuple).
-/// Returns false if the payload size does not match the expected type.
-template <ReadCommand ID, typename HandlerFunc>
-inline bool dispatch_one(const uint8_t *data, size_t size, HandlerFunc &&handle) {
-  using payload = typename packetReturn<ID>::type;
-
-  if (size != tuple_size(payload{})) {
-    return false;
-  }
-
-  payload p;
-  unpack_tuple_from_buffer(p, data);
-  handle(std::move(p));
-  return true;
-}
-
-} // namespace ReadCommandsNC
-
-namespace ReadCommandsESP {
-
-/// Deserialise a read-response payload and invoke handle(tuple).
-/// Returns false if the payload size does not match the expected type.
-template <ReadCommand ID, typename HandlerFunc>
-inline bool dispatch_one(const uint8_t *data, size_t size, HandlerFunc &&handle) {
-  using payload = typename packetReturn<ID>::type;
-
-  if (size != tuple_size(payload{})) {
-    return false;
-  }
-
-  payload p;
-  unpack_tuple_from_buffer(p, data);
-  handle(std::move(p));
-  return true;
-}
-
-} // namespace ReadCommandsNC
+} // namespace Cmd
