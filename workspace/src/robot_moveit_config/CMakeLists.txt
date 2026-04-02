@@ -42,6 +42,7 @@ ament_target_dependencies(${PROJECT_NAME}
 install(PROGRAMS
   scripts/test_teleop.py
   scripts/test_teleop_joints.py
+  scripts/hardware_loopback.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

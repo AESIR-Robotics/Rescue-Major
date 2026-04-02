@@ -6,7 +6,7 @@
         <ros2_control name="${name}" type="system">
             <hardware>
                 <!-- By default, set up controllers for simulation. This won't work on real hardware -->
-                <plugin>mock_components/GenericSystem</plugin>
+                <plugin>aesir_plugin/TopicBridgeHardware</plugin>
             </hardware>
             <joint name="joint_1">
                 <command_interface name="position"/>
@@ -67,6 +67,30 @@
                 </state_interface>
                 <state_interface name="velocity"/>
                 <state_interface name="effort"/>
+            </joint>
+            <joint name="flipper_1_joint">
+                <command_interface name="position"/>
+                <state_interface name="position">
+                    <param name="initial_value">${initial_positions['flipper_1_joint']}</param>
+                </state_interface>
+            </joint>
+            <joint name="flipper_2_joint">
+                <command_interface name="position"/>
+                <state_interface name="position">
+                    <param name="initial_value">${initial_positions['flipper_2_joint']}</param>
+                </state_interface>
+            </joint>
+            <joint name="flipper_3_joint">
+                <command_interface name="position"/>
+                <state_interface name="position">
+                    <param name="initial_value">${initial_positions['flipper_3_joint']}</param>
+                </state_interface>
+            </joint>
+            <joint name="flipper_4_joint">
+                <command_interface name="position"/>
+                <state_interface name="position">
+                    <param name="initial_value">${initial_positions['flipper_4_joint']}</param>
+                </state_interface>
             </joint>
 
         </ros2_control>

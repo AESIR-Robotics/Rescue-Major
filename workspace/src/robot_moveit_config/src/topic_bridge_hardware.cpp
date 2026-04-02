@@ -5,7 +5,7 @@
 #include "rclcpp/rclcpp.hpp"
 #include "std_msgs/msg/float64_multi_array.hpp"
 #include "pluginlib/class_list_macros.hpp"
-
+#include "sensor_msgs/msg/joint_state.hpp"
 #include "hardware/msg/joint_control.hpp"
 
 #include <vector>
@@ -27,18 +27,24 @@ private:
   // Message: std_msgs/Float64MultiArray (one value per joint, in order)
   rclcpp::Subscription<std_msgs::msg::Float64MultiArray>::SharedPtr accel_sub_;
 
+  // Subscriber for incoming physical hardware feedback
+  rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr feedback_sub_;
+
   // Memory for Position, Velocity, and Effort
   std::vector<double> hw_commands_;     // position commands
   std::vector<double> hw_vel_cmds_;     // velocity commands
   std::vector<double> hw_eff_cmds_;     // effort commands
 
-  std::vector<double> hw_states_;       // position states
-  std::vector<double> hw_vel_states_;   // velocity states
-  std::vector<double> hw_eff_states_;   // effort states
+  std::vector<double> hw_states_;            // position states
+  std::vector<double> hw_vel_states_;        // velocity states
+  std::vector<double> hw_eff_states_;        // effort states
+  std::vector<double> latest_hw_states_;     // lastest position states
+  std::vector<double> latest_hw_vel_states_; // velocity states
 
   // Per-joint acceleration — updated at runtime via topic
   std::vector<double> hw_acc_cmds_;
-  std::mutex acc_mutex_;  // Protect acceleration vector from concurrent access
+  std::mutex acc_mutex_;   // Protect acceleration vector from concurrent access
+  std::mutex state_mutex_; // Protects the state arrays from being read and written at the exact same time
 
   static constexpr double DEFAULT_ACCELERATION = 3.14159265;
 
@@ -58,6 +64,9 @@ public:
     hw_states_.resize(nr_joints, 0.0);
     hw_vel_states_.resize(nr_joints, 0.0);
     hw_eff_states_.resize(nr_joints, 0.0);
+
+    latest_hw_states_.resize(nr_joints, 0.0);
+    latest_hw_vel_states_.resize(nr_joints, 0.0);
 
     hw_commands_.resize(nr_joints, 0.0);
     hw_vel_cmds_.resize(nr_joints, 0.0);
@@ -94,6 +103,30 @@ public:
           hw_acc_cmds_[i] = msg->data[i];
         }
         RCLCPP_INFO(node_->get_logger(), "Acceleration updated for all joints.");
+      });
+
+    // Subscriber: Listen to physical hardware encoders
+    feedback_sub_ = node_->create_subscription<sensor_msgs::msg::JointState>(
+      "/hardware_feedback", 
+      10,
+      [this](const sensor_msgs::msg::JointState::SharedPtr msg)
+      {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        
+        // Match the incoming joint names to the correct index in our arrays
+        for (size_t i = 0; i < msg->name.size(); ++i) {
+          for (size_t j = 0; j < info_.joints.size(); ++j) {
+            if (info_.joints[j].name == msg->name[i]) {
+              if (i < msg->position.size()) {
+                latest_hw_states_[j] = msg->position[i];
+              }
+              if (i < msg->velocity.size()) {
+                latest_hw_vel_states_[j] = msg->velocity[i];
+              }
+              break; 
+            }
+          }
+        }
       });
 
     RCLCPP_INFO(node_->get_logger(),
@@ -140,20 +173,22 @@ public:
   }
 
   // ---------------------------------------------------------------------------
-  // Read: fake feedback — states mirror commands so MoveIt sees instant motion
+  // Read: feedback — states mirror commands so MoveIt sees instant motion
   // ---------------------------------------------------------------------------
   hardware_interface::return_type read(
     const rclcpp::Time & /*time*/,
     const rclcpp::Duration & /*period*/) override
   {
-    for (size_t i = 0; i < hw_states_.size(); ++i) {
-      hw_states_[i]     = hw_commands_[i];
-      hw_vel_states_[i] = hw_vel_cmds_[i];
-      hw_eff_states_[i] = hw_eff_cmds_[i];
-    }
-
     // Spin the node once to process incoming acceleration messages
     rclcpp::spin_some(node_);
+
+    {
+      std::lock_guard<std::mutex> lock(state_mutex_);
+      for (size_t i = 0; i < hw_states_.size(); ++i) {
+        hw_states_[i]     = latest_hw_states_[i];
+        hw_vel_states_[i] = latest_hw_vel_states_[i];
+      }
+    }
 
     return hardware_interface::return_type::OK;
   }

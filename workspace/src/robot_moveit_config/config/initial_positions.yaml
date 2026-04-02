@@ -2,8 +2,12 @@
 
 initial_positions:
   joint_1: 0
-  joint_2: 0
-  joint_3: 0
-  joint_4: 0
-  joint_5: 0
+  joint_2: -2.86234
+  joint_3: 2.86234
+  joint_4: -1.5708
+  joint_5: -1.5708
   joint_6: 0
+  flipper_1_joint: 0
+  flipper_2_joint: 0
+  flipper_3_joint: 0
+  flipper_4_joint: 0

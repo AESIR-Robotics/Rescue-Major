@@ -90,6 +90,20 @@ Launches MoveIt Servo for real-time teleoperation:
 ros2 launch robot_moveit_config servo_teleop.launch.py
 ```
 
+### 5. Simulated feedback
+
+Launches feedback node, to simulated hardware.
+
+```bash
+ros2 launch robot_moveit_config hardware_loopback.launch.py
+```
+
+Use this command to move the flippers
+```bash
+ros2 topic pub -1 /flipper_controller/commands std_msgs/msg/Float64MultiArray "{data: [-1.0, -1.0, 1.0, 1.0]}"
+```
+
+
 ## Control Modes & APIs
 
 ### MoveIt Commander (Planning-Based Control)
