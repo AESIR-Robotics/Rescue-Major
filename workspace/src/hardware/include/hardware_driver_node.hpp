@@ -294,6 +294,7 @@ private:
 inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
   this->declare_parameter<std::string>("i2c_port", "/dev/i2c-1");
   this->declare_parameter<int>("i2c_address", 0x30);
+  this->declare_parameter<std::string>("can_interface", "can0");
   this->declare_parameter<std::vector<int>>(
       "steps_per_rev",
       std::vector<int>(11, 40000));
@@ -301,7 +302,8 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
       "home_offset_rad",
       std::vector<double>(11, 0.0));
   this->declare_parameter<std::vector<std::string>>(
-      "joint_names", {"flipper_0", "flipper_1", "flipper_2", "flipper_3"});
+      "joint_names", {"flipper_0", "flipper_1", "flipper_2", "flipper_3",
+    "joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6"});
   this->declare_parameter<double>("track_width_m", 1.1);
   this->declare_parameter<double>("velocity_scale", 70.0);
 
@@ -310,7 +312,7 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
   this->get_parameter("i2c_port",           i2c_port_);
   this->get_parameter("i2c_address",        slave_addr_);
   {
-    std::vector<int> spr;
+    std::vector<int64_t> spr;
     this->get_parameter("steps_per_rev", spr);
     spr.resize(11, 40000);
     for (int j = 0; j < 11; ++j) steps_per_rev_[j] = spr[j] > 0 ? spr[j] : 40000;
@@ -325,6 +327,9 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
   this->get_parameter("track_width_m",      track_width_m);
   this->get_parameter("velocity_scale",     velocity_scale);
 
+  std::string can_interface;
+  this->get_parameter("can_interface", can_interface);
+
   stepper_micro.setLogger(
       [this](const std::string &msg) { RCLCPP_INFO( get_logger(), "%s", msg.c_str()); },
       [this](const std::string &msg) { RCLCPP_WARN( get_logger(), "%s", msg.c_str()); },
@@ -338,7 +343,7 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
       [this](const std::string &msg) { RCLCPP_WARN( get_logger(), "%s", msg.c_str()); },
       [this](const std::string &msg) { RCLCPP_ERROR(get_logger(), "%s", msg.c_str()); });
 
-      stepper_arms[i].init("can0", 0 - i, i, /*channel=*/0);
+      stepper_arms[i].init(can_interface, 0 - i, i, /*channel=*/0);
         
       using Cmd::ESP32::Read;
       const auto logger = [this](const char* fmt, auto... args) {
@@ -585,7 +590,7 @@ inline void HardwareDriverNode::enqueueArmInfo(const StepperState<number_arms> &
     stepper_arms[i].addCommand(
         std::make_unique<positionE>(positionE::packet{
             snap.position[i] < 0 ? -1 : static_cast<int32_t>(
-                radToSteps(snap.position[i], 4 + i) % steps_per_rev_[4 + i]}));
+                radToSteps(snap.position[i], 4 + i) % steps_per_rev_[4 + i])}));
   if (snap.updatedSpeed())
     stepper_arms[i].addCommand(
         std::make_unique<speedE>(speedE::packet{

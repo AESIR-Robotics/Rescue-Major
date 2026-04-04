@@ -276,7 +276,7 @@ inline void CAN_Transport::disconnect() {
     ::close(sock_fd_);
     sock_fd_      = -1;
     internal_pos_ = INTERNAL_BUF_SIZE;
-    logInfo("CAN socket closed on %s", interface_.c_str());
+    logInfo("CAN socket closed on %s tx=0x%08X rx=0x%08X", interface_.c_str(), tx_id_, rx_id_);
     if (transport_error_ == Transport_Error::NONE)
       transport_error_ = Transport_Error::CLOSED;
   }
