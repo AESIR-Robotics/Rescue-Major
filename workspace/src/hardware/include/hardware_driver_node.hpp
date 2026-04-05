@@ -292,18 +292,18 @@ private:
 // =============================================================================
 
 inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
-  this->declare_parameter<std::string>("i2c_port", "/dev/i2c-1");
+  this->declare_parameter<std::string>("i2c_port", "/dev/i2c-7");
   this->declare_parameter<int>("i2c_address", 0x30);
   this->declare_parameter<std::string>("can_interface", "can0");
   this->declare_parameter<std::vector<int>>(
       "steps_per_rev",
-      std::vector<int>(11, 40000));
+      {40000, 40000, 40000, 40000, 40000, 40000, 40000, 5000, 5000, 5000, 400});
   this->declare_parameter<std::vector<double>>(
       "home_offset_rad",
-      std::vector<double>(11, 0.0));
+      {3.141592653589793, 3.141592653589793, 3.141592653589793, 3.141592653589793, 3.141549976140265, 0.2791842593401257, 6.004033568448903, 1.5708634895150595, 1.5708819964673881, 3.141580759052331, 0.0});
   this->declare_parameter<std::vector<std::string>>(
-      "joint_names", {"flipper_0", "flipper_1", "flipper_2", "flipper_3",
-    "joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6"});
+      "joint_names", {"flipper_0", "flipper_1", "flipper_2", "flipper_3", 
+        "joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6"});
   this->declare_parameter<double>("track_width_m", 1.1);
   this->declare_parameter<double>("velocity_scale", 70.0);
 
@@ -547,7 +547,7 @@ inline void HardwareDriverNode::enqueueFlipperInfo(const StepperState<4> &snap) 
     std::unordered_map<int32_t, uint8_t> groups;
     for (int i = 0; i < flippers; ++i) {
       int32_t key = snap.position[i] < 0 ? -1 : static_cast<int32_t>(
-          radToSteps(snap.position[i], i) % steps_per_rev_[i]);
+          radToSteps(snap.position[i], i));
       groups[key] |= static_cast<uint8_t>(1u << i);
     }
     for (auto &[key, mask] : groups)
@@ -558,7 +558,7 @@ inline void HardwareDriverNode::enqueueFlipperInfo(const StepperState<4> &snap) 
     std::unordered_map<int32_t, uint8_t> groups;
     std::unordered_map<int32_t, float>   values;
     for (int i = 0; i < flippers; ++i) {
-      int32_t key = radToSteps(snap.speed[i], i);
+      int32_t key = snap.speed[i] / (2.0 * M_PI) * steps_per_rev_[i];
       float   val = static_cast<float>(snap.speed[i] / (2.0 * M_PI) * steps_per_rev_[i]);
       groups[key] |= static_cast<uint8_t>(1u << i);
       values.insert_or_assign(key, val);
@@ -571,7 +571,7 @@ inline void HardwareDriverNode::enqueueFlipperInfo(const StepperState<4> &snap) 
     std::unordered_map<int32_t, uint8_t> groups;
     std::unordered_map<int32_t, float>   values;
     for (int i = 0; i < flippers; ++i) {
-      int32_t key = radToSteps(snap.acceleration[i], i);
+      int32_t key = snap.acceleration[i] / (2.0 * M_PI) * steps_per_rev_[i];
       float   val = static_cast<float>(snap.acceleration[i] / (2.0 * M_PI) * steps_per_rev_[i]);
       groups[key] |= static_cast<uint8_t>(1u << i);
       values.insert_or_assign(key, val);
@@ -590,7 +590,7 @@ inline void HardwareDriverNode::enqueueArmInfo(const StepperState<number_arms> &
     stepper_arms[i].addCommand(
         std::make_unique<positionE>(positionE::packet{
             snap.position[i] < 0 ? -1 : static_cast<int32_t>(
-                radToSteps(snap.position[i], 4 + i) % steps_per_rev_[4 + i])}));
+                radToSteps(snap.position[i], 4 + i))}));
   if (snap.updatedSpeed())
     stepper_arms[i].addCommand(
         std::make_unique<speedE>(speedE::packet{
@@ -628,15 +628,26 @@ inline std::pair<float, float> HardwareDriverNode::twistToMotorPct(
 
 // -----------------------------------------------------------------------------
 inline int32_t HardwareDriverNode::radToSteps(double rad, int joint) const {
-  // Apply home offset before conversion: command in ROS frame → MCU frame
+  double angle = rad - home_offset_[joint];
+
+  angle = std::fmod(angle, 2.0 * M_PI);
+  if (angle < 0)
+    angle += 2.0 * M_PI;
+
   return static_cast<int32_t>(
-      std::llround((rad - home_offset_[joint]) / (2.0 * M_PI) * steps_per_rev_[joint]));
+      std::llround(angle / (2.0 * M_PI) * steps_per_rev_[joint]));
 }
 
 template<typename T>
 inline double HardwareDriverNode::stepsToRad(T steps, int joint) const {
-  return static_cast<double>(steps) * (2.0 * M_PI) / steps_per_rev_[joint]
-         + home_offset_[joint];   // position: add home offset
+
+  double angle = static_cast<double>(steps) * (2.0 * M_PI) / steps_per_rev_[joint] + home_offset_[joint];
+
+  angle = std::fmod(angle, 2.0 * M_PI);
+  if (angle < 0)
+    angle += 2.0 * M_PI;
+
+  return angle;   
 }
 
 template<typename T>
