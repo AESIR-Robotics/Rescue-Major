@@ -137,12 +137,33 @@ public:
     // ── TX — escritura atómica ────────────────────────────────────────────────
     size_t write(const uint8_t *data, size_t length) {
         if (!connected() || !data || length == 0) return 0;
+
         std::lock_guard<std::mutex> lk(tx_mutex_);
+
+        using clock = std::chrono::steady_clock;
+
+        auto now = clock::now();
+
+        auto tx_duration = std::chrono::duration_cast<clock::duration>(
+            std::chrono::duration<double>(10.0 * length / baud_)
+        );
+
+        // si vamos adelantados, esperamos
+        if (now < next_tx_time_) {
+            std::this_thread::sleep_until(next_tx_time_);
+            now = next_tx_time_;
+        }
+
+        // escribe
         ssize_t sent = ::write(fd_, data, length);
         if (sent < 0) {
             logE("SerialMux write() failed: %s", strerror(errno));
             return 0;
         }
+
+        // actualiza siguiente tiempo permitido
+        next_tx_time_ = now + tx_duration;
+
         return static_cast<size_t>(sent);
     }
 
@@ -313,6 +334,7 @@ private:
             for (uint8_t i = 0; i < len; ++i)
                 if (!ch->ring.push(frame[i]))
                     logW("SerialMux: ring full rx_id=0x%08X — byte dropped", rx_id);
+            logI("Got info, rx_id=0x%08X", rx_id);
             return;
         }
         logW("SerialMux: no channel for rx_id=0x%08X — frame dropped", rx_id);
@@ -335,6 +357,7 @@ private:
     // ── Miembros ──────────────────────────────────────────────────────────────
     std::string           port_;
     uint32_t              baud_{921600};
+    std::chrono::steady_clock::time_point next_tx_time_ = std::chrono::steady_clock::now();
     int                   fd_{-1};
     std::atomic<bool>     connected_{false};
     std::mutex            tx_mutex_;

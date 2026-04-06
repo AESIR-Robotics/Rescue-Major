@@ -334,15 +334,15 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
   //this->get_parameter("can_interface", can_interface);
 
   stepper_micro.setLogger(
-      [this](const std::string &msg) { RCLCPP_INFO( get_logger(), "%s", msg.c_str()); },
-      [this](const std::string &msg) { RCLCPP_WARN( get_logger(), "%s", msg.c_str()); },
-      [this](const std::string &msg) { RCLCPP_ERROR(get_logger(), "%s", msg.c_str()); });
+      [this](const std::string &msg) { /*RCLCPP_INFO( get_logger(), "%s", msg.c_str());*/ },
+      [this](const std::string &msg) { /*RCLCPP_WARN( get_logger(), "%s", msg.c_str());*/ },
+      [this](const std::string &msg) { /*RCLCPP_ERROR(get_logger(), "%s", msg.c_str());*/ });
 
   stepper_micro.init(i2c_port_, slave_addr_);
 
   // ── Bridge serial mux — shared resource for all arm instances ────────────
-  this->declare_parameter<std::string>("bridge_serial_port", "/dev/ttyUSB0");
-  this->declare_parameter<int>        ("bridge_serial_baud",  921600);
+  this->declare_parameter<std::string>("bridge_serial_port", "/dev/ardu_main");
+  this->declare_parameter<int>        ("bridge_serial_baud",  115200);
   std::string bridge_port;
   int         bridge_baud{921600};
   this->get_parameter("bridge_serial_port", bridge_port);
@@ -361,8 +361,8 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
        [this](const std::string &msg) { RCLCPP_ERROR(get_logger(), "%s", msg.c_str()); });
 
       // Register channel in mux — my addr offset per arm, peer = arm index
-      stepper_arms[i].init(mux_, /*my=*/static_cast<uint8_t>(0x00 - i),
-                                  /*peer=*/static_cast<uint8_t>(i), /*channel=*/0);
+      stepper_arms[i].init(mux_, /*my=*/static_cast<uint8_t>(0x00 - i - 1),
+                                  /*peer=*/static_cast<uint8_t>(i + 1), /*channel=*/0);
         
       using Cmd::ESP32::Read;
       const auto logger = [this](const char* fmt, auto... args) {
@@ -375,6 +375,7 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
           auto &[p0] = info;
           feedback_arms.setPosition(i, stepsToRad(p0, 4 + i));
           feedback_arms.stampFeedback(this->now());
+          RCLCPP_INFO(this->get_logger(), "Position feedback for arm %i: %i", i, p0);
         }, logger));
 
 
@@ -383,6 +384,7 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
         Cmd::make_callback<Read::SPEED>([this, i](const auto &info) {
           auto &[s0] = info;
           feedback_arms.setSpeed(i, stepsToRadRate(s0, 4 + i));
+          RCLCPP_INFO(this->get_logger(), "Speed feedback for arm %i: %i", i, s0);
         }, logger));
 
       stepper_arms[i].read_callbacks.emplace(
@@ -390,6 +392,7 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
         Cmd::make_callback<Read::ACCEL>([this, i](const auto &info) {
           auto &[a0] = info;
           feedback_arms.setAcceleration(i, stepsToRadRate(a0, 4 + i));
+          RCLCPP_INFO(this->get_logger(), "Accel feedback for arm %i: %i", i, a0);
         }, logger));
   }
 
@@ -608,19 +611,25 @@ inline void HardwareDriverNode::enqueueArmInfo(const StepperState<number_arms> &
   using speedE    = WriteInstESP<Cmd::ESP32::Write::SPEED>;
   using accelE    = WriteInstESP<Cmd::ESP32::Write::ACCEL>;
 
-  if (snap.updatedPosition())
+  if (snap.updatedPosition()){
+    RCLCPP_INFO(this->get_logger(), "Sending pos for %i", i);
     stepper_arms[i].addCommand(
         std::make_unique<positionE>(positionE::packet{
             snap.position[i] < 0 ? -1 : static_cast<int32_t>(
                 radToSteps(snap.position[i], 4 + i))}));
-  if (snap.updatedSpeed())
+  }
+  if (snap.updatedSpeed()){
+    RCLCPP_INFO(this->get_logger(), "Sending vel for %i", i);
     stepper_arms[i].addCommand(
         std::make_unique<speedE>(speedE::packet{
             static_cast<float>(snap.speed[i] / (2.0 * M_PI) * steps_per_rev_[4+i])}));
-  if (snap.updatedAccel())
+        }
+  if (snap.updatedAccel()){
+    RCLCPP_INFO(this->get_logger(), "Sending acel for %i", i);
     stepper_arms[i].addCommand(
         std::make_unique<accelE>(accelE::packet{
             static_cast<float>(snap.acceleration[i] / (2.0 * M_PI) * steps_per_rev_[4+i])}));
+        }
 }
 
 // -----------------------------------------------------------------------------
