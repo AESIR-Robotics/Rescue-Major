@@ -74,6 +74,16 @@ public:
   /// Returns true if at least one message was dispatched.
   bool readPending(micros timeout = micros(8000), micros timePerMsg = micros(4000));
 
+  /// Returns true if the transport has bytes ready to read without blocking.
+  /// Default: true — stream transports (I2C, Serial) always attempt the read.
+  /// Override in ring-based transports (Bridge_Transport) to avoid spurious
+  /// sync-scan warnings when the ring is empty.
+  bool hasData() {
+    // if constexpr (requires (const Transport& t) { t.hasData(); })
+    return Transport::hasData();
+    //return true;  
+  }
+
   /// Maximum payload bytes per message — mirrors MAX_PAYLOAD_SIZE on the MCU
   /// (MAX_PACKET_SIZE=64 minus 4 bytes of framing).
   static constexpr size_t MAX_PAYLOAD_SIZE = 60;
@@ -250,6 +260,12 @@ bool Protocol_Handler<Transport, ReadEnum, WriteEnum>::readPending(micros timeou
 
   while (stdclock::now() < dl) {
     if (!already_synced_) {
+      // Ask transport if there are bytes available before entering the sync
+      // scan. For stream transports (I2C, Serial) this is always true — they
+      // block in readData. For ring-based transports (Bridge) this avoids a
+      // spurious "Could not sync" warning when the ring is simply empty.
+      if (!this->hasData()) break;
+
       bool found = false;
       uint8_t byte = 0;
       while (stdclock::now() < dl) {

@@ -49,6 +49,7 @@ public:
   bool init(const std::string &device_in, int slave_addr_in);
   bool connect();
   bool reconnect();
+  
 
   bool                connected()       const { return i2c_fd >= 0; }
   const std::string & getDevice()      const { return device;     }
@@ -74,6 +75,7 @@ protected:
   /// Write `length` bytes in a single ioctl. Returns bytes written (0 on fail).
   size_t writeData(const uint8_t *data, size_t length, deadline_t deadline);
 
+  bool hasData();
   /// Read `length` bytes using the internal cache + skip protocol.
   /// Returns bytes read (may be < length on timeout or bus error).
   size_t readData(uint8_t *buffer, size_t length, deadline_t deadline);
@@ -213,6 +215,8 @@ inline bool I2C_Transport::waitFdReady(short events, deadline_t deadline) {
   }
   return ret > 0 && (pfd.revents & events);
 }
+
+inline bool I2C_Transport::hasData(){return true;}
 
 inline size_t I2C_Transport::writeData(const uint8_t *data, size_t length, 
                                         deadline_t deadline) {

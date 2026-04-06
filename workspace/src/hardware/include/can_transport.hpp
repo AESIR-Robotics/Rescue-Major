@@ -119,6 +119,7 @@ protected:
   /// Returns bytes written (0 on failure).
   size_t writeData(const uint8_t *data, size_t length, deadline_t deadline);
 
+  bool hasData();
   /// Receive bytes into buffer from a CAN-FD frame matching rx_id_.
   /// Frames arrive complete — fills internal_buf_ then copies to caller.
   /// Returns bytes copied (may be < length if frame was shorter).
@@ -309,6 +310,8 @@ inline bool CAN_Transport::waitFdReady(short events, deadline_t deadline) {
   }
   return ret > 0 && (pfd.revents & events);
 }
+
+inline bool CAN_Transport::hasData(){return true;}
 
 inline size_t CAN_Transport::writeData(const uint8_t *data, size_t length,
                                         deadline_t deadline) {

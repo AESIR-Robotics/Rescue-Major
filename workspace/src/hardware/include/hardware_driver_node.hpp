@@ -24,6 +24,8 @@
 
 #include "commands.hpp"
 #include "protocol_handler.hpp"
+#include "bridge_transport.hpp"
+#include "serial_mux.hpp"
 #include "tuple_utils.hpp"
 
 // =============================================================================
@@ -208,7 +210,8 @@ private:
   void diagTick();
 
   Protocol_Handler_I2C<> stepper_micro;
-  std::array<Protocol_Handler_CAN<>, number_arms> stepper_arms;
+  std::array<Protocol_Handler_Bridge<>, number_arms> stepper_arms;
+  std::shared_ptr<SerialMux> mux_;   ///< Shared serial resource for all arm bridges
 
   // Steps per revolution and home offset per joint.
   // Index 0-3 = flippers (I2C), 4-10 = arms (CAN).
@@ -294,7 +297,7 @@ private:
 inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
   this->declare_parameter<std::string>("i2c_port", "/dev/i2c-7");
   this->declare_parameter<int>("i2c_address", 0x30);
-  this->declare_parameter<std::string>("can_interface", "can0");
+  //this->declare_parameter<std::string>("can_interface", "can0");
   this->declare_parameter<std::vector<int>>(
       "steps_per_rev",
       {40000, 40000, 40000, 40000, 40000, 40000, 40000, 5000, 5000, 5000, 400});
@@ -327,8 +330,8 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
   this->get_parameter("track_width_m",      track_width_m);
   this->get_parameter("velocity_scale",     velocity_scale);
 
-  std::string can_interface;
-  this->get_parameter("can_interface", can_interface);
+  //std::string can_interface;
+  //this->get_parameter("can_interface", can_interface);
 
   stepper_micro.setLogger(
       [this](const std::string &msg) { RCLCPP_INFO( get_logger(), "%s", msg.c_str()); },
@@ -337,13 +340,29 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
 
   stepper_micro.init(i2c_port_, slave_addr_);
 
-  for (uint8_t i = 0; i < number_arms; ++i) {
-      stepper_arms[i].setLogger(
-      [this](const std::string &msg) { RCLCPP_INFO( get_logger(), "%s", msg.c_str()); },
-      [this](const std::string &msg) { RCLCPP_WARN( get_logger(), "%s", msg.c_str()); },
-      [this](const std::string &msg) { RCLCPP_ERROR(get_logger(), "%s", msg.c_str()); });
+  // ── Bridge serial mux — shared resource for all arm instances ────────────
+  this->declare_parameter<std::string>("bridge_serial_port", "/dev/ttyUSB0");
+  this->declare_parameter<int>        ("bridge_serial_baud",  921600);
+  std::string bridge_port;
+  int         bridge_baud{921600};
+  this->get_parameter("bridge_serial_port", bridge_port);
+  this->get_parameter("bridge_serial_baud", bridge_baud);
 
-      stepper_arms[i].init(can_interface, 0 - i, i, /*channel=*/0);
+  mux_ = std::make_shared<SerialMux>();
+  mux_->init(bridge_port, static_cast<uint32_t>(bridge_baud),
+      [this](const std::string &m){ RCLCPP_INFO( get_logger(), "%s", m.c_str()); },
+      [this](const std::string &m){ RCLCPP_WARN( get_logger(), "%s", m.c_str()); },
+      [this](const std::string &m){ RCLCPP_ERROR(get_logger(), "%s", m.c_str()); });
+
+  for (int i = 0; i < number_arms; ++i) {
+      stepper_arms[i].setLogger(
+        [this](const std::string &msg) { RCLCPP_INFO( get_logger(), "%s", msg.c_str()); },
+        [this](const std::string &msg) { RCLCPP_WARN( get_logger(), "%s", msg.c_str()); },
+       [this](const std::string &msg) { RCLCPP_ERROR(get_logger(), "%s", msg.c_str()); });
+
+      // Register channel in mux — my addr offset per arm, peer = arm index
+      stepper_arms[i].init(mux_, /*my=*/static_cast<uint8_t>(0x00 - i),
+                                  /*peer=*/static_cast<uint8_t>(i), /*channel=*/0);
         
       using Cmd::ESP32::Read;
       const auto logger = [this](const char* fmt, auto... args) {
@@ -373,6 +392,9 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
           feedback_arms.setAcceleration(i, stepsToRadRate(a0, 4 + i));
         }, logger));
   }
+
+  // All channels registered — start mux reader thread
+  mux_->startReader();
 
   generateCallbacks();
 
@@ -790,14 +812,17 @@ inline bool HardwareDriverNode::errorRecoveryI2C() {
 inline bool HardwareDriverNode::errorRecoveryCANArm(int i) {
   if (++can_wait_counter_[i] < max_wait_ticks_) return false;
   can_wait_counter_[i] = 0;
+  // reconnect() delegates to the shared SerialMux — if it succeeds,
+  // ALL arms benefit because they share the same physical serial port.
+  // Force full resync so every arm re-sends its current state.
   if (stepper_arms[i].reconnect()) {
-    // Force a full resync for all arms — one reconnect may indicate
-    // the bus recovered and other arms may also need state refresh.
     can_needs_resync_ = true;
-    RCLCPP_INFO(get_logger(), "CAN arm %d reconnected", i);
+    // Reset all wait counters — the mux is back for everyone
+    for (auto &wc : can_wait_counter_) wc = 0;
+    RCLCPP_INFO(get_logger(), "Bridge serial reconnected (triggered by arm %d)", i);
     return true;
   }
-  RCLCPP_WARN(get_logger(), "CAN arm %d reconnect failed", i);
+  RCLCPP_WARN(get_logger(), "Bridge serial reconnect failed (arm %d)", i);
   return false;
 }
 
