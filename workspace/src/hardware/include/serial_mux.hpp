@@ -78,6 +78,8 @@ private:
 class SerialMux {
 public:
     static constexpr size_t CAN_ID_BYTES    = 4;
+    static constexpr size_t MAX_CAN_DATA    = 8;   ///< Max data bytes per CAN 2.0B frame
+    static constexpr size_t UNIT_BYTES      = CAN_ID_BYTES + MAX_CAN_DATA; ///< 12 — fixed serial unit
     static constexpr size_t MAX_PAYLOAD     = 60;
     static constexpr size_t MAX_FRAME_BYTES = MAX_PAYLOAD + 4;
     static constexpr size_t RING_SIZE       = 512;
@@ -173,6 +175,10 @@ public:
         b[2]=(id>>16)&0xFF; b[3]=(id>>24)&0xFF;
     }
 
+    static uint32_t fromLE(uint8_t b[4]) {
+        return b[0] | b[1]<<8 | b[2]<<16 | b[3]<<24;
+    }
+
 private:
     // ── Apertura del puerto ───────────────────────────────────────────────────
     bool openSerial() {
@@ -228,6 +234,18 @@ private:
     }
 
     // ── Hilo lector con reconexión automática ─────────────────────────────────
+    //
+    // Lee en unidades fijas de UNIT_BYTES (12):
+    //   [ID 4B LE][data 8B]
+    //
+    // Sincronización: el primer byte del ID debe tener los bits de priority
+    // (bits 7-5) en el rango válido de tu esquema. Si no, se avanza byte a
+    // byte hasta encontrar un ID válido. Esto permite re-sincronizarse si
+    // el SerialMux arranca en medio de una unidad.
+    //
+    // El Arduino paddea frames CAN cortos con 0xBB — el SerialMux los deposita
+    // en el ring igual. El Protocol_Handler los filtra como bytes no-0xAA
+    // durante el sync scan, igual que siempre.
     void readerLoop() {
         using namespace std::chrono_literals;
         auto backoff = 500ms;
@@ -247,92 +265,92 @@ private:
                 continue;
             }
 
-            if (!readOneFrame()) {
-                // Error de I/O — cerrar y dejar que el loop reintente
+            if (!readUnits()) {
                 logE("SerialMux: I/O error — closing fd");
                 closeFd();
             }
         }
     }
 
-    // ── Parseo de un byte — retorna false en error de I/O ────────────────────
-    bool readOneFrame() {
-        enum class St : uint8_t {
-            READ_ID, WAIT_SOF, READ_INST, READ_LEN, READ_PAYLOAD, READ_CRC
-        };
-
-        // Estado persistente entre llamadas — estático al hilo (solo hay uno)
-        static St      state{St::READ_ID};
-        static uint8_t id_buf[CAN_ID_BYTES]{};
-        static uint8_t id_pos{0};
-        static uint8_t frame_buf[MAX_FRAME_BYTES]{};
-        static uint8_t frame_len{0};
-        static uint8_t payload_len{0};
-        static uint8_t payload_pos{0};
-
-        auto reset = [&]() {
-            state = St::READ_ID; id_pos = 0;
-            frame_len = payload_len = payload_pos = 0;
-        };
-
+    // ── Lector de unidades fijas — retorna false en error de I/O ─────────────
+    //
+    // Estado de sincronización: unit_buf_ acumula bytes hasta tener UNIT_BYTES.
+    // Si el ID extraído no es válido, descarta 1 byte y reintenta (slide window).
+    bool readUnits() {
         struct pollfd pfd{fd_, POLLIN, 0};
         int ret = poll(&pfd, 1, 10);
-        if (ret < 0) {
-            if (errno == EINTR) return true;  // señal — no es error fatal
-            return false;
-        }
-        if (ret == 0) return true;  // timeout — nada que leer
-
+        if (ret < 0)  { return errno == EINTR; }
+        if (ret == 0) { return true; }
         if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) return false;
 
-        uint8_t b;
-        ssize_t n = ::read(fd_, &b, 1);
-        if (n < 0) { return errno == EAGAIN; }  // EAGAIN no es error
-        if (n == 0) return false;
+        if (!synced) {
+            uint8_t byte;
+            ssize_t n = ::read(fd_, &byte, 1);
+            if (n < 0)  { return errno == EAGAIN; }
+            if (n == 0) { return false; }
 
-        switch (state) {
-        case St::READ_ID:
-            id_buf[id_pos++] = b;
-            if (id_pos >= CAN_ID_BYTES) state = St::WAIT_SOF;
-            break;
-        case St::WAIT_SOF:
-            if (b != 0xAA) { reset(); break; }
-            frame_len = 0;
-            frame_buf[frame_len++] = b;
-            state = St::READ_INST;
-            break;
-        case St::READ_INST:
-            frame_buf[frame_len++] = b;
-            state = St::READ_LEN;
-            break;
-        case St::READ_LEN:
-            payload_len = b;
-            frame_buf[frame_len++] = b;
-            payload_pos = 0;
-            state = (payload_len == 0) ? St::READ_CRC : St::READ_PAYLOAD;
-            break;
-        case St::READ_PAYLOAD:
-            frame_buf[frame_len++] = b;
-            if (++payload_pos >= payload_len) state = St::READ_CRC;
-            break;
-        case St::READ_CRC:
-            frame_buf[frame_len++] = b;
-            depositFrame(id_buf, frame_buf, frame_len);
-            reset();
-            break;
+            if (byte == 0xAA) {
+                synced = true;
+                unit_pos_ = 0; // empezar limpio después del sync
+            }else{
+                return true; // ignorar todo hasta encontrar 0xAA
+            }
         }
+        
+        size_t space = UNIT_BYTES - unit_pos_;
+        ssize_t n = ::read(fd_, unit_buf_ + unit_pos_, space);
+        unit_pos_ += static_cast<size_t>(n);
+
+        if (n < 0)  { return errno == EAGAIN; }
+        if (n == 0) { return false; }
+
+        while (unit_pos_ >= UNIT_BYTES) {
+            uint32_t rx_id = fromLE(unit_buf_);
+            synced = false;
+
+            if (isValidCanId(rx_id)) {
+                depositData(unit_buf_, rx_id);
+
+                // consumir unidad
+                unit_pos_ -= UNIT_BYTES;
+                if (unit_pos_ > 0)
+                    std::memmove(unit_buf_, unit_buf_ + UNIT_BYTES, unit_pos_);
+
+                
+            } else {
+                logW("SerialMux: bad frame — resyncing");
+                unit_pos_ = 0;
+            }
+        }
+
         return true;
     }
 
-    void depositFrame(const uint8_t id_raw[4],
-                      const uint8_t *frame, uint8_t len) {
-        uint32_t rx_id = (uint32_t)id_raw[0] | ((uint32_t)id_raw[1]<<8)
-                       | ((uint32_t)id_raw[2]<<16) | ((uint32_t)id_raw[3]<<24);
+    // ── Validar ID según el esquema de bits ───────────────────────────────────
+    // [28..26] priority (3 bits, valores 0-7)
+    // [25..18] sender   (8 bits)
+    // [17..10] receiver (8 bits)
+    // [9..0]   channel  (10 bits)
+    // Un ID es válido si está dentro del rango de 29 bits (bit 29+ = 0).
+    // Adicionalmente rechazamos 0x00000000 y 0x1FFFFFFF como IDs de relleno.
+    static bool isValidCanId(uint32_t id) {
+        if (id == 0x00000000UL) return false;  // ID nulo — no válido
+        if (id > 0x1FFFFFFFUL) return false;   // supera 29 bits
+        return true;
+    }
+
+    // ── Depositar los 8 bytes de data en el canal correcto ───────────────────
+    // unit_buf apunta al inicio de la unidad de 12 bytes.
+    // Los primeros 4 bytes son el ID (ya extraído como rx_id).
+    // Los bytes CAN_ID_BYTES..UNIT_BYTES-1 son los datos a depositar.
+    // Los 0xBB de padding son bytes válidos desde la perspectiva del ring —
+    // el Protocol_Handler los descarta durante el sync scan como bytes != 0xAA.
+    void depositData(const uint8_t *unit_buf, uint32_t rx_id) {
         std::lock_guard<std::mutex> lk(channels_mutex_);
         for (auto &ch : channels_) {
             if (ch->rx_id != rx_id) continue;
-            for (uint8_t i = 0; i < len; ++i)
-                if (!ch->ring.push(frame[i]))
+            for (size_t i = CAN_ID_BYTES; i < UNIT_BYTES; ++i)
+                if (!ch->ring.push(unit_buf[i]))
                     logW("SerialMux: ring full rx_id=0x%08X — byte dropped", rx_id);
             logI("Got info, rx_id=0x%08X", rx_id);
             return;
@@ -366,4 +384,9 @@ private:
     std::atomic<bool>     running_{false};
     std::vector<std::unique_ptr<Channel>> channels_;
     LogFn log_info_{}, log_warn_{}, log_error_{};
+
+    // Buffer de sincronización del lector de unidades fijas
+    uint8_t unit_buf_[UNIT_BYTES * 2]{};  // x2 para el slide window
+    size_t  unit_pos_{ 0 };
+    bool synced {false};
 };

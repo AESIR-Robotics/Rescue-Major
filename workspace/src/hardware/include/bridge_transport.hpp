@@ -82,18 +82,37 @@ public:
     Transport_Error transport_error_{ Transport_Error::CLOSED };
 
 protected:
-    // ── writeData — prepend tx_id y escribe al mux ────────────────────────────
+    // ── writeData — manda en unidades fijas de UNIT_BYTES (12) ───────────────
+    // El frame del protocolo puede ser mayor que MAX_CAN_DATA (8 bytes).
+    // Se corta en chunks de 8 bytes, cada uno enviado como una unidad
+    // independiente con el mismo tx_id. El Arduino los manda como frames
+    // CAN separados con el mismo ID. El Protocol_Handler en el MCU destino
+    // reconstruye el frame desde el stream — la segmentación es transparente.
     size_t writeData(const uint8_t *data, size_t length,
                      deadline_t /*deadline*/) {
         if (!connected() || !data || length == 0) return 0;
 
-        const size_t total = SerialMux::CAN_ID_BYTES + length;
-        uint8_t buf[SerialMux::CAN_ID_BYTES + SerialMux::MAX_FRAME_BYTES];
-        SerialMux::toLE(tx_id_, buf);
-        std::memcpy(buf + SerialMux::CAN_ID_BYTES, data, length);
+        constexpr size_t ID_B   = SerialMux::CAN_ID_BYTES;  // 4
+        constexpr size_t DATA_B = SerialMux::MAX_CAN_DATA;  // 8
+        constexpr size_t UNIT   = SerialMux::UNIT_BYTES;    // 12
 
-        size_t sent = mux_->write(buf, total);
-        return (sent == total) ? length : 0;
+        uint8_t unit[UNIT + 1];
+        unit[0] = 0xAA;
+        SerialMux::toLE(tx_id_, unit + 1);  // ID siempre igual
+
+        size_t offset = 0;
+        while (offset < length) {
+            size_t chunk = std::min(DATA_B, length - offset);
+            std::memcpy(unit + ID_B + 1, data + offset, chunk);
+            // Paddear con 0xBB si el chunk es menor que MAX_CAN_DATA
+            if (chunk < DATA_B)
+                std::memset(unit + ID_B + 1 + chunk, 0xBB, DATA_B - chunk);
+
+            size_t sent = mux_->write(unit, UNIT + 1);
+            if (sent != UNIT + 1) return 0;  // error de TX — abortar
+            offset += chunk;
+        }
+        return length;
     }
 
     // ── readData — drena el ring local del canal ──────────────────────────────

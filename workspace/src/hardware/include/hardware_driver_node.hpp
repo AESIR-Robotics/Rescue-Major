@@ -612,20 +612,17 @@ inline void HardwareDriverNode::enqueueArmInfo(const StepperState<number_arms> &
   using accelE    = WriteInstESP<Cmd::ESP32::Write::ACCEL>;
 
   if (snap.updatedPosition()){
-    RCLCPP_INFO(this->get_logger(), "Sending pos for %i", i);
     stepper_arms[i].addCommand(
         std::make_unique<positionE>(positionE::packet{
             snap.position[i] < 0 ? -1 : static_cast<int32_t>(
                 radToSteps(snap.position[i], 4 + i))}));
   }
   if (snap.updatedSpeed()){
-    RCLCPP_INFO(this->get_logger(), "Sending vel for %i", i);
     stepper_arms[i].addCommand(
         std::make_unique<speedE>(speedE::packet{
             static_cast<float>(snap.speed[i] / (2.0 * M_PI) * steps_per_rev_[4+i])}));
         }
   if (snap.updatedAccel()){
-    RCLCPP_INFO(this->get_logger(), "Sending acel for %i", i);
     stepper_arms[i].addCommand(
         std::make_unique<accelE>(accelE::packet{
             static_cast<float>(snap.acceleration[i] / (2.0 * M_PI) * steps_per_rev_[4+i])}));
