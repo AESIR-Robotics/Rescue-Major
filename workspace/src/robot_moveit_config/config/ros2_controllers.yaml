@@ -1,0 +1,89 @@
+# This config file is used by ros2_control
+controller_manager:
+  ros__parameters:
+    update_rate: 100  # Hz
+
+    # 1. Used for Cartesian Pose & Cartesian Velocity (MoveIt / Servo)
+    arm_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+
+    # 2. Used for Flipper Joint Position, only visualizer
+    flipper_controller:
+      type: forward_command_controller/ForwardCommandController
+
+    # 3. Used for raw Joint-by-Joint Position
+    position_controller:
+      type: forward_command_controller/ForwardCommandController
+
+    # 4. Used for raw Joint-by-Joint Torque (Effort)
+    effort_controller:
+      type: forward_command_controller/ForwardCommandController
+
+    # 5. Used for raw Joint-by-Joint Velocity
+    velocity_controller:
+      type: forward_command_controller/ForwardCommandController
+
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+# --- Controller Configurations ---
+# arm controller with moveit/servo interfaces (position + velocity)
+arm_controller:
+  ros__parameters:
+    joints:
+      - joint_1
+      - joint_2
+      - joint_3
+      - joint_4
+      - joint_5
+      - joint_6
+    command_interfaces:
+      - position
+      - velocity
+    state_interfaces:
+      - position
+      - velocity
+
+# Flipper controller
+flipper_controller:
+  ros__parameters:
+    joints:
+      - flipper_1_joint
+      - flipper_2_joint
+      - flipper_3_joint
+      - flipper_4_joint
+    interface_name: position
+
+# --- The following controllers are for direct joint control (position, effort, velocity) ---
+position_controller:
+  ros__parameters:
+    joints:
+      - joint_1
+      - joint_2
+      - joint_3
+      - joint_4
+      - joint_5
+      - joint_6
+    interface_name: position
+
+effort_controller:
+  ros__parameters:
+    joints:
+      - joint_1
+      - joint_2
+      - joint_3
+      - joint_4
+      - joint_5
+      - joint_6
+    interface_name: effort
+
+velocity_controller:
+  ros__parameters:
+    joints:
+      - joint_1
+      - joint_2
+      - joint_3
+      - joint_4
+      - joint_5
+      - joint_6
+    interface_name: velocity
