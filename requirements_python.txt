@@ -10,6 +10,7 @@ pyyaml
 opencv-python
 pyserial
 pyzbar
+catkin_pkg
 lark
 numpy<2
 empy==3.3.4

@@ -3,26 +3,32 @@
 <package format="3">
   <name>hardware</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
+  <description>Hardware interface package: DC motors driver and JointJog→JointControl mux.</description>
   <maintainer email="ruy@todo.todo">ruy</maintainer>
   <license>TODO: License declaration</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
+  <!-- Generación de mensajes custom -->
+  <buildtool_depend>rosidl_default_generators</buildtool_depend>
+
   <depend>rclcpp</depend>
   <depend>rclpy</depend>
 
-  <test_depend>ament_copyright</test_depend>
-  <test_depend>ament_flake8</test_depend>
-  <test_depend>ament_pep257</test_depend>
-  <test_depend>python3-pytest</test_depend>
-  
   <depend>std_msgs</depend>
   <depend>geometry_msgs</depend>
   <!-- <depend>control_msgs</depend> -->  <!-- Comentado temporalmente -->
   <depend>trajectory_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>builtin_interfaces</depend>
+
+  <!-- Runtime del generador de interfaces -->
+  <exec_depend>rosidl_default_runtime</exec_depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
 
   <member_of_group>rosidl_interface_packages</member_of_group>
 

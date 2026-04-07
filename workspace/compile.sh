@@ -8,7 +8,7 @@ else
 fi
 
 # Debug output
-echo "compile.sh: ROS_UBUNTU_VERSION='${ROS_UBsourceUNTU_VERSION:-}'"
+echo "compile.sh: ROS_UBUNTU_VERSION='${ROS_UBUNTU_VERSION:-}'"
 
 try_source_ros() {
   local distro="$1"

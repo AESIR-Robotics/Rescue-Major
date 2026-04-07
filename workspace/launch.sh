@@ -48,29 +48,35 @@ session_name="rescue_aesir_$(date +%s)"
 tmux new-session -d -s "$session_name" -n main "$ENV_CMD"
 tmux set-option -t "$session_name" default-command "$ENV_CMD"
 
-# Crear layout de 4 panes (2x2)
-# Pane 0: RTC Server (top-left)
-# Pane 1: Hardware (top-right)
-# Pane 2: Rosbridge (bottom-left)
-# Pane 3: Video (bottom-right)
-tmux split-window -h -t "$session_name"    # Split horizontal: pane 0 | pane 1
-tmux split-window -v -t "$session_name:0.0" # Split pane 0 vertical: pane 0 arriba, pane 2 abajo
-tmux split-window -v -t "$session_name:0.1" # Split pane 1 vertical: pane 1 arriba, pane 3 abajo
+# Splits
+tmux split-window -v
+tmux select-pane -t 0
+tmux split-window -h
+tmux select-pane -t 2
+tmux split-window -h
 
-# Esperar a que los panes carguen el ambiente
-sleep 2
+# Comandos
+tmux send-keys -t 0 "ros2 run rosbridge_server rosbridge_websocket --ros-args --param port:=9090 --param address:=\"0.0.0.0\"" Enter
+tmux send-keys -t 1 "python3 src/teleoperation/scripts/server_rtc.py --host 0.0.0.0 --port 8081" Enter
+#tmux send-keys -t 2 "ros2 run hardware dc_motors" Enter
+ 
+tmux send-keys -t 2 "ros2 run hardware dc_motors --ros-args --log-level debug --log-level rcl:=warn --log-level rclcpp:=warn" Enter
+tmux send-keys -t 3 "ros2 launch vision vision.launch.py" Enter
 
-# Pane 0 (top-left): RTC Server
-tmux send-keys -t "$session_name:0.0" "python3 src/teleoperation/scripts/server_rtc.py --cert-file ~/aesir/cert.pem --key-file ~/aesir/key.pem --host 0.0.0.0 --port 8081" Enter
+# Pane 1 (bottom-left): run teleoperation command_server.py
+#tmux select-pane -t 1
+#tmux send-keys "python3 /src/teleoperation/scripts/server_rtc.py" Enter
+#sleep 2
 
-# Pane 1 (top-right): Hardware
-tmux send-keys -t "$session_name:0.1" "ros2 run hardware serial_sender.py" Enter
+# Pane 2 (bottom-right): run teleoperation server.py
+#tmux select-pane -t 2
+#tmux send-keys "ros2 run hardware dc_motors" Enter
+#sleep 1
 
-# Pane 2 (bottom-left): Rosbridge Server
-tmux send-keys -t "$session_name:0.2" "ros2 run rosbridge_server rosbridge_websocket --ros-args --param ssl:=true --param certfile:=\"$HOME/aesir/cert.pem\" --param keyfile:=\"$HOME/aesir/key.pem\" --param port:=9090 --param address:=\"0.0.0.0\"" Enter
-
-# Pane 3 (bottom-right): Video/Vision
-tmux send-keys -t "$session_name:0.3" "ros2 launch vision vision.launch.py" Enter
+# Pane 2 (bottom-right): run teleoperation server.py
+#tmux select-pane -t 3
+#tmux send-keys "ros2 run vision video_stream_publisher" Enter
+#sleep 2
 
 sleep 1
 

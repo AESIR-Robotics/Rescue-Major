@@ -57,10 +57,25 @@ class WebRTCManager:
                 # Receive audio frame from client
                 frame = await track.recv()
                 
-                # Convert AudioFrame to bytes (s16 format)
                 audio_array = frame.to_ndarray()
                 
-                # Ensure correct shape and format
+                # Check actual channels from PyAV frame layout instead of ndarray shape 
+                # (since ndarray shape varies between interleaved/planar formats)
+                channels = len(frame.layout.channels) if hasattr(frame, 'layout') else 1
+                
+                if channels > 1:
+                    # Depending on if the format is planar (channels, samples) or interleaved (1, samples*channels)
+                    if len(audio_array.shape) == 2 and audio_array.shape[0] == channels:
+                        # Planar: average across channels axis (axis=0)
+                        mono_array = audio_array.mean(axis=0).astype(np.int16)
+                    else:
+                        # Interleaved: reshape to (samples, channels) and average across channels (axis=1)
+                        mono_array = audio_array.reshape(-1, channels).mean(axis=1).astype(np.int16)
+                    audio_array = mono_array
+                else:
+                    audio_array = audio_array.flatten()
+                
+                # Ensure correct format before pushing to PyAudio
                 if audio_array.dtype != np.int16:
                     audio_array = audio_array.astype(np.int16)
                 

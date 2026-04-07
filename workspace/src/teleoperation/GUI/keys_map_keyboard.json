@@ -10,12 +10,27 @@
     "data_type": "vision/srv/Command",
     "topics": ["/web_rtc_commands"],
     "payload": {"data": "audio:unmute"}
-  }, 
+  },
+
+  "w": {
+    "type": "local_function",
+    "payload": {"function_name": "sendCmdVel", "linear": 1, "angular": 0}
+  },
+  "s": {
+    "type": "local_function",
+    "payload": {"function_name": "sendCmdVel", "linear": -1, "angular": 0}
+  },
+  "a": {
+    "type": "local_function",
+    "payload": {"function_name": "sendCmdVel", "linear": 1, "angular": -1}
+  },
+  "d": {
+    "type": "local_function",
+    "payload": {"function_name": "sendCmdVel", "linear": 1, "angular": 1}
+  },
   " ": {
-    "type": "send_topic",
-    "data_type": "std_msgs/Float32MultiArray",
-    "topics": ["/dc_motors"],
-    "payload": {"data": [0.0, 0.0]}
+    "type": "local_function",
+    "payload": {"function_name": "sendCmdVel", "linear": 0, "angular": 0}
   },
 
   "r": {
@@ -81,28 +96,28 @@
     "payload": {"data": "vision:mode,3"}
   },
 
-  "1": {
+  "8": {
     "type": "local_function",
-    "payload": {"function_name": "setMotorVars", "data": [1, 0, 0, 0]}
+    "payload": {"function_name": "toggleFlipperDirection"}
   },
-  "2": {
+  "9": {
     "type": "local_function",
-    "payload": {"function_name": "setMotorVars", "data": [0, 1, 0, 0]}
+    "payload": {"function_name": "modifyFlipper", "index": 0}
   },
-  "3": {
+  "7": {
     "type": "local_function",
-    "payload": {"function_name": "setMotorVars", "data": [0, 0, 1, 0]}
+    "payload": {"function_name": "modifyFlipper", "index": 1}
+  },
+  "6": {
+    "type": "local_function",
+    "payload": {"function_name": "modifyFlipper", "index": 2}
   },
   "4": {
     "type": "local_function",
-    "payload": {"function_name": "setMotorVars", "data": [0, 0, 0, 1]}
-  },
-  "5": {
-    "type": "local_function",
-    "payload": {"function_name": "setMotorVars", "data": [1, 1, 1, 1]}
+    "payload": {"function_name": "modifyFlipper", "index": 3}
   },
   "0": {
     "type": "local_function",
-    "payload": {"function_name": "resetMotorVars"}
+    "payload": {"function_name": "resetFlipperPositions"}
   }
 }
