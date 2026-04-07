@@ -1,5 +1,17 @@
 # Vision Package
 
+## Dependencies
+
+```sh
+sudo apt install \
+    ros-humble-sensor-msgs \
+    ros-humble-std-msgs \
+    ros-humble-cv-bridge \
+    ros-humble-image-transport \
+    ros-humble-std-srvs \
+    ros-humble-example-interfaces \
+    ros-humble-apriltag-ros
+```
 ## ROS interface
 
 ###  Topics
