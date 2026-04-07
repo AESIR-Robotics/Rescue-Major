@@ -55,9 +55,7 @@ Already configured in the **.yaml** file inside the package:
 
 - **device** (string): Defines the hardware platform you are running on (e.g., "jetson", "generic", "raspberry"). This dictates which pipeline templates or capture methods to use.
 
-- **camera_devices** (int_array): List of **/dev/videoX** indices to open.
-
-- **camera_devices** (int_array): List of /dev/videoX indices or sensor-id numbers to open.
+- **camera_devices** (string_array): List of **/dev/videoX** indices or name of device to open.
 
 - **camera_formats** (string_array): The specific template format to apply to each camera in the array (e.g., ["MJPG", "CSI", "YUYV"]).
 
@@ -67,11 +65,9 @@ Already configured in the **.yaml** file inside the package:
 
 - **camera_fps** (int_array): The targeted frames per second for each camera (e.g., [30, 30]).
 
-- **thermal_camera_index** (int): The specific hardware index assigned to the thermal sensor. Set to -1 if no thermal camera is connected.
+- **thermal_camera_device** (string): The specific hardware index assigned to the thermal sensor or name of thermal sensor. Set to -1 if no thermal camera is connected.
 
 - **thermal_enable** (bool): Set to true to enable specific processing or topic publishing for the thermal camera.
-
-- **thermal_camera_index** (int): Index specifically assigned to a thermal sensor.
 
 - **pipeline_templates.[FORMAT]** (string): Dynamic GStreamer templates used when device is set to "jetson" or when using GStreamer on a PC. These use {dev}, {w}, {h}, and {fps} as placeholders.
 

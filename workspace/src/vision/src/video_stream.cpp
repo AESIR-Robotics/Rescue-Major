@@ -14,6 +14,8 @@
 #include <iostream>
 #include <memory>
 #include <functional>
+#include <filesystem>
+#include <fstream>
 #include "vision/srv/command.hpp"
 
 using std::placeholders::_1;
@@ -33,19 +35,35 @@ public:
     explicit VideoStreamPublisher()
     : Node("video_stream_publisher")
     {
+        declare_parameters();
+        load_parameters();
+        init_publishers_to_services();
+        init_cameras();
+        init_timers();
+    }
 
-        // ── Parameter declaration ─────────────────────────────────────────────────
+    ~VideoStreamPublisher()
+    {
+        release_cameras();
+    }
+
+private:
+
+    // ── Parameters declaration ─────────────────────────────────────────────────
+    void declare_parameters()
+    {
+        // ── Parameters declaration ─────────────────────────────────────────────────
 
         // Device type: "jetson" | "generic" | "raspberry"
         this->declare_parameter<std::string>("device",                          "generic");
-        this->declare_parameter<std::vector<long int>>("cameras_devices_index", {0, 2});
+        this->declare_parameter<std::vector<std::string>>("cameras_devices",    {"0", "2"});
         this->declare_parameter<std::vector<std::string>>("cameras_formats_",   {"MJPG", "MJPG", "YUYV"});
         this->declare_parameter<std::vector<int64_t>>("cameras_widths",         {1920, 1920});
         this->declare_parameter<std::vector<int64_t>>("cameras_heights",        {1080, 1080});
         this->declare_parameter<std::vector<int64_t>>("cameras_fps",            {30, 30});
 
         // Thermal camera (-1 = disabled)
-        this->declare_parameter<int>("thermal_camera_index", kNoCamera);
+        this->declare_parameter<std::string>("thermal_camera_device", std::to_string(kNoCamera));
         this->declare_parameter<bool>("thermal_enable",      false);
 
         std::vector<long int> cam_indices;
@@ -71,19 +89,7 @@ public:
             "v4l2src device=/dev/video{dev} ! video/x-raw, format=YUYV, width={w}, height={h}, "
             "framerate={fps}/1 ! nvvidconv ! video/x-raw(memory:NVMM) ! nvvidconv ! "
             "video/x-raw, format=I420 ! appsink drop=true sync=false max-buffer=1");
-
-        load_parameters();
-        init_publishers_to_services();
-        init_cameras();
-        init_timers();
     }
-
-    ~VideoStreamPublisher()
-    {
-        release_cameras();
-    }
-
-private:
 
     // ── Load parameters  ─────────────────────────────────────────────────
     void load_parameters()
@@ -93,13 +99,26 @@ private:
         get_parameter("cameras_widths",        camera_widths_);
         get_parameter("cameras_heights",       camera_heights_);
         get_parameter("cameras_fps",           camera_fps_);
-        get_parameter("thermal_camera_index",  thermal_camera_index_);
         get_parameter("thermal_enable",        thermal_enabled_);
  
         // Convert long int → int for camera device indices
-        std::vector<long int> raw_indices;
-        get_parameter("cameras_devices_index", raw_indices);
-        camera_devices_.assign(raw_indices.begin(), raw_indices.end());
+        std::vector<std::string> raw_devices;
+        get_parameter("cameras_devices", raw_devices);
+        
+        camera_devices_.clear();
+        for (const auto& dev_str : raw_devices) {
+            int resolved_idx = resolve_device(dev_str);
+            if (resolved_idx != kNoCamera) {
+                camera_devices_.push_back(resolved_idx);
+            } else {
+                RCLCPP_WARN(get_logger(), "Skipping unresolved camera: '%s'", dev_str.c_str());
+            }
+        }
+
+        // Resolve thermal camera
+        std::string thermal_str;
+        get_parameter("thermal_camera_device", thermal_str);
+        thermal_camera_index_ = resolve_device(thermal_str);
  
         // Thermal device is appended last so cameras_ slot indexing stays consistent
         if (thermal_camera_index_ != kNoCamera) {
@@ -112,6 +131,106 @@ private:
             RCLCPP_INFO(get_logger(),
                 "Camera slot %zu → /dev/video%d", i, camera_devices_[i]);
         }
+    }
+
+     // ── Helper: Device Resolution
+    /**
+     * Resolves a string identifier to a V4L2 device integer.
+     * If the string is purely numeric (e.g., "0"), returns 0.
+     * If it's a name (e.g., "HD WebCam"), it looks in sysfs to find the matching /dev/videoX. 
+     */
+    int resolve_device(const std::string& identifier)
+    {
+        // Check if the string is purely numeric (an index)
+        if (identifier.find_first_not_of("0123456789") == std::string::npos || 
+           (identifier.front() == '-' && identifier.find_first_not_of("0123456789", 1) == std::string::npos)) {
+            try { return std::stoi(identifier); } 
+            catch (...) { return kNoCamera; }
+        }
+
+        // Search by device name in /sys/class/video4linux
+        namespace fs = std::filesystem;
+        const std::string v4l_path = "/sys/class/video4linux/";
+        
+        if (!fs::exists(v4l_path)) {
+            RCLCPP_WARN(get_logger(), "Sysfs path %s does not exist. Cannot resolve by name.", v4l_path.c_str());
+            return kNoCamera;
+        }
+
+        std::vector<int> matching_indices;
+
+        for (const auto& entry : fs::directory_iterator(v4l_path)) {
+            std::string dir_name = entry.path().filename().string();
+            
+            // Directories look like "video0", "video1", etc.
+            if (dir_name.find("video") == 0) {
+                std::ifstream name_file(entry.path() / "name");
+                if (name_file.is_open()) {
+                    std::string device_name;
+                    std::getline(name_file, device_name);
+                    
+                    // Case-sensitive substring match
+                    if (device_name.find(identifier) != std::string::npos) {
+                        std::string idx_str = dir_name.substr(5); // Extract "0" from "video0"
+                        try {
+                            RCLCPP_INFO(get_logger(), "Resolved name '%s' to /dev/video%s", identifier.c_str(), idx_str.c_str());
+                            matching_indices.push_back(std::stoi(idx_str));
+                        } catch (...) {}
+                    }
+                }
+            }
+        }
+
+        // Return the lowest index (avoids metadata nodes)
+        if (!matching_indices.empty()) {
+            int best_idx = *std::min_element(matching_indices.begin(), matching_indices.end());
+            RCLCPP_INFO(get_logger(), "Resolved name '%s' to /dev/video%d", identifier.c_str(), best_idx);
+            return best_idx;
+        }
+        
+        RCLCPP_ERROR(get_logger(), "Could not find any camera matching name: '%s'", identifier.c_str());
+        return kNoCamera;
+    }
+
+        // ── Helper: number of RGB cameras ────────────────────────────────────────
+    size_t camera_count() const
+    {
+        if (thermal_camera_index_ != kNoCamera && !camera_devices_.empty()) {
+            return camera_devices_.size() - 1;
+        }
+        return camera_devices_.size();
+    }
+
+    // ── Helper: build and publish one frame ───────────────────────────────────
+    void publish_frame(
+        const cv::Mat& frame,
+        const rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr& pub)
+    {
+        auto msg = cv_bridge::CvImage(std_msgs::msg::Header(), "bgr8", frame).toImageMsg();
+        pub->publish(*msg);
+    }
+
+    // ── Helper: GStreamer pipeline builder ────────────────────────────────────
+    static std::string build_pipeline(
+        std::string        tmpl,
+        const std::string& dev,
+        const std::string& w,
+        const std::string& h,
+        const std::string& fps)
+    {
+        auto replace_all = [](std::string& s,
+                               const std::string& from,
+                               const std::string& to)
+        {
+            for (size_t pos = 0; (pos = s.find(from, pos)) != std::string::npos; pos += to.size())
+                s.replace(pos, from.size(), to);
+        };
+
+        replace_all(tmpl, "{dev}", dev);
+        replace_all(tmpl, "{w}",   w);
+        replace_all(tmpl, "{h}",   h);
+        replace_all(tmpl, "{fps}", fps);
+        return tmpl;
     }
 
     // ── Publishers / Service ──────────────────────────────────────────────────
@@ -221,46 +340,6 @@ private:
                 std::chrono::milliseconds(kTimerThermalMs),
                 std::bind(&VideoStreamPublisher::thermal_callback, this));
         }
-    }
-
-    // ── Helper: number of RGB cameras ────────────────────────────────────────
-    size_t camera_count() const
-    {
-        if (thermal_camera_index_ != kNoCamera && !camera_devices_.empty()) {
-            return camera_devices_.size() - 1;
-        }
-        return camera_devices_.size();
-    }
-
-    // ── Helper: build and publish one frame ───────────────────────────────────
-    void publish_frame(
-        const cv::Mat& frame,
-        const rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr& pub)
-    {
-        auto msg = cv_bridge::CvImage(std_msgs::msg::Header(), "bgr8", frame).toImageMsg();
-        pub->publish(*msg);
-    }
-    // ── Helper: GStreamer pipeline builder ────────────────────────────────────
-    static std::string build_pipeline(
-        std::string        tmpl,
-        const std::string& dev,
-        const std::string& w,
-        const std::string& h,
-        const std::string& fps)
-    {
-        auto replace_all = [](std::string& s,
-                               const std::string& from,
-                               const std::string& to)
-        {
-            for (size_t pos = 0; (pos = s.find(from, pos)) != std::string::npos; pos += to.size())
-                s.replace(pos, from.size(), to);
-        };
-
-        replace_all(tmpl, "{dev}", dev);
-        replace_all(tmpl, "{w}",   w);
-        replace_all(tmpl, "{h}",   h);
-        replace_all(tmpl, "{fps}", fps);
-        return tmpl;
     }
 
     // ── Camera callbacks ───────────────────────────────────────────────────────

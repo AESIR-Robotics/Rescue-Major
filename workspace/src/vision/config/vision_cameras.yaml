@@ -2,11 +2,11 @@ video_stream_publisher:
   ros__parameters:
     device: generic
     cameras_formats: [MJPG, MJPG, YUYV]
-    cameras_devices_index: [0, 2]
+    cameras_devices: ["0", "2"]
     cameras_widths: [1920, 640, 640]
     cameras_heights: [1080, 480, 480]
     cameras_fps: [30, 30, 30]
-    thermal_camera_index: -1
+    thermal_camera_device: "-1"
     thermal_enable: false
 
     pipeline_templates: 
