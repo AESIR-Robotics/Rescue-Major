@@ -24,9 +24,13 @@
 
 #include "commands.hpp"
 #include "protocol_handler.hpp"
-#include "bridge_transport.hpp"
+
+//#include "bridge_transport.hpp"
+
 #include "serial_mux.hpp"
 #include "tuple_utils.hpp"
+
+#include "logger.hpp"
 
 // =============================================================================
 // StepperState<N>
@@ -209,6 +213,8 @@ private:
 
   void diagTick();
 
+  Logger logger{};
+
   Protocol_Handler_I2C<> stepper_micro;
   std::array<Protocol_Handler_CAN<>, number_arms> stepper_arms;
   std::shared_ptr<SerialMux> mux_;   ///< Shared serial resource for all arm bridges
@@ -225,7 +231,7 @@ private:
 
   std::vector<std::string> joint_names{
     "flipper_0", "flipper_1", "flipper_2", "flipper_3",
-    "joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6"
+    "joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6", "joint_7"
   };
 
   // Desired state — written by ROS callbacks, snapshotted by tick
@@ -333,10 +339,11 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
   std::string can_interface;
   this->get_parameter("can_interface", can_interface);
 
-  stepper_micro.setLogger(
-      [this](const std::string &msg) { /*RCLCPP_INFO( get_logger(), "%s", msg.c_str());*/ },
-      [this](const std::string &msg) { /*RCLCPP_WARN( get_logger(), "%s", msg.c_str());*/ },
-      [this](const std::string &msg) { /*RCLCPP_ERROR(get_logger(), "%s", msg.c_str());*/ });
+  logger.setLogger([this](const std::string &msg) { RCLCPP_INFO( get_logger(), "%s", msg.c_str()); },
+        [this](const std::string &msg) { RCLCPP_WARN( get_logger(), "%s", msg.c_str()); },
+       [this](const std::string &msg) { RCLCPP_ERROR(get_logger(), "%s", msg.c_str()); });
+
+  stepper_micro.setLogger(logger);
 
   stepper_micro.init(i2c_port_, slave_addr_);
 
@@ -350,22 +357,17 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
 
   mux_ = std::make_shared<SerialMux>();
   mux_->init(bridge_port, static_cast<uint32_t>(bridge_baud),
-      [this](const std::string &m){ RCLCPP_INFO( get_logger(), "%s", m.c_str()); },
-      [this](const std::string &m){ RCLCPP_WARN( get_logger(), "%s", m.c_str()); },
-      [this](const std::string &m){ RCLCPP_ERROR(get_logger(), "%s", m.c_str()); }); */
+      logger); //*/
 
   for (int i = 0; i < number_arms; ++i) {
-      stepper_arms[i].setLogger(
-        [this](const std::string &msg) { RCLCPP_INFO( get_logger(), "%s", msg.c_str()); },
-        [this](const std::string &msg) { RCLCPP_WARN( get_logger(), "%s", msg.c_str()); },
-       [this](const std::string &msg) { RCLCPP_ERROR(get_logger(), "%s", msg.c_str()); });
+      stepper_arms[i].setLogger(logger);
 
       // Register channel in mux — my addr offset per arm, peer = arm index
       stepper_arms[i].init(can_interface, /*my=*/static_cast<uint8_t>(0x00 - i - 1),
                                   /*peer=*/static_cast<uint8_t>(i + 1), /*channel=*/0);
         
       using Cmd::ESP32::Read;
-      const auto logger = [this](const char* fmt, auto... args) {
+      const auto loggerLocal = [this](const char* fmt, auto... args) {
         RCLCPP_WARN(get_logger(), fmt, args...);
       };
       
@@ -375,8 +377,8 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
           auto &[p0] = info;
           feedback_arms.setPosition(i, stepsToRad(p0, 4 + i));
           feedback_arms.stampFeedback(this->now());
-          RCLCPP_INFO(this->get_logger(), "Position feedback for arm %i: %i", i, p0);
-        }, logger));
+          logger.logInfo("Position feedback for arm %i: %i", i, p0);
+        }, loggerLocal));
 
 
       stepper_arms[i].read_callbacks.emplace(
@@ -384,16 +386,16 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
         Cmd::make_callback<Read::SPEED>([this, i](const auto &info) {
           auto &[s0] = info;
           feedback_arms.setSpeed(i, stepsToRadRate(s0, 4 + i));
-          RCLCPP_INFO(this->get_logger(), "Speed feedback for arm %i: %i", i, s0);
-        }, logger));
+          logger.logInfo( "Speed feedback for arm %i: %f", i, s0);
+        }, loggerLocal));
 
       stepper_arms[i].read_callbacks.emplace(
         Read::ACCEL,
         Cmd::make_callback<Read::ACCEL>([this, i](const auto &info) {
           auto &[a0] = info;
           feedback_arms.setAcceleration(i, stepsToRadRate(a0, 4 + i));
-          RCLCPP_INFO(this->get_logger(), "Accel feedback for arm %i: %i", i, a0);
-        }, logger));
+          logger.logInfo("Accel feedback for arm %i: %f", i, a0);
+        }, loggerLocal));
   }
 
   // All channels registered — start mux reader thread
@@ -691,7 +693,7 @@ inline double HardwareDriverNode::stepsToRadRate(T steps, int joint) const {
 inline void HardwareDriverNode::generateCallbacks() {
   using Cmd::Teensy::Read;
 
-  const auto logger = [this](const char* fmt, auto... args) {
+  const auto loggerLocal = [this](const char* fmt, auto... args) {
         RCLCPP_WARN(get_logger(), fmt, args...);
       };
 
@@ -703,7 +705,7 @@ inline void HardwareDriverNode::generateCallbacks() {
           d.tx_byte_loss_count = p0;
           d.rx_byte_loss_count = p1;
         });
-      }, logger));
+      }, loggerLocal));
 
   // POSITION: steps  rad
   stepper_micro.read_callbacks.emplace(
@@ -715,7 +717,7 @@ inline void HardwareDriverNode::generateCallbacks() {
         feedback_flipper.setPosition(2, stepsToRad(p2, 2));
         feedback_flipper.setPosition(3, stepsToRad(p3, 3));
         feedback_flipper.stampFeedback(this->now());
-      }, logger));
+      }, loggerLocal));
 
   // SPEED: steps/s  rad/s
   stepper_micro.read_callbacks.emplace(
@@ -726,7 +728,7 @@ inline void HardwareDriverNode::generateCallbacks() {
         feedback_flipper.setSpeed(1, stepsToRadRate(s1, 1));
         feedback_flipper.setSpeed(2, stepsToRadRate(s2, 2));
         feedback_flipper.setSpeed(3, stepsToRadRate(s3, 3));
-      }, logger));
+      }, loggerLocal));
 
   // ACCEL: steps/s2  rad/s2
   stepper_micro.read_callbacks.emplace(
@@ -737,7 +739,7 @@ inline void HardwareDriverNode::generateCallbacks() {
         feedback_flipper.setAcceleration(1, stepsToRadRate(a1, 1));
         feedback_flipper.setAcceleration(2, stepsToRadRate(a2, 2));
         feedback_flipper.setAcceleration(3, stepsToRadRate(a3, 3));
-      }, logger));
+      }, loggerLocal));
 
   // DCVEL: [left_pct, right_pct]  [m/s, rad/s]
   // Inverse of twistToMotorPct:
@@ -752,7 +754,7 @@ inline void HardwareDriverNode::generateCallbacks() {
         double r = static_cast<double>(right_pct);
         feedback_dc.setLinear( (r + l) / (2.0 * scale));
         feedback_dc.setAngular((r - l) / (track_width_m * scale));
-      }, logger));
+      }, loggerLocal));
 }
 
 // -----------------------------------------------------------------------------
@@ -825,10 +827,10 @@ inline bool HardwareDriverNode::errorRecoveryCANArm(int i) {
     can_needs_resync_ = true;
     // Reset all wait counters — the mux is back for everyone
     //for (auto &wc : can_wait_counter_) wc = 0;
-    RCLCPP_INFO(get_logger(), "Bridge serial reconnected (triggered by arm %d)", i);
+    logger.logInfo("Bridge serial reconnected (triggered by arm %d)", i);
     return true;
   }
-  RCLCPP_WARN(get_logger(), "Bridge serial reconnect failed (arm %d)", i);
+  logger.logWarn("Bridge serial reconnect failed (arm %d)", i);
   return false;
 }
 

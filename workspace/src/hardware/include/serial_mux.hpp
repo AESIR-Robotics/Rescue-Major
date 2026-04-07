@@ -15,7 +15,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -29,7 +28,7 @@
 #include <sys/file.h>
 #include <cerrno>
 
-using LogFn = std::function<void(const std::string &)>;
+#include "logger.hpp"
 
 // =============================================================================
 // MuxRing — SPSC lock-free ring buffer
@@ -97,12 +96,10 @@ public:
 
     // ── Init ─────────────────────────────────────────────────────────────────
     bool init(const std::string &port, uint32_t baud,
-              LogFn info = {}, LogFn warn = {}, LogFn error = {}) {
+              Logger &in_log) {
         port_      = port;
         baud_      = baud;
-        log_info_  = std::move(info);
-        log_warn_  = std::move(warn);
-        log_error_ = std::move(error);
+        log = in_log;
         return openSerial();
     }
 
@@ -159,7 +156,7 @@ public:
         // escribe
         ssize_t sent = ::write(fd_, data, length);
         if (sent < 0) {
-            logE("SerialMux write() failed: %s", strerror(errno));
+            log.logError("SerialMux write() failed: %s", strerror(errno));
             return 0;
         }
 
@@ -186,11 +183,11 @@ private:
 
         int fd = open(port_.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
         if (fd < 0) {
-            logE("SerialMux open(%s) failed: %s", port_.c_str(), strerror(errno));
+            log.logError("SerialMux open(%s) failed: %s", port_.c_str(), strerror(errno));
             return false;
         }
         if (flock(fd, LOCK_EX | LOCK_NB) != 0) {
-            logE("SerialMux flock() failed: %s", strerror(errno));
+            log.logError("SerialMux flock() failed: %s", strerror(errno));
             ::close(fd); return false;
         }
         struct termios tty{};
@@ -206,7 +203,7 @@ private:
         fd_ = fd;
         connected_.store(true, std::memory_order_release);
         resetAllRings();
-        logI("SerialMux connected on %s at %u baud", port_.c_str(), baud_);
+        log.logInfo("SerialMux connected on %s at %u baud", port_.c_str(), baud_);
         return true;
     }
 
@@ -253,12 +250,12 @@ private:
 
         while (running_.load()) {
             if (!connected()) {
-                logW("SerialMux: attempting reconnect in %lldms",
+                log.logWarn("SerialMux: attempting reconnect in %lldms",
                      (long long)backoff.count());
                 std::this_thread::sleep_for(backoff);
                 if (openSerial()) {
                     backoff = 500ms;
-                    logI("SerialMux: reconnected");
+                    log.logInfo("SerialMux: reconnected");
                 } else {
                     backoff = std::min(backoff * 2, backoff_max);
                 }
@@ -266,7 +263,7 @@ private:
             }
 
             if (!readUnits()) {
-                logE("SerialMux: I/O error — closing fd");
+                log.logError("SerialMux: I/O error — closing fd");
                 closeFd();
             }
         }
@@ -318,7 +315,7 @@ private:
 
                 
             } else {
-                logW("SerialMux: bad frame — resyncing");
+                log.logWarn("SerialMux: bad frame — resyncing");
                 unit_pos_ = 0;
             }
         }
@@ -351,26 +348,15 @@ private:
             if (ch->rx_id != rx_id) continue;
             for (size_t i = CAN_ID_BYTES; i < UNIT_BYTES; ++i)
                 if (!ch->ring.push(unit_buf[i]))
-                    logW("SerialMux: ring full rx_id=0x%08X — byte dropped", rx_id);
-            logI("Got info, rx_id=0x%08X", rx_id);
+                    log.logWarn("SerialMux: ring full rx_id=0x%08X — byte dropped", rx_id);
+            log.logInfo("Got info, rx_id=0x%08X", rx_id);
             return;
         }
-        logW("SerialMux: no channel for rx_id=0x%08X — frame dropped", rx_id);
+        log.logWarn("SerialMux: no channel for rx_id=0x%08X — frame dropped", rx_id);
     }
 
-    // ── Logging ───────────────────────────────────────────────────────────────
-    template<typename... A>
-    void logI(const char *f, A&&... a) const { log(log_info_,  f, std::forward<A>(a)...); }
-    template<typename... A>
-    void logW(const char *f, A&&... a) const { log(log_warn_,  f, std::forward<A>(a)...); }
-    template<typename... A>
-    void logE(const char *f, A&&... a) const { log(log_error_, f, std::forward<A>(a)...); }
-    template<typename... A>
-    static void log(const LogFn &fn, const char *fmt, A&&... a) {
-        if (!fn) return;
-        char buf[256]; std::snprintf(buf, sizeof(buf), fmt, std::forward<A>(a)...);
-        fn(buf);
-    }
+
+    Logger log{};
 
     // ── Miembros ──────────────────────────────────────────────────────────────
     std::string           port_;
@@ -383,7 +369,6 @@ private:
     std::thread           reader_thread_;
     std::atomic<bool>     running_{false};
     std::vector<std::unique_ptr<Channel>> channels_;
-    LogFn log_info_{}, log_warn_{}, log_error_{};
 
     // Buffer de sincronización del lector de unidades fijas
     uint8_t unit_buf_[UNIT_BYTES * 2]{};  // x2 para el slide window

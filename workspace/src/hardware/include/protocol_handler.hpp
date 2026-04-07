@@ -14,6 +14,8 @@
 #include "crc.hpp"
 #include "tuple_utils.hpp"
 
+#include "logger.hpp"
+
 // micros / stdclock / deadline_t / LogFn come from the transport header,
 // included transitively. Declare them here too so this file is self-contained
 // when used with a non-I2C transport.
@@ -120,35 +122,13 @@ private:
   std::unordered_map<uint8_t, std::function<void(const uint8_t *, size_t)>>
       instruction_callback{};
 
-  // Log helpers — delegate to Transport::logXxx (inherited via using or friend).
-  // We call them directly since Protocol_Handler inherits Transport's private
-  // log members indirectly — instead, re-expose Transport's setLogger and use
-  // the same LogFn pattern here for protocol-level messages.
-  LogFn proto_log_warn_{};
-  LogFn proto_log_error_{};
-  LogFn proto_log_info_{};
-
-  template<typename... Args>
-  void logInfo (const char *fmt, Args&&... args) const { logDispatch(proto_log_info_,  fmt, std::forward<Args>(args)...); }
-  template<typename... Args>
-  void logWarn (const char *fmt, Args&&... args) const { logDispatch(proto_log_warn_,  fmt, std::forward<Args>(args)...); }
-  template<typename... Args>
-  void logError(const char *fmt, Args&&... args) const { logDispatch(proto_log_error_, fmt, std::forward<Args>(args)...); }
-  template<typename... Args>
-  static void logDispatch(const LogFn &fn, const char *fmt, Args&&... args) {
-    if (!fn) return;
-    char buf[256];
-    std::snprintf(buf, sizeof(buf), fmt, std::forward<Args>(args)...);
-    fn(buf);
-  }
+  Logger log{};
 
 public:
   // Override setLogger to set both Transport and Protocol_Handler loggers.
-  void setLogger(LogFn info, LogFn warn = {}, LogFn error = {}) {
-    proto_log_info_  = info;
-    proto_log_warn_  = warn;
-    proto_log_error_ = error;
-    Transport::setLogger(std::move(info), std::move(warn), std::move(error));
+  void setLogger(Logger &in_log) {
+    log = in_log;
+    Transport::setLogger(log);
   }
 };
 
@@ -275,7 +255,7 @@ bool Protocol_Handler<Transport, ReadEnum, WriteEnum>::readPending(micros timeou
         if (byte == 0xAA) { found = true; break; }
       }
       if (!found) {
-        logWarn("Could not sync to message HEADER: lost %u, total %u",
+        log.logWarn("Could not sync to message HEADER: lost %u, total %u",
                 lost_bytes_, total_attmp_);
         total_attmp_ = 0;
         break;
@@ -288,16 +268,16 @@ bool Protocol_Handler<Transport, ReadEnum, WriteEnum>::readPending(micros timeou
     if (stdclock::now() + timePerMsg >= dl) break;
 
     if (lost_bytes_ > 1)
-      logWarn("Skipped %u bytes in sync", lost_bytes_ - 1);
+      log.logWarn("Skipped %u bytes in sync", lost_bytes_ - 1);
     lost_bytes_    = 0;
     already_synced_ = false;
 
     auto res = readOneMessage(timePerMsg);
     if (res == ReadResult::OK_DISPATCHED) { dispatched_any = true; continue; }
     if (res == ReadResult::NO_MESSAGE)    { break; }
-    if (res == ReadResult::CRC_MISMATCH)  { logWarn("CRC Mismatch"); continue; }
+    if (res == ReadResult::CRC_MISMATCH)  { log.logWarn("CRC Mismatch"); continue; }
 
-    logError("I/O error occurred while reading message");
+    log.logError("I/O error occurred while reading message");
     return false;
   }
   return dispatched_any;
@@ -318,7 +298,7 @@ Protocol_Handler<Transport, ReadEnum, WriteEnum>::readOneMessage(micros timePerM
   const uint8_t length = std::get<2>(msg_head);
 
   if (length > MAX_PAYLOAD_SIZE) {
-    logWarn("Payload length %u exceeds MAX_PAYLOAD_SIZE (%zu) — dropping",
+    log.logWarn("Payload length %u exceeds MAX_PAYLOAD_SIZE (%zu) — dropping",
             static_cast<unsigned>(length), MAX_PAYLOAD_SIZE);
     return ReadResult::IO_ERROR;
   }

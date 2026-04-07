@@ -18,6 +18,7 @@
 #include <poll.h>
 #include <unistd.h>
 
+#include "logger.hpp"
 #include "crc.hpp"
 
 using micros    = std::chrono::microseconds;
@@ -56,10 +57,8 @@ public:
   int                 getSlaveAddress() const { return slave_addr; }
   Transport_Error     getTransportError() const { return transport_error_; }
 
-  void setLogger(LogFn info, LogFn warn = {}, LogFn error = {}) {
-    log_info_  = std::move(info);
-    log_warn_  = std::move(warn);
-    log_error_ = std::move(error);
+  void setLogger(Logger &in_log) {
+    log = in_log;
   }
 
   // ── Internal buffer constants ─────────────────────────────────────────────
@@ -97,24 +96,7 @@ private:
   uint8_t internal_buf[INTERNAL_BUF_SIZE]{};
   size_t  internal_pos { INTERNAL_BUF_SIZE }; // start "full" → first read fetches a chunk
 
-  LogFn log_info_{};
-  LogFn log_warn_{};
-  LogFn log_error_{};
-
-  template<typename... Args>
-  void logInfo (const char *fmt, Args&&... args) const { logDispatch(log_info_,  fmt, std::forward<Args>(args)...); }
-  template<typename... Args>
-  void logWarn (const char *fmt, Args&&... args) const { logDispatch(log_warn_,  fmt, std::forward<Args>(args)...); }
-  template<typename... Args>
-  void logError(const char *fmt, Args&&... args) const { logDispatch(log_error_, fmt, std::forward<Args>(args)...); }
-
-  template<typename... Args>
-  static void logDispatch(const LogFn &fn, const char *fmt, Args&&... args) {
-    if (!fn) return;
-    char buf[256];
-    std::snprintf(buf, sizeof(buf), fmt, std::forward<Args>(args)...);
-    fn(buf);
-  }
+  Logger log{};
 };
 
 // =============================================================================
@@ -158,10 +140,10 @@ inline bool I2C_Transport::connect() {
   if (flock(i2c_fd, LOCK_EX | LOCK_NB) != 0) {
     if (errno == EWOULDBLOCK) {
       transport_error_ = Transport_Error::DEVICE_BUSY;
-      logError("Device is already in use");
+      log.logError("Device is already in use");
     } else {
       transport_error_ = Transport_Error::LOCK_FAILED;
-      logError("Failed to lock file");
+      log.logError("Failed to lock file");
     }
     disconnect();
     return false;
@@ -173,7 +155,7 @@ inline bool I2C_Transport::connect() {
     return false;
   }
 
-  logInfo("Managed to connect %s at %d", device.c_str(), slave_addr);
+  log.logInfo("Managed to connect %s at %d", device.c_str(), slave_addr);
   return true;
 }
 
@@ -182,7 +164,7 @@ inline void I2C_Transport::disconnect() {
     ::close(i2c_fd);
     i2c_fd = -1;
     internal_pos = INTERNAL_BUF_SIZE;  // invalidate cache
-    logInfo("Closed connection to %s at %d", device.c_str(), slave_addr);
+    log.logInfo("Closed connection to %s at %d", device.c_str(), slave_addr);
     if (transport_error_ == Transport_Error::NONE)
       transport_error_ = Transport_Error::CLOSED;
   }
@@ -223,12 +205,12 @@ inline size_t I2C_Transport::writeData(const uint8_t *data, size_t length,
   if (!connected() || length == 0) return 0;
 
   if (stdclock::now() >= deadline) {
-    logWarn("Send timeout (pre-poll) from device %s at address %d (write)",
+    log.logWarn("Send timeout (pre-poll) from device %s at address %d (write)",
             device.c_str(), slave_addr);
     return 0;
   }
   if (!waitFdReady(POLLOUT, deadline)) {
-    logWarn("Send poll timeout/error from device %s at address %d (write)",
+    log.logWarn("Send poll timeout/error from device %s at address %d (write)",
             device.c_str(), slave_addr);
     return 0;
   }
@@ -272,13 +254,13 @@ inline size_t I2C_Transport::readData(uint8_t *buffer, size_t length,
 
   auto doFetch = [&](uint8_t *dest, size_t fetchSize) -> bool {
     if (stdclock::now() >= deadline) {
-      logWarn("Read timeout (pre-poll) from device %s at address %d: "
+      log.logWarn("Read timeout (pre-poll) from device %s at address %d: "
               "expected %zu bytes, got %zu (read)",
               device.c_str(), slave_addr, length, total);
       return false;
     }
     if (!waitFdReady(POLLIN, deadline)) {
-      logWarn("Read poll timeout/error from device %s at address %d: "
+      log.logWarn("Read poll timeout/error from device %s at address %d: "
               "expected %zu bytes, got %zu (read)",
               device.c_str(), slave_addr, length, total);
       return false;
@@ -304,7 +286,7 @@ inline size_t I2C_Transport::readData(uint8_t *buffer, size_t length,
     for (size_t i = 0; i < 2; ++i) {
       iod.msgs = &msgs[i];
       if (ioctl(i2c_fd, I2C_RDWR, &iod) != static_cast<int>(iod.nmsgs)) {
-        logError("I2C ioctl failed: %s", strerror(errno));
+        log.logError("I2C ioctl failed: %s", strerror(errno));
         disconnect();
         transport_error_ = Transport_Error::IOCTL_FAILED;
         return false;

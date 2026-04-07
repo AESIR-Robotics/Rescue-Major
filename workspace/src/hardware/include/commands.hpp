@@ -256,6 +256,7 @@ template <typename T> struct GeneralInstruction : Command {
           oss << static_cast<int>(v);
         else oss << v;
       };
+      (void)print;
       ((print(args), oss << (++n < sizeof...(args) ? ", " : "")), ...);
     }, content);
     oss << ")";

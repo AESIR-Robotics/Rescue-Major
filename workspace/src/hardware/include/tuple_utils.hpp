@@ -3,6 +3,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <string>
+#include <functional>
 #include <tuple>
 #include <type_traits>
 #include <mutex>

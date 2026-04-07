@@ -18,6 +18,8 @@
 #include <linux/can.h>
 #include <linux/can/raw.h>
 
+#include "logger.hpp"
+
 using micros    = std::chrono::microseconds;
 using stdclock  = std::chrono::steady_clock;
 using deadline_t = stdclock::time_point;
@@ -122,10 +124,8 @@ public:
     int                getSlaveAddress()   const { return peer_addr_;       }
     Transport_Error    getTransportError() const { return transport_error_; }
 
-    void setLogger(LogFn info, LogFn warn = {}, LogFn error = {}) {
-        log_info_  = std::move(info);
-        log_warn_  = std::move(warn);
-        log_error_ = std::move(error);
+    void setLogger(Logger &in_log) {
+      log = in_log;
     }
 
 protected:
@@ -175,29 +175,7 @@ private:
     uint8_t     rx_expected_seq_ { 0     };
     bool        rx_in_progress_  { false };
 
-    LogFn log_info_{};
-    LogFn log_warn_{};
-    LogFn log_error_{};
-
-    template<typename... Args>
-    void logInfo(const char *fmt, Args&&... args) const {
-        logDispatch(log_info_, fmt, std::forward<Args>(args)...);
-    }
-    template<typename... Args>
-    void logWarn(const char *fmt, Args&&... args) const {
-        logDispatch(log_warn_, fmt, std::forward<Args>(args)...);
-    }
-    template<typename... Args>
-    void logError(const char *fmt, Args&&... args) const {
-        logDispatch(log_error_, fmt, std::forward<Args>(args)...);
-    }
-    template<typename... Args>
-    static void logDispatch(const LogFn &fn, const char *fmt, Args&&... args) {
-        if (!fn) return;
-        char buf[256];
-        std::snprintf(buf, sizeof(buf), fmt, std::forward<Args>(args)...);
-        fn(buf);
-    }
+    Logger log;
 };
 
 // =============================================================================
@@ -250,7 +228,7 @@ inline bool CAN_Transport::connect() {
     sock_fd_ = socket(PF_CAN, SOCK_RAW, CAN_RAW);
     if (sock_fd_ < 0) {
         transport_error_ = Transport_Error::OPEN_FAILED;
-        logError("CAN socket() failed: %s", strerror(errno));
+        log.logError("CAN socket() failed: %s", strerror(errno));
         return false;
     }
 
@@ -261,7 +239,7 @@ inline bool CAN_Transport::connect() {
     if (setsockopt(sock_fd_, SOL_CAN_RAW, CAN_RAW_FILTER,
                    &rfilter, sizeof(rfilter)) < 0) {
         transport_error_ = Transport_Error::IOCTL_FAILED;
-        logError("CAN_RAW_FILTER setsockopt failed: %s", strerror(errno));
+        log.logError("CAN_RAW_FILTER setsockopt failed: %s", strerror(errno));
         disconnect();
         return false;
     }
@@ -271,7 +249,7 @@ inline bool CAN_Transport::connect() {
     std::strncpy(ifr.ifr_name, interface_.c_str(), IFNAMSIZ - 1);
     if (ioctl(sock_fd_, SIOCGIFINDEX, &ifr) < 0) {
         transport_error_ = Transport_Error::OPEN_FAILED;
-        logError("CAN interface %s not found: %s", interface_.c_str(), strerror(errno));
+        log.logError("CAN interface %s not found: %s", interface_.c_str(), strerror(errno));
         disconnect();
         return false;
     }
@@ -281,7 +259,7 @@ inline bool CAN_Transport::connect() {
     addr.can_ifindex = ifr.ifr_ifindex;
     if (bind(sock_fd_, reinterpret_cast<struct sockaddr *>(&addr), sizeof(addr)) < 0) {
         transport_error_ = Transport_Error::OPEN_FAILED;
-        logError("CAN bind() failed: %s", strerror(errno));
+        log.logError("CAN bind() failed: %s", strerror(errno));
         disconnect();
         return false;
     }
@@ -295,7 +273,7 @@ inline bool CAN_Transport::connect() {
     rx_pos_         = 0;
     rx_in_progress_ = false;
 
-    logInfo("CAN 2.0B connected on %s  tx=0x%08X  rx=0x%08X",
+    log.logInfo("CAN 2.0B connected on %s  tx=0x%08X  rx=0x%08X",
             interface_.c_str(), tx_id_, rx_id_);
     return true;
 }
@@ -306,7 +284,7 @@ inline void CAN_Transport::disconnect() {
         sock_fd_        = -1;
         rx_pos_         = 0;
         rx_in_progress_ = false;
-        logInfo("CAN socket closed on %s", interface_.c_str());
+        log.logInfo("CAN socket closed on %s", interface_.c_str());
         if (transport_error_ == Transport_Error::NONE)
             transport_error_ = Transport_Error::CLOSED;
     }
@@ -351,7 +329,7 @@ inline bool CAN_Transport::sendFrame(const uint8_t *frame_data,
     if (stdclock::now() >= deadline) return false;
 
     if (!waitFdReady(POLLOUT, deadline)) {
-        logWarn("CAN sendFrame: poll timeout on %s", interface_.c_str());
+        log.logWarn("CAN sendFrame: poll timeout on %s", interface_.c_str());
         return false;
     }
 
@@ -362,7 +340,7 @@ inline bool CAN_Transport::sendFrame(const uint8_t *frame_data,
 
     ssize_t sent = ::write(sock_fd_, &frame, sizeof(struct can_frame));
     if (sent != static_cast<ssize_t>(sizeof(struct can_frame))) {
-        logError("CAN write() failed on %s: %s", interface_.c_str(), strerror(errno));
+        log.logError("CAN write() failed on %s: %s", interface_.c_str(), strerror(errno));
         disconnect();
         transport_error_ = Transport_Error::IOCTL_FAILED;
         return false;
@@ -382,7 +360,7 @@ inline uint8_t CAN_Transport::recvFrame(uint8_t *frame_data, deadline_t deadline
         struct can_frame frame{};
         ssize_t nbytes = ::read(sock_fd_, &frame, sizeof(struct can_frame));
         if (nbytes != static_cast<ssize_t>(sizeof(struct can_frame))) {
-            logError("CAN read() failed on %s: %s", interface_.c_str(), strerror(errno));
+            log.logError("CAN read() failed on %s: %s", interface_.c_str(), strerror(errno));
             disconnect();
             transport_error_ = Transport_Error::FD_INVALID;
             return 0;
@@ -477,7 +455,7 @@ inline size_t CAN_Transport::readData(uint8_t *buffer, size_t length,
         // ── SINGLE: complete message in one frame ─────────────────────────
         case seg::TYPE_SINGLE:
             if (rx_in_progress_) {
-                logWarn("CAN RX: SINGLE mid-transfer, discarding previous");
+                log.logWarn("CAN RX: SINGLE mid-transfer, discarding previous");
                 rx_in_progress_ = false;
                 rx_pos_         = 0;
             }
@@ -492,7 +470,7 @@ inline size_t CAN_Transport::readData(uint8_t *buffer, size_t length,
         // ── START: first frame of a multi-frame message ───────────────────
         case seg::TYPE_START:
             if (rx_in_progress_)
-                logWarn("CAN RX: START during transfer, restarting");
+                log.logWarn("CAN RX: START during transfer, restarting");
             rx_in_progress_  = true;
             rx_pos_          = 0;
             rx_expected_seq_ = (seq + 1) & 0x3F;
@@ -501,7 +479,7 @@ inline size_t CAN_Transport::readData(uint8_t *buffer, size_t length,
                 std::memcpy(rx_buf_ + rx_pos_, fdata, datalen);
                 rx_pos_ += datalen;
             } else {
-                logError("CAN RX: assembly buffer overflow on START");
+                log.logError("CAN RX: assembly buffer overflow on START");
                 rx_in_progress_ = false;
                 rx_pos_         = 0;
             }
@@ -510,11 +488,11 @@ inline size_t CAN_Transport::readData(uint8_t *buffer, size_t length,
         // ── CONT: continuation frame ──────────────────────────────────────
         case seg::TYPE_CONT:
             if (!rx_in_progress_) {
-                logWarn("CAN RX: CONT without START, discarding");
+                log.logWarn("CAN RX: CONT without START, discarding");
                 break;
             }
             if (seq != rx_expected_seq_) {
-                logWarn("CAN RX: seq gap on CONT (exp %u got %u), aborting",
+                log.logWarn("CAN RX: seq gap on CONT (exp %u got %u), aborting",
                         rx_expected_seq_, seq);
                 rx_in_progress_  = false;
                 rx_pos_          = 0;
@@ -527,7 +505,7 @@ inline size_t CAN_Transport::readData(uint8_t *buffer, size_t length,
                 std::memcpy(rx_buf_ + rx_pos_, fdata, datalen);
                 rx_pos_ += datalen;
             } else {
-                logError("CAN RX: assembly buffer overflow on CONT");
+                log.logError("CAN RX: assembly buffer overflow on CONT");
                 rx_in_progress_ = false;
                 rx_pos_         = 0;
                 return total;
@@ -537,11 +515,11 @@ inline size_t CAN_Transport::readData(uint8_t *buffer, size_t length,
         // ── END: last frame — flush assembled message ─────────────────────
         case seg::TYPE_END:
             if (!rx_in_progress_) {
-                logWarn("CAN RX: END without START, discarding");
+                log.logWarn("CAN RX: END without START, discarding");
                 break;
             }
             if (seq != rx_expected_seq_) {
-                logWarn("CAN RX: seq gap on END (exp %u got %u), aborting",
+                log.logWarn("CAN RX: seq gap on END (exp %u got %u), aborting",
                         rx_expected_seq_, seq);
                 rx_in_progress_  = false;
                 rx_pos_          = 0;
@@ -554,7 +532,7 @@ inline size_t CAN_Transport::readData(uint8_t *buffer, size_t length,
                 std::memcpy(rx_buf_ + rx_pos_, fdata, datalen);
                 rx_pos_ += datalen;
             } else {
-                logError("CAN RX: assembly buffer overflow on END");
+                log.logError("CAN RX: assembly buffer overflow on END");
                 rx_in_progress_ = false;
                 rx_pos_         = 0;
                 return total;
@@ -571,7 +549,7 @@ inline size_t CAN_Transport::readData(uint8_t *buffer, size_t length,
             return total;
 
         default:
-            logWarn("CAN RX: unknown frame type %u, skipping", type);
+            log.logWarn("CAN RX: unknown frame type %u, skipping", type);
             break;
         }
     }

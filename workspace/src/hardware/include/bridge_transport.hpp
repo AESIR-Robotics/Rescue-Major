@@ -16,6 +16,8 @@
 #include "serial_mux.hpp"
 #include "can_transport.hpp"   // para can_make_id
 
+#include "logger.hpp"
+
 using micros     = std::chrono::microseconds;
 using stdclock   = std::chrono::steady_clock;
 using deadline_t = stdclock::time_point;
@@ -73,10 +75,8 @@ public:
         return channel_ && !channel_->ring.empty();
     }
 
-    void setLogger(LogFn info, LogFn warn = {}, LogFn error = {}) {
-        log_info_  = std::move(info);
-        log_warn_  = std::move(warn);
-        log_error_ = std::move(error);
+    void setLogger(Logger &in_log) {
+        log = in_log;
     }
 
     Transport_Error transport_error_{ Transport_Error::CLOSED };
@@ -140,14 +140,8 @@ private:
     uint32_t                   tx_id_  { 0 };
     uint32_t                   rx_id_  { 0 };
 
-    LogFn log_info_{}, log_warn_{}, log_error_{};
+    Logger log{};
 
-    template<typename... A>
-    void logW(const char *f, A&&... a) const {
-        if (!log_warn_) return;
-        char buf[256]; std::snprintf(buf, sizeof(buf), f, std::forward<A>(a)...);
-        log_warn_(buf);
-    }
 };
 
 // =============================================================================

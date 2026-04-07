@@ -15,7 +15,7 @@
 #include <sys/file.h>
 #include <termios.h>
 
-//#include "crc.hpp"
+#include "logger.hpp"
 
 using micros    = std::chrono::microseconds;
 using stdclock  = std::chrono::steady_clock;
@@ -74,10 +74,8 @@ public:
   int                getSlaveAddress()   const { return 0;                 } // unused for serial
   Transport_Error    getTransportError() const { return transport_error_;  }
 
-  void setLogger(LogFn info, LogFn warn = {}, LogFn error = {}) {
-    log_info_  = std::move(info);
-    log_warn_  = std::move(warn);
-    log_error_ = std::move(error);
+  void setLogger(Logger &in_log) {
+    log = in_log;
   }
 
 protected:
@@ -104,23 +102,7 @@ private:
   uint8_t internal_buf_[INTERNAL_BUF_SIZE]{};
   size_t  internal_pos_ { INTERNAL_BUF_SIZE }; // start "full" → first read fetches bytes
 
-  LogFn log_info_{};
-  LogFn log_warn_{};
-  LogFn log_error_{};
-
-  template<typename... Args>
-  void logInfo (const char *fmt, Args&&... args) const { logDispatch(log_info_,  fmt, std::forward<Args>(args)...); }
-  template<typename... Args>
-  void logWarn (const char *fmt, Args&&... args) const { logDispatch(log_warn_,  fmt, std::forward<Args>(args)...); }
-  template<typename... Args>
-  void logError(const char *fmt, Args&&... args) const { logDispatch(log_error_, fmt, std::forward<Args>(args)...); }
-  template<typename... Args>
-  static void logDispatch(const LogFn &fn, const char *fmt, Args&&... args) {
-    if (!fn) return;
-    char buf[256];
-    std::snprintf(buf, sizeof(buf), fmt, std::forward<Args>(args)...);
-    fn(buf);
-  }
+  Logger log{};
 };
 
 // =============================================================================
@@ -163,7 +145,7 @@ inline bool Serial_Transport::connect() {
   fd_ = open(port_.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
   if (fd_ < 0) {
     transport_error_ = Transport_Error::OPEN_FAILED;
-    logError("Serial open() failed on %s: %s", port_.c_str(), strerror(errno));
+    log.logError("Serial open() failed on %s: %s", port_.c_str(), strerror(errno));
     return false;
   }
 
@@ -171,10 +153,10 @@ inline bool Serial_Transport::connect() {
   if (flock(fd_, LOCK_EX | LOCK_NB) != 0) {
     if (errno == EWOULDBLOCK) {
       transport_error_ = Transport_Error::DEVICE_BUSY;
-      logError("Serial port %s already in use", port_.c_str());
+      log.logError("Serial port %s already in use", port_.c_str());
     } else {
       transport_error_ = Transport_Error::LOCK_FAILED;
-      logError("Serial flock() failed on %s: %s", port_.c_str(), strerror(errno));
+      log.logError("Serial flock() failed on %s: %s", port_.c_str(), strerror(errno));
     }
     disconnect();
     return false;
@@ -182,12 +164,12 @@ inline bool Serial_Transport::connect() {
 
   if (!applyTermios()) {
     transport_error_ = Transport_Error::CONFIG_FAILED;
-    logError("Serial termios config failed on %s", port_.c_str());
+    log.logError("Serial termios config failed on %s", port_.c_str());
     disconnect();
     return false;
   }
 
-  logInfo("Serial connected on %s at %u baud", port_.c_str(), baud_);
+  log.logInfo("Serial connected on %s at %u baud", port_.c_str(), baud_);
   return true;
 }
 
@@ -242,7 +224,7 @@ inline void Serial_Transport::disconnect() {
     ::close(fd_);
     fd_           = -1;
     internal_pos_ = INTERNAL_BUF_SIZE;
-    logInfo("Serial port %s closed", port_.c_str());
+    log.logInfo("Serial port %s closed", port_.c_str());
     if (transport_error_ == Transport_Error::NONE)
       transport_error_ = Transport_Error::CLOSED;
   }
@@ -281,18 +263,18 @@ inline size_t Serial_Transport::writeData(const uint8_t *data, size_t length,
   if (!connected() || !data || length == 0) return 0;
 
   if (stdclock::now() >= deadline) {
-    logWarn("Serial send timeout (pre-poll) on %s", port_.c_str());
+    log.logWarn("Serial send timeout (pre-poll) on %s", port_.c_str());
     return 0;
   }
   if (!waitFdReady(POLLOUT, deadline)) {
-    logWarn("Serial send poll timeout/error on %s", port_.c_str());
+    log.logWarn("Serial send poll timeout/error on %s", port_.c_str());
     return 0;
   }
 
   // Serial is a byte stream — write the entire frame in one call.
   ssize_t sent = ::write(fd_, data, length);
   if (sent < 0) {
-    logError("Serial write() failed on %s: %s", port_.c_str(), strerror(errno));
+    log.logError("Serial write() failed on %s: %s", port_.c_str(), strerror(errno));
     disconnect();
     transport_error_ = Transport_Error::IO_FAILED;
     return 0;
@@ -324,12 +306,12 @@ inline size_t Serial_Transport::readData(uint8_t *buffer, size_t length,
 
   while (remaining > 0) {
     if (stdclock::now() >= deadline) {
-      logWarn("Serial read timeout (pre-poll) on %s: expected %zu got %zu",
+      log.logWarn("Serial read timeout (pre-poll) on %s: expected %zu got %zu",
               port_.c_str(), length, total);
       break;
     }
     if (!waitFdReady(POLLIN, deadline)) {
-      logWarn("Serial read poll timeout/error on %s: expected %zu got %zu",
+      log.logWarn("Serial read poll timeout/error on %s: expected %zu got %zu",
               port_.c_str(), length, total);
       break;
     }
@@ -338,7 +320,7 @@ inline size_t Serial_Transport::readData(uint8_t *buffer, size_t length,
     ssize_t got = ::read(fd_, internal_buf_, INTERNAL_BUF_SIZE);
     if (got < 0) {
       if (errno == EAGAIN || errno == EWOULDBLOCK) continue; // spurious wakeup
-      logError("Serial read() failed on %s: %s", port_.c_str(), strerror(errno));
+      log.logError("Serial read() failed on %s: %s", port_.c_str(), strerror(errno));
       disconnect();
       transport_error_ = Transport_Error::IO_FAILED;
       break;
