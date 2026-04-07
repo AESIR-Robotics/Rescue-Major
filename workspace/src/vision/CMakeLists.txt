@@ -15,7 +15,7 @@ find_package(rclpy REQUIRED)
 find_package(sensor_msgs REQUIRED)  
 find_package(std_msgs REQUIRED)   
 find_package(cv_bridge REQUIRED)
-find_package(OpenCV REQUIRED)
+find_package(OpenCV 4.5.4 EXACT REQUIRED)
 find_package(image_transport REQUIRED)
 find_package(std_srvs REQUIRED)
 find_package(example_interfaces REQUIRED)
@@ -86,11 +86,8 @@ add_dependencies(video_stream_publisher ${PROJECT_NAME}__rosidl_generator_cpp)
 
 install(DIRECTORY
   srv
-  DESTINATION share/${PROJECT_NAME}/
-)
-
-install(DIRECTORY
   launch
+  config
   DESTINATION share/${PROJECT_NAME}/
 )
 

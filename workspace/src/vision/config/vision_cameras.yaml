@@ -1,0 +1,27 @@
+video_stream_publisher:
+  ros__parameters:
+    device: generic
+    cameras_formats: [MJPG, MJPG, YUYV]
+    cameras_devices: ["0", "2"]
+    cameras_widths: [1920, 640, 640]
+    cameras_heights: [1080, 480, 480]
+    cameras_fps: [30, 30, 30]
+    thermal_camera_device: "-1"
+    thermal_enable: false
+
+    pipeline_templates: 
+
+      MJPG: "v4l2src device=/dev/video{dev} ! image/jpeg, width={w}, height={h}, framerate={fps}/1 ! 
+              jpegparse ! nvv4l2decoder mjpeg=1 ! video/x-raw(memory:NVMM) ! nvvidconv ! video/x-raw, 
+              format=BGRx ! videoconvert ! video/x-raw, format=BGR ! appsink drop=true sync=false max-buffer=1"
+    
+      CSI: "nvarguscamerasrc sensor-id={dev} ! video/x-raw(memory:NVMM), width={w}, height={h}, format=NV12, 
+            framerate={fps}/1 ! nvvidconv ! video/x-raw, format=I420 ! appsink drop=true sync=false max-buffer=1"
+      
+      H264: "v4l2src device=/dev/video{dev} ! video/x-h264, width={w}, height={h}, framerate={fps}/1 ! 
+            h264parse ! nvv4l2decoder ! video/x-raw(memory:NVMM) ! nvvidconv ! video/x-raw, format=I420 ! 
+            appsink drop=true sync=false max-buffer=1"
+      
+      YUYV: "v4l2src device=/dev/video{dev} ! video/x-raw, format=YUYV, width={w}, height={h}, framerate={fps}/1 
+            ! nvvidconv ! video/x-raw(memory:NVMM) ! nvvidconv ! video/x-raw, format=I420 ! appsink drop=true 
+            sync=false max-buffer=1"
