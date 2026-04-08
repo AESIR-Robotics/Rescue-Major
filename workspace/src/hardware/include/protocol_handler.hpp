@@ -68,6 +68,7 @@ public:
   // ── Public API ─────────────────────────────────────────────────────────────
 
   bool addCommand(std::unique_ptr<Cmd::Command> &&input);
+  int msgQueued();
 
   /// Flush the outbound queue. Sends at most one full frame per call.
   bool sendQueue(micros timeout = micros(8000), micros timePerMsg = micros(4000));
@@ -183,6 +184,11 @@ bool Protocol_Handler<Transport, ReadEnum, WriteEnum>::addCommand(
 }
 
 template <typename Transport, typename ReadEnum, typename WriteEnum>
+inline int Protocol_Handler<Transport, ReadEnum, WriteEnum>::msgQueued() {
+  return sending.size();
+}
+
+template <typename Transport, typename ReadEnum, typename WriteEnum>
 bool Protocol_Handler<Transport, ReadEnum, WriteEnum>::sendQueue(micros timeout, micros timePerMsg) {
   if (!this->connected()) return false;
 
@@ -193,7 +199,7 @@ bool Protocol_Handler<Transport, ReadEnum, WriteEnum>::sendQueue(micros timeout,
       MAX_PAYLOAD_SIZE + tuple_size(header{}) + tuple_size(tail{});
 
   size_t expectedsize{0};
-  while (!sending.empty() &&
+  while (!sending.empty() && Transport::canSend() &&
          (expectedsize = sending.front()->getPckSize() +
                          tuple_size(header{}) + tuple_size(tail{})) &&
          bytes + expectedsize <= SEND_BUDGET &&

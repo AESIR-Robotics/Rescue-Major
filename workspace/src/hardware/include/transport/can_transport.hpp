@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstring>
 #include <functional>
+#include <memory>
 #include <string>
 
 #include <unistd.h>
@@ -19,6 +20,7 @@
 #include <linux/can/raw.h>
 
 #include "logger.hpp"
+#include "can_iface_manager.hpp"
 
 using micros    = std::chrono::microseconds;
 using stdclock  = std::chrono::steady_clock;
@@ -128,6 +130,12 @@ public:
       log = in_log;
     }
 
+    /// Set the shared interface manager. Call before init() or connect().
+    /// If not set, CAN_Transport manages the interface on its own (legacy).
+    void setIfaceManager(std::shared_ptr<CANIfaceManager> mgr) {
+        iface_mgr_ = std::move(mgr);
+    }
+
 protected:
     // ── Called by Protocol_Handler ──────────────────────────────────────────
 
@@ -135,6 +143,7 @@ protected:
     /// Returns bytes written (0 on failure).
     size_t writeData(const uint8_t *data, size_t length, deadline_t deadline);
 
+    bool canSend();
     bool hasData();
 
     bool assemble(deadline_t deadline);
@@ -148,6 +157,11 @@ protected:
     Transport_Error transport_error_ { Transport_Error::CLOSED };
 
 private:
+
+    void disconnect_priv();
+
+    bool waitWritableUntil(deadline_t deadline);
+
     // ── Segmentation helpers ────────────────────────────────────────────────
     bool    sendFrame(const uint8_t *frame_data, uint8_t frame_len,
                       deadline_t deadline);
@@ -172,6 +186,7 @@ private:
     uint32_t    tx_id_     { 0 };
     uint32_t    rx_id_     { 0 };
     int         sock_fd_   { -1 };
+    std::shared_ptr<CANIfaceManager> iface_mgr_;  ///< shared interface manager
 
     // TX: 6-bit rolling sequence counter
     uint8_t     tx_seq_    { 0 };
@@ -222,13 +237,23 @@ inline bool CAN_Transport::reconnect() {
 }
 
 inline bool CAN_Transport::connect() {
-    disconnect();
+    disconnect_priv();
     transport_error_ = Transport_Error::NONE;
 
     if (!isValidConfig()) {
         transport_error_ = Transport_Error::INVALID_CONFIG;
         log.logError("CAN has invalid config");
         return false;
+    }
+
+    // Bring interface up via shared manager (checks state, avoids redundant ops)
+    if (iface_mgr_) {
+        if (!iface_mgr_->acquire()) {
+            transport_error_ = Transport_Error::OPEN_FAILED;
+            log.logError("CAN: interface manager failed to bring up %s",
+                         interface_.c_str());
+            return false;
+        }
     }
 
     tx_id_ = can_make_id(my_addr_,   peer_addr_, channel_, priority_);
@@ -298,6 +323,20 @@ inline void CAN_Transport::disconnect() {
         if (transport_error_ == Transport_Error::NONE)
             transport_error_ = Transport_Error::CLOSED;
     }
+
+    if (iface_mgr_) iface_mgr_->release();
+}
+
+inline void CAN_Transport::disconnect_priv() {
+    if (sock_fd_ >= 0) {
+        ::close(sock_fd_);
+        sock_fd_        = -1;
+        rx_pos_         = 0;
+        rx_in_progress_ = false;
+        log.logInfo("CAN socket closed on %s", interface_.c_str());
+        if (transport_error_ == Transport_Error::NONE)
+            transport_error_ = Transport_Error::CLOSED;
+    }
 }
 
 inline bool CAN_Transport::isValidConfig() const noexcept {
@@ -326,6 +365,18 @@ inline bool CAN_Transport::waitFdReady(short events, deadline_t deadline) {
         return false;
     }
     return ret > 0 && (pfd.revents & events);
+}
+
+
+inline bool CAN_Transport::canSend() {
+    if (!connected()) return false;
+
+    struct pollfd pfd{ sock_fd_, POLLOUT, 0 };
+
+    // timeout = 0 → no bloquea
+    int ret = poll(&pfd, 1, 0);
+
+    return ret > 0 && (pfd.revents & POLLOUT);
 }
 
 inline bool CAN_Transport::hasData() {
@@ -364,12 +415,37 @@ inline void CAN_Transport::logBufferHex(const Logger& log,
     log.logInfo("%s %s", prefix, hexbuf);
 }
 
+inline bool CAN_Transport::waitWritableUntil(deadline_t deadline) {
+    if (!connected()) return false;
+
+    using namespace std::chrono;
+
+    auto now = stdclock::now();
+    if (now >= deadline) return false;
+
+    // Tiempo restante hasta el deadline
+    auto remaining = duration_cast<microseconds>(deadline - now).count();
+
+    int timeout_ms = static_cast<int>(std::min<long>(remaining, 100)); 
+
+    struct pollfd pfd{ sock_fd_, POLLOUT, 0 };
+
+    int ret = poll(&pfd, 1, timeout_ms);
+
+    if (ret > 0 && (pfd.revents & POLLOUT)) {
+        return true;
+    }
+
+    return false; // timeout o error
+}
+
 // -----------------------------------------------------------------------------
 // sendFrame — transmit one raw CAN 2.0B frame (max 8 bytes)
 // -----------------------------------------------------------------------------
 inline bool CAN_Transport::sendFrame(const uint8_t *frame_data,
                                       uint8_t        frame_len,
                                       deadline_t     deadline) {
+    while(true){
     if (stdclock::now() >= deadline) return false;
 
     if (!waitFdReady(POLLOUT, deadline)) {
@@ -385,12 +461,19 @@ inline bool CAN_Transport::sendFrame(const uint8_t *frame_data,
     ssize_t sent = ::write(sock_fd_, &frame, sizeof(struct can_frame));
     //logBufferHex(log, "Sent:", frame_data, frame_len);
     if (sent != static_cast<ssize_t>(sizeof(struct can_frame))) {
+        if(errno == EAGAIN || errno == ENOBUFS){
+            if (!waitWritableUntil(deadline))
+                return false;
+            continue;
+        }
+
         log.logError("CAN write() failed on %s: %s", interface_.c_str(), strerror(errno));
         disconnect();
         transport_error_ = Transport_Error::IOCTL_FAILED;
         return false;
     }
     return true;
+    }
 }
 
 // -----------------------------------------------------------------------------

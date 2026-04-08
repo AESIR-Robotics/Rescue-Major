@@ -252,7 +252,7 @@ private:
   // Timing counters
   int i2c_poll_ticks_{0};
   int can_poll_ticks_{0};
-  static constexpr int feedback_poll_interval_ticks_{4};
+  static constexpr int feedback_poll_interval_ticks_{10};
 
   int ticks_since_feedback_publish_joint_{0};
   static constexpr int feedback_publish_joint_interval_ticks_{250};
@@ -303,7 +303,7 @@ private:
 inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
   this->declare_parameter<std::string>("i2c_port", "/dev/i2c-7");
   this->declare_parameter<int>("i2c_address", 0x30);
-  this->declare_parameter<std::string>("can_interface", "can0");
+  this->declare_parameter<std::string>("can_interface", "can1");
   this->declare_parameter<std::vector<int>>(
       "steps_per_rev",
       {40000, 40000, 40000, 40000, 40000, 40000, 40000, 5000, 5000, 5000, 400});
@@ -358,10 +358,13 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
   mux_ = std::make_shared<SerialMux>();
   mux_->init(bridge_port, static_cast<uint32_t>(bridge_baud),
       logger); //*/
+  
+  auto can_mgr = std::make_shared<CANIfaceManager>("can1", 500000);
+  can_mgr->setLogger(logger);
 
   for (int i = 0; i < number_arms; ++i) {
       stepper_arms[i].setLogger(logger);
-
+      stepper_arms[i].setIfaceManager(can_mgr);
       // Register channel in mux — my addr offset per arm, peer = arm index
       stepper_arms[i].init(can_interface, /*my=*/static_cast<uint8_t>(0x00 - i - 1),
                                   /*peer=*/static_cast<uint8_t>(i + 1), /*channel=*/0);

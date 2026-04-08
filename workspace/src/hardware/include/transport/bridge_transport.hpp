@@ -70,6 +70,16 @@ public:
         return ok;
     }
 
+    // Add better feedback on to when they can send
+    // And avoid accidentally not giving priority to other channels 
+    // the same mux. 
+    // (If a lot of devices try to send and the first few block the mux
+    // then they will always block it before other ones get a chance of sending
+    // essentially blocking them from ever sending through the mux)
+    bool canSend() const {
+        return true;
+    }
+
     // ── hasData — consultado por Protocol_Handler antes del sync scan ─────────
     bool hasData() const {
         return channel_ && !channel_->ring.empty();

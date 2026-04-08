@@ -82,6 +82,9 @@ protected:
   size_t writeData(const uint8_t *data, size_t length, deadline_t deadline);
   size_t readData (uint8_t *buffer, size_t length, deadline_t deadline);
 
+  bool canSend();
+  bool hasData();
+
   void disconnect();
 
   Transport_Error transport_error_ { Transport_Error::CLOSED };
@@ -256,6 +259,28 @@ inline bool Serial_Transport::waitFdReady(short events, deadline_t deadline) {
     return false;
   }
   return ret > 0 && (pfd.revents & events);
+}
+
+
+inline bool Serial_Transport::canSend() {
+    if (!connected()) return false;
+
+    struct pollfd pfd{ fd_, POLLOUT, 0 };
+
+    // timeout = 0 → no bloquea
+    int ret = poll(&pfd, 1, 0);
+
+    return ret > 0 && (pfd.revents & POLLOUT);
+}
+
+inline bool Serial_Transport::hasData() {
+    if (!connected()) return false;
+    // If there are already assembled bytes ready to read, return immediately
+    if (internal_pos_ < INTERNAL_BUF_SIZE) return true;
+    // Non-blocking poll — 0 timeout means return instantly
+    struct pollfd pfd{ fd_, POLLIN, 0 };
+    int ret = poll(&pfd, 1, 0);
+    return ret > 0 && (pfd.revents & POLLIN);
 }
 
 inline size_t Serial_Transport::writeData(const uint8_t *data, size_t length,

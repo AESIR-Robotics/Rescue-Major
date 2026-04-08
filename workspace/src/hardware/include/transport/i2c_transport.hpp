@@ -74,6 +74,7 @@ protected:
   /// Write `length` bytes in a single ioctl. Returns bytes written (0 on fail).
   size_t writeData(const uint8_t *data, size_t length, deadline_t deadline);
 
+  bool canSend();
   bool hasData();
   /// Read `length` bytes using the internal cache + skip protocol.
   /// Returns bytes read (may be < length on timeout or bus error).
@@ -198,7 +199,9 @@ inline bool I2C_Transport::waitFdReady(short events, deadline_t deadline) {
   return ret > 0 && (pfd.revents & events);
 }
 
-inline bool I2C_Transport::hasData(){return true;}
+inline bool I2C_Transport::canSend() { return true; }
+
+inline bool I2C_Transport::hasData() { return true; }
 
 inline size_t I2C_Transport::writeData(const uint8_t *data, size_t length, 
                                         deadline_t deadline) {
