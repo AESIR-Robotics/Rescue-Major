@@ -360,6 +360,7 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
       logger); //*/
 
   for (int i = 0; i < number_arms; ++i) {
+      logger.logInfo("Entering config for arm %i", i);
       stepper_arms[i].setLogger(logger);
 
       // Register channel in mux — my addr offset per arm, peer = arm index
