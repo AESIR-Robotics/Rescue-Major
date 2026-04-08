@@ -27,7 +27,7 @@
 
 //#include "bridge_transport.hpp"
 
-#include "serial_mux.hpp"
+#include "transport/serial_mux.hpp"
 #include "tuple_utils.hpp"
 
 #include "logger.hpp"
@@ -303,7 +303,7 @@ private:
 inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
   this->declare_parameter<std::string>("i2c_port", "/dev/i2c-7");
   this->declare_parameter<int>("i2c_address", 0x30);
-  this->declare_parameter<std::string>("can_interface", "can1");
+  this->declare_parameter<std::string>("can_interface", "can0");
   this->declare_parameter<std::vector<int>>(
       "steps_per_rev",
       {40000, 40000, 40000, 40000, 40000, 40000, 40000, 5000, 5000, 5000, 400});
@@ -377,7 +377,7 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
           auto &[p0] = info;
           feedback_arms.setPosition(i, stepsToRad(p0, 4 + i));
           feedback_arms.stampFeedback(this->now());
-          logger.logInfo("Position feedback for arm %i: %i", i, p0);
+          //logger.logInfo("Position feedback for arm %i: %i", i, p0);
         }, loggerLocal));
 
 
@@ -386,7 +386,7 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
         Cmd::make_callback<Read::SPEED>([this, i](const auto &info) {
           auto &[s0] = info;
           feedback_arms.setSpeed(i, stepsToRadRate(s0, 4 + i));
-          logger.logInfo( "Speed feedback for arm %i: %f", i, s0);
+          //logger.logInfo( "Speed feedback for arm %i: %f", i, s0);
         }, loggerLocal));
 
       stepper_arms[i].read_callbacks.emplace(
@@ -394,7 +394,7 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
         Cmd::make_callback<Read::ACCEL>([this, i](const auto &info) {
           auto &[a0] = info;
           feedback_arms.setAcceleration(i, stepsToRadRate(a0, 4 + i));
-          logger.logInfo("Accel feedback for arm %i: %f", i, a0);
+          //logger.logInfo("Accel feedback for arm %i: %f", i, a0);
         }, loggerLocal));
   }
 

@@ -135,19 +135,19 @@ public:
 // =============================================================================
 // Convenience alias — the only concrete type callers should use directly
 // =============================================================================
-#include "i2c_transport.hpp"
+#include "transport/i2c_transport.hpp"
 template<typename ReadID = Cmd::Teensy::Read, typename WriteID = Cmd::Teensy::Write>
 using Protocol_Handler_I2C = Protocol_Handler<I2C_Transport, ReadID, WriteID>;
 
 
-#include "can_transport.hpp"
+#include "transport/can_transport.hpp"
 // CAN_Transport does not use flock — each instance opens its own socket
 // and uses a hardware RX filter (rx_id) for isolation. Multiple instances
 // on the same interface are safe because the kernel routes frames by ID.
 template<typename ReadID = Cmd::ESP32::Read, typename WriteID = Cmd::ESP32::Write>
 using Protocol_Handler_CAN = Protocol_Handler<CAN_Transport, ReadID, WriteID>;
 
-#include "serial_transport.hpp"
+#include "transport/serial_transport.hpp"
 template<typename ReadID = Cmd::Teensy::Read, typename WriteID = Cmd::Teensy::Write>
 using Protocol_Handler_SERIAL = Protocol_Handler<Serial_Transport, ReadID, WriteID>;
 
@@ -255,8 +255,8 @@ bool Protocol_Handler<Transport, ReadEnum, WriteEnum>::readPending(micros timeou
         if (byte == 0xAA) { found = true; break; }
       }
       if (!found) {
-        //log.logWarn("Could not sync to message HEADER: lost %u, total %u",
-        //        lost_bytes_, total_attmp_);
+        log.logWarn("Could not sync to message HEADER: lost %u, total %u",
+                lost_bytes_, total_attmp_);
         total_attmp_ = 0;
         break;
       }
@@ -308,7 +308,9 @@ Protocol_Handler<Transport, ReadEnum, WriteEnum>::readOneMessage(micros timePerM
   if (num != static_cast<size_t>(length + 1)) return ReadResult::IO_ERROR;
 
   uint8_t recv_crc       = out_buffer[length];
+
   auto    calculated_crc = getMsgCRC(msg_head, out_buffer.data(), length);
+
   if (recv_crc != calculated_crc) return ReadResult::CRC_MISMATCH;
 
   dispatchInput(inst, out_buffer.data(), length);

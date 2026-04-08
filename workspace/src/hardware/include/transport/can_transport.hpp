@@ -99,7 +99,7 @@ public:
     };
 
     // Reassembly scratch buffer.  Increase if messages exceed this size.
-    static constexpr size_t INTERNAL_BUF_SIZE = 256;
+    static constexpr size_t INTERNAL_BUF_SIZE = 255;
 
     explicit CAN_Transport(const std::string &interface = "",
                            uint8_t  my_addr   = 0x00,
@@ -136,6 +136,8 @@ protected:
     size_t writeData(const uint8_t *data, size_t length, deadline_t deadline);
 
     bool hasData();
+
+    bool assemble(deadline_t deadline);
 
     /// Receive and reassemble segmented CAN 2.0B frames into `buffer`.
     /// Returns bytes copied.
@@ -176,9 +178,11 @@ private:
 
     // RX reassembly state
     uint8_t     rx_buf_[INTERNAL_BUF_SIZE]{};
-    size_t      rx_pos_          { 0     };
-    uint8_t     rx_expected_seq_ { 0     };
-    bool        rx_in_progress_  { false };
+    size_t      rx_pos_            { 0     };
+    size_t      read_pos_          { 0     };
+    uint8_t     rx_expected_seq_   { 0     };
+    bool        rx_in_progress_    { false };
+
 
     Logger log{};
 };
@@ -324,7 +328,15 @@ inline bool CAN_Transport::waitFdReady(short events, deadline_t deadline) {
     return ret > 0 && (pfd.revents & events);
 }
 
-inline bool CAN_Transport::hasData() { return true; }
+inline bool CAN_Transport::hasData() {
+    if (!connected()) return false;
+    // If there are already assembled bytes ready to read, return immediately
+    if (read_pos_ < rx_pos_) return true;
+    // Non-blocking poll — 0 timeout means return instantly
+    struct pollfd pfd{ sock_fd_, POLLIN, 0 };
+    int ret = poll(&pfd, 1, 0);
+    return ret > 0 && (pfd.revents & POLLIN);
+}
 
 
 inline void CAN_Transport::logBufferHex(const Logger& log,
@@ -371,7 +383,7 @@ inline bool CAN_Transport::sendFrame(const uint8_t *frame_data,
     std::memcpy(frame.data, frame_data, frame_len);
 
     ssize_t sent = ::write(sock_fd_, &frame, sizeof(struct can_frame));
-    logBufferHex(log, "Sent:", frame_data, frame_len);
+    //logBufferHex(log, "Sent:", frame_data, frame_len);
     if (sent != static_cast<ssize_t>(sizeof(struct can_frame))) {
         log.logError("CAN write() failed on %s: %s", interface_.c_str(), strerror(errno));
         disconnect();
@@ -399,7 +411,7 @@ inline uint8_t CAN_Transport::recvFrame(uint8_t *frame_data, deadline_t deadline
             return 0;
         }
 
-        logBufferHex(log, "Read:", frame.data, frame.can_dlc);
+        // logBufferHex(log, "Read:", frame.data, frame.can_dlc);
 
         // Double-check ID (hardware filter should already guarantee this)
         if ((frame.can_id & CAN_EFF_MASK) != (rx_id_ & CAN_EFF_MASK)) continue;
@@ -459,6 +471,114 @@ inline size_t CAN_Transport::writeData(const uint8_t *data, size_t length,
     return length;
 }
 
+
+inline bool CAN_Transport::assemble(deadline_t deadline){
+    
+    uint8_t frame_buf[CAN_MAX_DLEN];
+
+    uint8_t dlc = recvFrame(frame_buf, deadline);
+    if (dlc < 1) return false;  // timeout or socket errors
+
+    uint8_t  header  = frame_buf[0];
+    uint8_t  type    = seg::frame_type(header);
+    uint8_t  seq     = seg::frame_seq(header);
+    uint8_t  datalen = static_cast<uint8_t>(dlc - 1);
+    uint8_t *fdata   = frame_buf + 1;
+
+    switch (type) {
+    // ── SINGLE: complete message in one frame ─────────────────────────
+    case seg::TYPE_SINGLE:
+        if (rx_in_progress_)
+            log.logWarn("CAN RX: SINGLE mid-transfer, discarding previous");
+        rx_in_progress_  = false;   // no multi-frame in progress
+        rx_expected_seq_ = (seq + 1) & 0x3F;
+        if (datalen > INTERNAL_BUF_SIZE) {
+            log.logError("CAN RX: SINGLE frame overflow");
+            return false;
+        }
+        std::memcpy(rx_buf_, fdata, datalen);
+        rx_pos_  = datalen;
+        read_pos_ = 0;
+        return true;
+
+    // ── START: first frame of a multi-frame message ───────────────────
+    case seg::TYPE_START:
+        if (rx_in_progress_)
+            log.logWarn("CAN RX: START during transfer, restarting");
+        rx_in_progress_  = true;
+        rx_pos_          = 0;
+        read_pos_        = 0;
+        rx_expected_seq_ = (seq + 1) & 0x3F;
+        if (datalen > INTERNAL_BUF_SIZE) {
+            log.logError("CAN RX: assembly buffer overflow on START");
+            rx_in_progress_ = false;
+            return false;
+        }
+        std::memcpy(rx_buf_, fdata, datalen);
+        rx_pos_ = datalen;
+        return false;   
+
+    // ── CONT: continuation frame ──────────────────────────────────────
+    case seg::TYPE_CONT:
+        if (!rx_in_progress_) {
+            log.logWarn("CAN RX: CONT without START, discarding");
+            return false;
+        }
+        if (seq != rx_expected_seq_) {
+            log.logWarn("CAN RX: seq gap on CONT (exp %u got %u), aborting",
+                    rx_expected_seq_, seq);
+            rx_in_progress_  = false;
+            rx_pos_          = 0;
+            transport_error_ = Transport_Error::SEG_ERROR;
+            return false;
+        }
+        rx_expected_seq_ = (seq + 1) & 0x3F;
+        if (rx_pos_ + datalen > INTERNAL_BUF_SIZE) {
+            log.logError("CAN RX: assembly buffer overflow on CONT");
+            rx_in_progress_ = false;
+            rx_pos_         = 0;
+            return false;
+        }
+        std::memcpy(rx_buf_ + rx_pos_, fdata, datalen);
+        rx_pos_ += datalen;
+        return false;   
+
+    // ── END: last frame — message complete ───────────────────────────
+    case seg::TYPE_END:
+        if (!rx_in_progress_) {
+            log.logWarn("CAN RX: END without START, discarding");
+            return false;
+        }
+        if (seq != rx_expected_seq_) {
+            log.logWarn("CAN RX: seq gap on END (exp %u got %u), aborting",
+                    rx_expected_seq_, seq);
+            rx_in_progress_  = false;
+            rx_pos_          = 0;
+            transport_error_ = Transport_Error::SEG_ERROR;
+            return false;
+        }
+        if (rx_pos_ + datalen > INTERNAL_BUF_SIZE) {
+            log.logError("CAN RX: assembly buffer overflow on END");
+            rx_in_progress_ = false;
+            rx_pos_         = 0;
+            return false;
+        }
+        std::memcpy(rx_buf_ + rx_pos_, fdata, datalen);
+        rx_pos_         += datalen;
+        rx_in_progress_  = false;   
+        read_pos_        = 0;
+        return true; 
+
+    default:
+        log.logWarn("CAN RX: unknown frame type %u, skipping", type);
+        return false;
+    }
+
+    return false;
+        
+}
+
+
 // -----------------------------------------------------------------------------
 // readData — receive and reassemble segmented CAN 2.0B frames
 //
@@ -468,125 +588,31 @@ inline size_t CAN_Transport::writeData(const uint8_t *data, size_t length,
 //
 // Returns total bytes written to `buffer`.
 // -----------------------------------------------------------------------------
-inline size_t CAN_Transport::readData(uint8_t *buffer, size_t length,
-                                       deadline_t deadline) {
+inline size_t CAN_Transport::readData(uint8_t *buffer, size_t length, deadline_t deadline) {
     if (!connected() || !buffer || length == 0) return 0;
 
-    uint8_t frame_buf[CAN_MAX_DLEN];
-    size_t  total = 0;
+    size_t total = 0;
 
     while (total < length) {
-        uint8_t dlc = recvFrame(frame_buf, deadline);
-        if (dlc < 1) break;  // timeout or socket error
+        
+        if (read_pos_ >= rx_pos_) {
+            read_pos_ = 0;
+            rx_pos_   = 0;
 
-        uint8_t  header  = frame_buf[0];
-        uint8_t  type    = seg::frame_type(header);
-        uint8_t  seq     = seg::frame_seq(header);
-        uint8_t  datalen = static_cast<uint8_t>(dlc - 1);
-        uint8_t *fdata   = frame_buf + 1;
-
-        switch (type) {
-
-        // ── SINGLE: complete message in one frame ─────────────────────────
-        case seg::TYPE_SINGLE:
-            if (rx_in_progress_) {
-                log.logWarn("CAN RX: SINGLE mid-transfer, discarding previous");
-                rx_in_progress_ = false;
-                rx_pos_         = 0;
+            bool complete = false;
+            while (!complete) {
+                complete = assemble(deadline);
+                if (!complete && !rx_in_progress_) {
+                    return total;
+                }
             }
-            rx_expected_seq_ = (seq + 1) & 0x3F;
-            {
-                size_t to_copy = std::min(static_cast<size_t>(datalen), length - total);
-                std::memcpy(buffer + total, fdata, to_copy);
-                total += to_copy;
-            }
-            return total;
-
-        // ── START: first frame of a multi-frame message ───────────────────
-        case seg::TYPE_START:
-            if (rx_in_progress_)
-                log.logWarn("CAN RX: START during transfer, restarting");
-            rx_in_progress_  = true;
-            rx_pos_          = 0;
-            rx_expected_seq_ = (seq + 1) & 0x3F;
-
-            if (rx_pos_ + datalen <= INTERNAL_BUF_SIZE) {
-                std::memcpy(rx_buf_ + rx_pos_, fdata, datalen);
-                rx_pos_ += datalen;
-            } else {
-                log.logError("CAN RX: assembly buffer overflow on START");
-                rx_in_progress_ = false;
-                rx_pos_         = 0;
-            }
-            break;
-
-        // ── CONT: continuation frame ──────────────────────────────────────
-        case seg::TYPE_CONT:
-            if (!rx_in_progress_) {
-                log.logWarn("CAN RX: CONT without START, discarding");
-                break;
-            }
-            if (seq != rx_expected_seq_) {
-                log.logWarn("CAN RX: seq gap on CONT (exp %u got %u), aborting",
-                        rx_expected_seq_, seq);
-                rx_in_progress_  = false;
-                rx_pos_          = 0;
-                transport_error_ = Transport_Error::SEG_ERROR;
-                return total;
-            }
-            rx_expected_seq_ = (seq + 1) & 0x3F;
-
-            if (rx_pos_ + datalen <= INTERNAL_BUF_SIZE) {
-                std::memcpy(rx_buf_ + rx_pos_, fdata, datalen);
-                rx_pos_ += datalen;
-            } else {
-                log.logError("CAN RX: assembly buffer overflow on CONT");
-                rx_in_progress_ = false;
-                rx_pos_         = 0;
-                return total;
-            }
-            break;
-
-        // ── END: last frame — flush assembled message ─────────────────────
-        case seg::TYPE_END:
-            if (!rx_in_progress_) {
-                log.logWarn("CAN RX: END without START, discarding");
-                break;
-            }
-            if (seq != rx_expected_seq_) {
-                log.logWarn("CAN RX: seq gap on END (exp %u got %u), aborting",
-                        rx_expected_seq_, seq);
-                rx_in_progress_  = false;
-                rx_pos_          = 0;
-                transport_error_ = Transport_Error::SEG_ERROR;
-                return total;
-            }
-            rx_expected_seq_ = (seq + 1) & 0x3F;
-
-            if (rx_pos_ + datalen <= INTERNAL_BUF_SIZE) {
-                std::memcpy(rx_buf_ + rx_pos_, fdata, datalen);
-                rx_pos_ += datalen;
-            } else {
-                log.logError("CAN RX: assembly buffer overflow on END");
-                rx_in_progress_ = false;
-                rx_pos_         = 0;
-                return total;
-            }
-
-            // Deliver assembled message to caller
-            {
-                size_t to_copy = std::min(rx_pos_, length - total);
-                std::memcpy(buffer + total, rx_buf_, to_copy);
-                total          += to_copy;
-                rx_pos_         = 0;
-                rx_in_progress_ = false;
-            }
-            return total;
-
-        default:
-            log.logWarn("CAN RX: unknown frame type %u, skipping", type);
-            break;
         }
+
+        size_t available = rx_pos_ - read_pos_;
+        size_t to_copy   = std::min(available, length - total);
+        std::memcpy(buffer + total, rx_buf_ + read_pos_, to_copy);
+        read_pos_ += to_copy; 
+        total     += to_copy;
     }
 
     return total;
