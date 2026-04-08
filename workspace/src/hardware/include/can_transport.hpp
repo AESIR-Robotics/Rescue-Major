@@ -151,6 +151,11 @@ private:
                       deadline_t deadline);
     uint8_t recvFrame(uint8_t *frame_data, deadline_t deadline);
 
+    void logBufferHex(const Logger& log,
+                         const char* prefix,
+                         const uint8_t* data,
+                         uint8_t len);
+
     // ── Socket helpers ──────────────────────────────────────────────────────
     bool isValidConfig() const noexcept;
     bool waitFdReady(short events, deadline_t deadline);
@@ -175,7 +180,7 @@ private:
     uint8_t     rx_expected_seq_ { 0     };
     bool        rx_in_progress_  { false };
 
-    Logger log;
+    Logger log{};
 };
 
 // =============================================================================
@@ -218,6 +223,7 @@ inline bool CAN_Transport::connect() {
 
     if (!isValidConfig()) {
         transport_error_ = Transport_Error::INVALID_CONFIG;
+        log.logError("CAN has invalid config");
         return false;
     }
 
@@ -320,6 +326,32 @@ inline bool CAN_Transport::waitFdReady(short events, deadline_t deadline) {
 
 inline bool CAN_Transport::hasData() { return true; }
 
+
+inline void CAN_Transport::logBufferHex(const Logger& log,
+                         const char* prefix,
+                         const uint8_t* data,
+                         uint8_t len)
+{
+    if (!data || len == 0) {
+        log.logInfo("%s <empty>", prefix);
+        return;
+    }
+
+    char hexbuf[3 * 8 + 1]; // hasta 8 bytes: "FF " * 8 + '\0'
+    int pos = 0;
+
+    for (uint8_t i = 0; i < len && i < 8; ++i) {
+        pos += std::snprintf(hexbuf + pos,
+                             sizeof(hexbuf) - pos,
+                             (i == len - 1) ? "%02X" : "%02X ",
+                             data[i]);
+    }
+
+    hexbuf[pos] = '\0';
+
+    log.logInfo("%s %s", prefix, hexbuf);
+}
+
 // -----------------------------------------------------------------------------
 // sendFrame — transmit one raw CAN 2.0B frame (max 8 bytes)
 // -----------------------------------------------------------------------------
@@ -339,6 +371,7 @@ inline bool CAN_Transport::sendFrame(const uint8_t *frame_data,
     std::memcpy(frame.data, frame_data, frame_len);
 
     ssize_t sent = ::write(sock_fd_, &frame, sizeof(struct can_frame));
+    logBufferHex(log, "Sent:", frame_data, frame_len);
     if (sent != static_cast<ssize_t>(sizeof(struct can_frame))) {
         log.logError("CAN write() failed on %s: %s", interface_.c_str(), strerror(errno));
         disconnect();
@@ -365,6 +398,8 @@ inline uint8_t CAN_Transport::recvFrame(uint8_t *frame_data, deadline_t deadline
             transport_error_ = Transport_Error::FD_INVALID;
             return 0;
         }
+
+        logBufferHex(log, "Read:", frame.data, frame.can_dlc);
 
         // Double-check ID (hardware filter should already guarantee this)
         if ((frame.can_id & CAN_EFF_MASK) != (rx_id_ & CAN_EFF_MASK)) continue;

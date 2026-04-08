@@ -217,7 +217,7 @@ private:
 
   Protocol_Handler_I2C<> stepper_micro;
   std::array<Protocol_Handler_CAN<>, number_arms> stepper_arms;
-  std::shared_ptr<SerialMux> mux_;   ///< Shared serial resource for all arm bridges
+  //std::shared_ptr<SerialMux> mux_;   ///< Shared serial resource for all arm bridges
 
   // Steps per revolution and home offset per joint.
   // Index 0-3 = flippers (I2C), 4-10 = arms (CAN).
@@ -303,7 +303,7 @@ private:
 inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
   this->declare_parameter<std::string>("i2c_port", "/dev/i2c-7");
   this->declare_parameter<int>("i2c_address", 0x30);
-  //this->declare_parameter<std::string>("can_interface", "can0");
+  this->declare_parameter<std::string>("can_interface", "can1");
   this->declare_parameter<std::vector<int>>(
       "steps_per_rev",
       {40000, 40000, 40000, 40000, 40000, 40000, 40000, 5000, 5000, 5000, 400});
@@ -343,7 +343,7 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
         [this](const std::string &msg) { RCLCPP_WARN( get_logger(), "%s", msg.c_str()); },
        [this](const std::string &msg) { RCLCPP_ERROR(get_logger(), "%s", msg.c_str()); });
 
-  stepper_micro.setLogger(logger);
+  //stepper_micro.setLogger(logger);
 
   stepper_micro.init(i2c_port_, slave_addr_);
 
@@ -360,7 +360,6 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
       logger); //*/
 
   for (int i = 0; i < number_arms; ++i) {
-      logger.logInfo("Entering config for arm %i", i);
       stepper_arms[i].setLogger(logger);
 
       // Register channel in mux — my addr offset per arm, peer = arm index
@@ -400,7 +399,7 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
   }
 
   // All channels registered — start mux reader thread
-  mux_->startReader();
+  //mux_->startReader();
 
   generateCallbacks();
 

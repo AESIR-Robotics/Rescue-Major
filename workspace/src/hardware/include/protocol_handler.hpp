@@ -255,8 +255,8 @@ bool Protocol_Handler<Transport, ReadEnum, WriteEnum>::readPending(micros timeou
         if (byte == 0xAA) { found = true; break; }
       }
       if (!found) {
-        log.logWarn("Could not sync to message HEADER: lost %u, total %u",
-                lost_bytes_, total_attmp_);
+        //log.logWarn("Could not sync to message HEADER: lost %u, total %u",
+        //        lost_bytes_, total_attmp_);
         total_attmp_ = 0;
         break;
       }
