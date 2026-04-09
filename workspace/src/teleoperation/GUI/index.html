@@ -173,6 +173,19 @@
                     Servidor
                 </button>
             </div>
+            
+            <div class="btn-group" style="display: flex; align-items: center; background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 2px 6px; margin-left: 8px;">
+                <select id="keymap-slot-1" onchange="handleSlotChange(1, this)" style="background: var(--bg-0); color: var(--text-1); border: 1px solid #0dcaf0; border-radius: 4px; padding: 2px; font-size: 11px; outline: none; margin-right: 5px; max-width: 65px;"></select>
+                
+                <button class="btn btn-sm btn-info" onclick="toggleKeymapProfile()" title="Alternar perfiles" style="padding: 2px 6px; font-size: 11px; display: flex; align-items: center; border-radius: 4px; gap: 3px; color: #000000 !important;">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 -960 960 960" fill="currentColor">
+                        <path d="M280-160 80-360l200-200 56 57-103 103h607v80H233l103 103-56 57Zm400-240-56-57 103-103H120v-80h607L624-743l56-57 200 200-200 200Z"/>
+                    </svg>
+                    <span id="current-profile-label">Act.</span>
+                </button>
+                
+                <select id="keymap-slot-2" onchange="handleSlotChange(2, this)" style="background: var(--bg-0); color: var(--text-1); border: 1px solid var(--border); border-radius: 4px; padding: 2px; font-size: 11px; outline: none; margin-left: 5px; max-width: 65px;"></select>
+            </div>
         </div>
 
         <div class="top-bar-tools">

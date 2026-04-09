@@ -304,6 +304,42 @@ class InputHandler {
   let flipperAcceleration = 0.5;
   let dcMotorVelocity = 1.0;
 
+  let allKeymapProfiles = {};
+  let currentKeymapProfile = "default";
+  let activeSlot = 1;
+
+  window.handleSlotChange = function(slotNum, selectElem) {
+    if (activeSlot === slotNum) {
+       currentKeymapProfile = selectElem.value;
+       inputHandler.actionMap = {};
+       inputHandler.loadActions(allKeymapProfiles[currentKeymapProfile]);
+       const profileLabel = document.getElementById("current-profile-label");
+       if (profileLabel) { profileLabel.textContent = "Activo: " + currentKeymapProfile; }
+       log(`Controles actualizados al perfil: ${currentKeymapProfile}`);
+    }
+  };
+
+  window.toggleKeymapProfile = function() {
+    const slot1 = document.getElementById("keymap-slot-1");
+    const slot2 = document.getElementById("keymap-slot-2");
+    if (!slot1 || !slot2) return;
+    
+    activeSlot = activeSlot === 1 ? 2 : 1;
+    const newProfile = activeSlot === 1 ? slot1.value : slot2.value;
+    
+    currentKeymapProfile = newProfile;
+    inputHandler.actionMap = {};
+    inputHandler.loadActions(allKeymapProfiles[currentKeymapProfile]);
+    
+    slot1.style.borderColor = activeSlot === 1 ? "#0dcaf0" : "#495057";
+    slot2.style.borderColor = activeSlot === 2 ? "#0dcaf0" : "#495057";
+    const profileLabel = document.getElementById("current-profile-label");
+    if (profileLabel) { profileLabel.textContent = "Activo: " + currentKeymapProfile; }
+    
+    log(`Se cambió al Slot ${activeSlot} (${currentKeymapProfile})`);
+  };
+
+
   function initializeROS(rosbridgeHost = location.hostname, rosbridgePort = 9090) {
     if (typeof ROSLIB === 'undefined') {
       log('ERROR: ROSLIB not loaded');
@@ -346,11 +382,31 @@ class InputHandler {
       setupSliders();
       
       // Load keyboard keymaps for other functions
-      fetch('static/keys_map_keyboard.json')
+      fetch('static/keymaps.json')
         .then(r => r.json())
-        .then(config => {
-          inputHandler.loadActions(config);
-          log(`Keyboard actions loaded: ${Object.keys(inputHandler.actionMap).length} mappings`);
+        .then(profiles => {
+          allKeymapProfiles = profiles;
+          inputHandler.loadActions(allKeymapProfiles[currentKeymapProfile]);
+          log(`Keyboard profiles loaded (${Object.keys(profiles).length}). Start active: ${currentKeymapProfile}`);
+          const select1 = document.getElementById("keymap-slot-1");
+          const select2 = document.getElementById("keymap-slot-2");
+          if (select1 && select2) {
+            select1.innerHTML = "";
+            select2.innerHTML = "";
+            Object.keys(profiles).forEach(key => {
+              const opt1 = document.createElement("option");
+              opt1.value = key;
+              opt1.textContent = key;
+              select1.appendChild(opt1);
+              const opt2 = document.createElement("option");
+              opt2.value = key;
+              opt2.textContent = key;
+              select2.appendChild(opt2);
+            });
+            // Default select values if available
+            if (profiles["default"]) select1.value = "default";
+            if (profiles["custom"]) select2.value = "custom";
+          }
           return fetch('static/keys_map_controller.json');
         })
         .then(r => r.json())
@@ -536,7 +592,7 @@ class InputHandler {
   if (startButton) {
     startButton.addEventListener('click', () => {
       isControlEnabled = !isControlEnabled;
-      // TAREA 2: Actualización de la UI a "Stop Teleoperation"
+      
       const btnText = document.getElementById('teleoperation-btn-text');
       if (btnText) {
         btnText.textContent = isControlEnabled ? 'Stop Teleoperation' : 'Start Teleoperation';
