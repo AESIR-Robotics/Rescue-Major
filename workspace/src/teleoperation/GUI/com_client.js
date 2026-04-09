@@ -14,8 +14,10 @@ class InputHandler {
     this.localFunctions = {};
     
     this._setupKeyboard();
-    this._setupGamepadEvents();
-    this._startGamepadPoll();
+    
+    // Descomentar para reactivar control)
+    // this._setupGamepadEvents();
+    // this._startGamepadPoll();
   }
 
   // Set RobotAPI reference
@@ -76,11 +78,18 @@ class InputHandler {
   }
 
   // Execute an action for a given key
-  executeAction(keyId) {
+  executeAction(keyId, keyState) {
     const action = this.actionMap[keyId];
     if (!action) {
       return { success: false, error: `Action "${keyId}" not mapped` };
     }
+
+    if (keyState === 'released' && !action.release_payload) {
+      return { success: true, type: 'ignored_release' };
+    }
+
+    const basePayload = (keyState === 'released' && action.release_payload) ? action.release_payload : action.payload;
+    const payloadWithState = basePayload ? { ...basePayload, state: keyState } : { state: keyState };
 
     try {
       switch (action.type) {
@@ -92,7 +101,7 @@ class InputHandler {
             success: true,
             type: 'send_topic',
             count: action.topics.length,
-            results: this.robotAPI.sendTopic(action.topics, action.data_type, action.payload)
+            results: this.robotAPI.sendTopic(action.topics, action.data_type, payloadWithState)
           };
 
         case 'send_service':
@@ -103,15 +112,15 @@ class InputHandler {
             success: true,
             type: 'send_service',
             count: action.topics.length,
-            results: this.robotAPI.sendService(action.topics, action.data_type, action.payload)
+            results: this.robotAPI.sendService(action.topics, action.data_type, payloadWithState)
           };
 
         case 'local_function':
-          const funcName = action.payload?.function_name;
+          const funcName = payloadWithState.function_name;
           if (!funcName || !this.localFunctions[funcName]) {
             return { success: false, error: `Local function "${funcName}" not found` };
           }
-          this.localFunctions[funcName](action.payload);
+          this.localFunctions[funcName](payloadWithState);
           return { success: true, type: 'local_function', function: funcName };
 
         default:
@@ -291,8 +300,9 @@ class InputHandler {
   let flipperPositions = [0.0, 0.0, 0.0, 0.0];
   let flipperDirection = 1;  // 1 = add, 0 = subtract
   const FLIPPER_STEP = 0.1;  // Incrementos pequeños en radianes
-  const FLIPPER_VELOCITY = 1.0;
-  const FLIPPER_ACCELERATION = 0.5;
+  let flipperVelocity = 1.0;
+  let flipperAcceleration = 0.5;
+  let dcMotorVelocity = 1.0;
 
   function initializeROS(rosbridgeHost = location.hostname, rosbridgePort = 9090) {
     if (typeof ROSLIB === 'undefined') {
@@ -333,6 +343,7 @@ class InputHandler {
       
       registerFlipperFunctions();
       setupKeyboardBindings();
+      setupSliders();
       
       // Load keyboard keymaps for other functions
       fetch('static/keys_map_keyboard.json')
@@ -386,22 +397,30 @@ class InputHandler {
   }
 
   function setupKeyboardBindings() {
+    
     window.addEventListener('keydown', (e) => {
+      // prevent multiple calls 
+      if (e.repeat) return; 
+
       if (!inputHandler) return;
-      
       const key = e.key;
-      const result = inputHandler.executeAction(key.toLowerCase());
+      
+      const result = inputHandler.executeAction(key.toLowerCase(), 'pressed');
       
       if (result.success) {
-        if (result.count > 1) {
-          log(`Key '${key}' -> ${result.type} (${result.count} targets)`);
-        } else if (result.type === 'local_function') {
-          log(`Key '${key}' -> ${result.function}()`);
-        } else {
-          log(`Key '${key}' -> ${result.type}`);
-        }
-      } else if (result.error !== `Action "${key.toLowerCase()}" not mapped`) {
-        log(`Key '${key}' failed: ${result.error}`);
+        log(`Key '${key}' (Pressed) -> ${result.type}`);
+      }
+    });
+
+    // Keyup
+    window.addEventListener('keyup', (e) => {
+      if (!inputHandler) return;
+      const key = e.key;
+      // Realeased 
+      const result = inputHandler.executeAction(key.toLowerCase(), 'released');
+      
+      if (result.success && result.type !== 'ignored_release') {
+        log(`Key '${key}' (Released) -> ${result.type}`);
       }
     });
   }
@@ -447,38 +466,53 @@ class InputHandler {
     });
     
     inputHandler.registerLocalFunction('sendCmdVel', (payload) => {
-      const linear = payload.linear ?? 0;
-      const angular = payload.angular ?? 0;
-      sendCmdVel(linear, angular);
+      const linearDir = payload.linear_dir ?? 0;
+      const angularDir = payload.angular_dir ?? 0;
+      sendCmdVel(linearDir * dcMotorVelocity, angularDir * dcMotorVelocity);
     });
   }
 
-  function publishControlMessages() {
-    if (!cmdVelTopic || !jointCommandTopic || !inputHandler) return;
-    
-    // Read gamepad inputs
-    const { leftTrigger, rightTrigger } = inputHandler.readTriggers();
-    const { x: joystickX } = inputHandler.readJoystick();
-    
-    // Calculate velocities for Twist message
-    // Linear: right trigger (0 to 1) - left trigger (0 to -1)
-    const linearX = rightTrigger - leftTrigger;
-    // Angular: joystick X (-1 left, 0 center, 1 right)
-    const angularZ = joystickX;
-    
-    // Publish cmd_vel (Twist)
-    const twistMsg = new ROSLIB.Message({
-      linear: { x: linearX, y: 0.0, z: 0.0 },
-      angular: { x: 0.0, y: 0.0, z: angularZ }
-    });
-    
-    try {
-      cmdVelTopic.publish(twistMsg);
-    } catch (e) {
-      console.error('cmd_vel publish error:', e);
+  function setupSliders() {
+    const flipperVel = document.getElementById('flipper-vel');
+    const flipperVelVal = document.getElementById('flipper-vel-val');
+    if (flipperVel && flipperVelVal) {
+      flipperVel.value = flipperVelocity;
+      flipperVelVal.textContent = flipperVelocity.toFixed(2);
+      flipperVel.addEventListener('input', (e) => {
+        flipperVelocity = parseFloat(e.target.value);
+        flipperVelVal.textContent = flipperVelocity.toFixed(2);
+      });
     }
+
+    const flipperAccel = document.getElementById('flipper-accel');
+    const flipperAccelVal = document.getElementById('flipper-accel-val');
+    if (flipperAccel && flipperAccelVal) {
+      flipperAccel.value = flipperAcceleration;
+      flipperAccelVal.textContent = flipperAcceleration.toFixed(2);
+      flipperAccel.addEventListener('input', (e) => {
+        flipperAcceleration = parseFloat(e.target.value);
+        flipperAccelVal.textContent = flipperAcceleration.toFixed(2);
+      });
+    }
+
+    const dcMotorVel = document.getElementById('dc-motor-vel');
+    const dcMotorVelVal = document.getElementById('dc-motor-vel-val');
+    if (dcMotorVel && dcMotorVelVal) {
+      dcMotorVel.value = dcMotorVelocity;
+      dcMotorVelVal.textContent = dcMotorVelocity.toFixed(2);
+      dcMotorVel.addEventListener('input', (e) => {
+        dcMotorVelocity = parseFloat(e.target.value);
+        dcMotorVelVal.textContent = dcMotorVelocity.toFixed(2);
+      });
+    }
+  }
+
+  function publishControlMessages() {
+    if (!jointCommandTopic || !inputHandler) return;
     
-    // Publish joint_command (JointControl)
+  
+    
+    // Publish joint_command (JointControl) 
     const jointMsg = new ROSLIB.Message({
       header: {
         stamp: { sec: 0, nanosec: 0 },
@@ -486,8 +520,8 @@ class InputHandler {
       },
       joint_names: FLIPPER_JOINTS,
       position: flipperPositions.slice(),
-      velocity: [FLIPPER_VELOCITY, FLIPPER_VELOCITY, FLIPPER_VELOCITY, FLIPPER_VELOCITY],
-      acceleration: [FLIPPER_ACCELERATION, FLIPPER_ACCELERATION, FLIPPER_ACCELERATION, FLIPPER_ACCELERATION],
+      velocity: [flipperVelocity, flipperVelocity, flipperVelocity, flipperVelocity],
+      acceleration: [flipperAcceleration, flipperAcceleration, flipperAcceleration, flipperAcceleration],
       effort: []
     });
     
@@ -498,12 +532,17 @@ class InputHandler {
     }
   }
 
-  const startButton = document.getElementById('start-communication');
+  const startButton = document.getElementById('toggle-teleoperation');
   if (startButton) {
     startButton.addEventListener('click', () => {
       isControlEnabled = !isControlEnabled;
-      startButton.textContent = isControlEnabled ? 'Stop Control' : 'Start Control';
-      log('Control ' + (isControlEnabled ? 'ENABLED' : 'DISABLED'));
+      // TAREA 2: Actualización de la UI a "Stop Teleoperation"
+      const btnText = document.getElementById('teleoperation-btn-text');
+      if (btnText) {
+        btnText.textContent = isControlEnabled ? 'Stop Teleoperation' : 'Start Teleoperation';
+      }
+      
+      log('Teleoperation ' + (isControlEnabled ? 'ENABLED' : 'DISABLED'));
       
       if (!isControlEnabled) {
         if (controlInterval) {

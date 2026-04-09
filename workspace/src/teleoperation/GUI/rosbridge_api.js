@@ -84,7 +84,8 @@ class RobotAPI {
         const topic = this.getOrCreateTopic(topicName, messageType);
         const message = new ROSLIB.Message(payload);
         topic.publish(message);
-        console.log(`[RobotAPI] Published to ${topicName}:`, payload);
+        
+        console.log(`[RobotAPI] Configuración enviada a ${topicName} con estado:`, payload.state, payload);
         results.push({ success: true, target: topicName });
       } catch (error) {
         console.error(`[RobotAPI] Failed to publish to ${topicName}:`, error.message);

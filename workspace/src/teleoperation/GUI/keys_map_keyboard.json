@@ -14,19 +14,23 @@
 
   "w": {
     "type": "local_function",
-    "payload": {"function_name": "sendCmdVel", "linear": 1, "angular": 0}
+    "payload": {"function_name": "sendCmdVel", "linear_dir": 1, "angular_dir": 0},
+    "release_payload": {"function_name": "sendCmdVel", "linear_dir": 0, "angular_dir": 0}
   },
   "s": {
     "type": "local_function",
-    "payload": {"function_name": "sendCmdVel", "linear": -1, "angular": 0}
+    "payload": {"function_name": "sendCmdVel", "linear_dir": -1, "angular_dir": 0},
+    "release_payload": {"function_name": "sendCmdVel", "linear_dir": 0, "angular_dir": 0}
   },
   "a": {
     "type": "local_function",
-    "payload": {"function_name": "sendCmdVel", "linear": 1, "angular": -1}
+    "payload": {"function_name": "sendCmdVel", "linear_dir": 1, "angular_dir": -1},
+    "release_payload": {"function_name": "sendCmdVel", "linear_dir": 0, "angular_dir": 0}
   },
   "d": {
     "type": "local_function",
-    "payload": {"function_name": "sendCmdVel", "linear": 1, "angular": 1}
+    "payload": {"function_name": "sendCmdVel", "linear_dir": 1, "angular_dir": 1},
+    "release_payload": {"function_name": "sendCmdVel", "linear_dir": 0, "angular_dir": 0}
   },
   " ": {
     "type": "local_function",
