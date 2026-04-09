@@ -16,6 +16,9 @@
 #include <functional>
 #include <filesystem>
 #include <fstream>
+#include <thread>
+#include <atomic>
+#include <mutex>
 #include "vision/srv/command.hpp"
 
 using std::placeholders::_1;
@@ -24,7 +27,7 @@ using std::placeholders::_2;
 // ── Constants ─────────────────────────────────────────────────────────────────
 static constexpr int  kNoCamera       = -1;
 static constexpr int  kTimerRgbMs     = 33;   // ~30 Hz
-static constexpr int  kTimerThermalMs = 33;
+static constexpr int  kTimerThermalMs = 111;
 static constexpr char kTopicSensors[] = "cam_sensors/image_raw";
 static constexpr char kTopicThermal[] = "cam_thermal/image_raw";
 static constexpr char kServiceName[]  = "command_vision_videoStream";
@@ -44,6 +47,9 @@ public:
 
     ~VideoStreamPublisher()
     {
+        running_ = false;
+        for (auto& t : capture_threads_)
+            if (t.joinable()) t.join();
         release_cameras();
     }
 
@@ -57,7 +63,7 @@ private:
         // Device type: "jetson" | "generic" | "raspberry"
         this->declare_parameter<std::string>("device",                          "generic");
         this->declare_parameter<std::vector<std::string>>("cameras_devices",    {"0", "2"});
-        this->declare_parameter<std::vector<std::string>>("cameras_formats_",   {"MJPG", "MJPG", "YUYV"});
+        this->declare_parameter<std::vector<std::string>>("cameras_formats",   {"MJPG", "MJPG", "YUYV"});
         this->declare_parameter<std::vector<int64_t>>("cameras_widths",         {1920, 1920});
         this->declare_parameter<std::vector<int64_t>>("cameras_heights",        {1080, 1080});
         this->declare_parameter<std::vector<int64_t>>("cameras_fps",            {30, 30});
@@ -89,13 +95,15 @@ private:
             "v4l2src device=/dev/video{dev} ! video/x-raw, format=YUYV, width={w}, height={h}, "
             "framerate={fps}/1 ! nvvidconv ! video/x-raw(memory:NVMM) ! nvvidconv ! "
             "video/x-raw, format=I420 ! appsink drop=true sync=false max-buffer=1");
+
+        declare_parameter<std::string>("pipeline_templates.THERMAL_BGR","");
     }
 
     // ── Load parameters  ─────────────────────────────────────────────────
     void load_parameters()
     {
         get_parameter("device",                device_);
-        get_parameter("cameras_formats_",      capture_formats_);
+        get_parameter("cameras_formats",       capture_formats_);
         get_parameter("cameras_widths",        camera_widths_);
         get_parameter("cameras_heights",       camera_heights_);
         get_parameter("cameras_fps",           camera_fps_);
@@ -279,6 +287,44 @@ private:
  
             cameras_.emplace_back(std::move(cap));
         }
+
+        start_capture_threads(); 
+    }
+
+    void start_capture_threads()
+    {
+        const size_t n = cameras_.size();
+        capture_frames_.resize(n);
+        latest_frames_.resize(n);
+        
+        frame_mutexes_.clear();
+        for (size_t i = 0; i < n; ++i) {
+            frame_mutexes_.push_back(std::make_unique<std::mutex>());
+        }
+
+        for (size_t i = 0; i < n; ++i) {
+            capture_threads_.emplace_back([this, i]() {
+                while (running_) {
+                    if (!cameras_[i].isOpened()) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                        continue;
+                    }
+                    
+                    // Timeout
+                     if (!cameras_[i].grab()) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                        continue;
+                    }
+
+                    cv::Mat frame;
+                    cameras_[i].retrieve(frame);
+                    if (!frame.empty()) {
+                        std::lock_guard<std::mutex> lock(*frame_mutexes_[i]);
+                        std::swap(capture_frames_[i], frame); 
+                    }
+                }
+            });
+        }
     }
  
     /**
@@ -294,8 +340,21 @@ private:
         const std::string fmt = capture_formats_[idx];
  
         cv::VideoCapture cap;
- 
-        if (device_ == "jetson") {
+
+        // For open the thermal cam
+        if (fmt == "THERMAL_BGR") {
+            RCLCPP_INFO(get_logger(), "Opening /dev/video%s via direct V4L2 (Bypassing GStreamer)", dev.c_str());
+            cap.open(camera_devices_[idx], cv::CAP_V4L2);
+
+            if (cap.isOpened()) {
+                cap.set(cv::CAP_PROP_CONVERT_RGB, 0);
+                cap.set(cv::CAP_PROP_FOURCC, cv::VideoWriter::fourcc('B','G','R','3'));
+                cap.set(cv::CAP_PROP_FRAME_WIDTH, 80);
+                cap.set(cv::CAP_PROP_FRAME_HEIGHT, 60);
+                cap.set(cv::CAP_PROP_FPS, 9);
+            }
+        }
+        else if (device_ == "jetson") {
             const std::string key      = "pipeline_templates." + fmt;
             const std::string raw_tmpl = get_parameter(key).as_string();
  
@@ -314,6 +373,7 @@ private:
             cap.open(camera_devices_[idx], cv::CAP_V4L2);
  
             if (cap.isOpened()) {
+                cap.set(cv::CAP_PROP_FOURCC, cv::VideoWriter::fourcc('M', 'J', 'P', 'G'));
                 cap.set(cv::CAP_PROP_FRAME_WIDTH,  std::stoi(w));
                 cap.set(cv::CAP_PROP_FRAME_HEIGHT, std::stoi(h));
                 cap.set(cv::CAP_PROP_FPS,          std::stoi(fps));
@@ -329,52 +389,55 @@ private:
     // ── Timer initialisation ──────────────────────────────────────────────────
     void init_timers()
     {
-        // RGB cameras at ~30 Hz
-        timer_rgb_ = create_wall_timer(
-            std::chrono::milliseconds(kTimerRgbMs),
-            std::bind(&VideoStreamPublisher::cameras_callback, this));
+        const size_t rgb_count = camera_count();
+
+        camera_timers_.resize(cameras_.size());
+        // RGB cameras
+        for (size_t i = 0; i < rgb_count; ++i) {
+            int ms = static_cast<int>(1000 / camera_fps_[i]);
+            camera_timers_[i] = create_wall_timer(
+                std::chrono::milliseconds(ms),
+                [this, i]() { camera_callback(i); });
+        }
  
         // Thermal camera timer (only if a thermal device is configured)
         if (thermal_camera_index_ != kNoCamera) {
-            timer_thermal_ = create_wall_timer(
-                std::chrono::milliseconds(kTimerThermalMs),
-                std::bind(&VideoStreamPublisher::thermal_callback, this));
+            size_t thermal_idx = cameras_.size() - 1;
+            int ms = static_cast<int>(1000 / camera_fps_[thermal_idx]);
+            camera_timers_[thermal_idx] = create_wall_timer(
+                std::chrono::milliseconds(ms),
+                [this, thermal_idx]() { thermal_callback(thermal_idx); });
         }
     }
 
     // ── Camera callbacks ───────────────────────────────────────────────────────
-    void cameras_callback() {
-        const size_t rgb_count = camera_count();
- 
-        for (size_t i = 0; i < rgb_count; ++i) {
-            if (!cameras_[i].isOpened()) continue;
- 
-            cv::Mat frame;
-            cameras_[i] >> frame;
-            if (frame.empty()) continue;
+    void camera_callback(size_t i) {
+        cv::Mat frame;
+        {
+            std::lock_guard<std::mutex> lock(*frame_mutexes_[i]);
+            std::swap(latest_frames_[i], capture_frames_[i]); 
+            frame = latest_frames_[i]; 
+        }
+        if (frame.empty()) return;
 
-            // If this camera is selected as the sensors source, publish there;
-            // otherwise publish on its dedicated topic.
-            if (static_cast<int>(i) == sensors_cam_idx_) {
-                publish_frame(frame, pub_sensors_);
-            } else if (i < publishers_.size()) {
-                publish_frame(frame, publishers_[i]);
-            }
+        if (static_cast<int>(i) == sensors_cam_idx_) {
+            publish_frame(frame, pub_sensors_);
+        } else if (i < publishers_.size()) {
+            publish_frame(frame, publishers_[i]);
         }
     }
 
-    void thermal_callback() {
-        if (!thermal_enabled_ ||
-            thermal_camera_index_ == kNoCamera ||
-            cameras_.empty()) return;
- 
-        cv::VideoCapture& cap = cameras_.back();
-        if (!cap.isOpened()) return;
- 
+    void thermal_callback(size_t thermal_idx) {
+        if (!thermal_enabled_ || thermal_camera_index_ == kNoCamera) return;
+
         cv::Mat frame;
-        cap >> frame;
+        {
+            std::lock_guard<std::mutex> lock(*frame_mutexes_[thermal_idx]);
+            std::swap(latest_frames_[thermal_idx], capture_frames_[thermal_idx]);
+            frame = latest_frames_[thermal_idx];
+        }
         if (frame.empty()) return;
- 
+
         publish_frame(frame, pub_thermal_);
     }
 
@@ -463,6 +526,13 @@ private:
     // OpenCV capture handles 
     std::vector<cv::VideoCapture> cameras_;
 
+    // Capture threads
+    std::vector<cv::Mat>        latest_frames_;
+    std::vector<cv::Mat>        capture_frames_; 
+    std::vector<std::unique_ptr<std::mutex>> frame_mutexes_;
+    std::vector<std::thread>    capture_threads_;
+    std::atomic<bool>           running_{true};
+
     // Publishers
     std::vector<rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr> publishers_;
     rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr              pub_sensors_;
@@ -470,8 +540,7 @@ private:
 
     // Service & timers
     rclcpp::Service<vision::srv::Command>::SharedPtr command_service_;
-    rclcpp::TimerBase::SharedPtr                     timer_rgb_;
-    rclcpp::TimerBase::SharedPtr                     timer_thermal_;
+    std::vector<rclcpp::TimerBase::SharedPtr> camera_timers_;
 };
 
 int main(int argc, char * argv[]) {

@@ -1,19 +1,18 @@
 video_stream_publisher:
   ros__parameters:
-    device: generic
-    cameras_formats: [MJPG, MJPG, YUYV]
-    cameras_devices: ["0", "2"]
-    cameras_widths: [1920, 640, 640]
-    cameras_heights: [1080, 480, 480]
-    cameras_fps: [30, 30, 30]
-    thermal_camera_device: "-1"
-    thermal_enable: false
+    device: jetson
+    cameras_formats: [MJPG, MJPG, THERMAL_BGR]
+    cameras_devices: ["HD Pro Webcam C920", "Logi Webcam C920e"]
+    cameras_widths: [1280, 640, 80]
+    cameras_heights: [720, 480, 60]
+    cameras_fps: [24, 20, 9]
+    thermal_camera_device: "PureTh"
+    thermal_enable: true
 
     pipeline_templates: 
 
-      MJPG: "v4l2src device=/dev/video{dev} ! image/jpeg, width={w}, height={h}, framerate={fps}/1 ! 
-              jpegparse ! nvv4l2decoder mjpeg=1 ! video/x-raw(memory:NVMM) ! nvvidconv ! video/x-raw, 
-              format=BGRx ! videoconvert ! video/x-raw, format=BGR ! appsink drop=true sync=false max-buffer=1"
+      MJPG: "v4l2src device=/dev/video{dev} ! image/jpeg, width={w}, height={h}, framerate={fps}/1 ! jpegparse ! nvv4l2decoder mjpeg=1 ! 
+            nvvidconv ! video/x-raw, format=BGRx ! appsink drop=true sync=false max-buffers=1"
     
       CSI: "nvarguscamerasrc sensor-id={dev} ! video/x-raw(memory:NVMM), width={w}, height={h}, format=NV12, 
             framerate={fps}/1 ! nvvidconv ! video/x-raw, format=I420 ! appsink drop=true sync=false max-buffer=1"
@@ -25,3 +24,6 @@ video_stream_publisher:
       YUYV: "v4l2src device=/dev/video{dev} ! video/x-raw, format=YUYV, width={w}, height={h}, framerate={fps}/1 
             ! nvvidconv ! video/x-raw(memory:NVMM) ! nvvidconv ! video/x-raw, format=I420 ! appsink drop=true 
             sync=false max-buffer=1"
+
+      # Thermal in Color (Visual)
+      THERMAL_BGR: ""
