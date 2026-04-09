@@ -51,24 +51,18 @@
     "topics": ["/command_vision_videoStream", "/web_rtc_commands"],
     "payload": {"data": "vision:camera,2"}
   },
-  "u": {
-    "type": "send_service",
-    "data_type": "vision/srv/Command",
-    "topics": ["/command_vision_videoStream", "/web_rtc_commands"],
-    "payload": {"data": "vision:camera,3"}
-  },
 
   "i": {
     "type": "send_service",
     "data_type": "vision/srv/Command",
-    "topics": ["/command_vision_videoStream"],
-    "payload": {"data": "vision:thermal,on"}
+    "topics": ["/web_rtc_commands"],
+    "payload": {"data": "vision:thermal,0"}
   },
   "f": {
     "type": "send_service",
     "data_type": "vision/srv/Command",
-    "topics": ["/command_vision_videoStream"],
-    "payload": {"data": "vision:thermal,off"}
+    "topics": ["/web_rtc_commands"],
+    "payload": {"data": "vision:thermal,1"}
   },
 
   "g": {
