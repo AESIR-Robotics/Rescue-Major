@@ -25,7 +25,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 
-#include "logger.hpp"
+#include "utils/logger.hpp"
 
 using LogFn = std::function<void(const std::string &)>;
 
@@ -136,6 +136,7 @@ private:
         // El kernel expone esto en /sys/class/net/<iface>/can/bit_rate (u32 en texto)
         std::string bitrate_str = readSysfs("can/bit_rate");
         uint32_t current_bitrate = 0;
+        (void)current_bitrate;
         if (!bitrate_str.empty()) {
             try { current_bitrate = static_cast<uint32_t>(std::stoul(bitrate_str)); }
             catch (...) { current_bitrate = 0; }

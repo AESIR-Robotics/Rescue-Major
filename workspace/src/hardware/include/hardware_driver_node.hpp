@@ -27,10 +27,9 @@
 
 //#include "bridge_transport.hpp"
 
-#include "transport/serial_mux.hpp"
-#include "tuple_utils.hpp"
-
-#include "logger.hpp"
+//#include "transport/serial_mux.hpp"
+#include "utils/tuple_utils.hpp"
+#include "utils/logger.hpp"
 
 // =============================================================================
 // StepperState<N>
@@ -217,6 +216,7 @@ private:
 
   Protocol_Handler_I2C<> stepper_micro;
   std::array<Protocol_Handler_CAN<>, number_arms> stepper_arms;
+  std::array<int, number_arms> credit;
   //std::shared_ptr<SerialMux> mux_;   ///< Shared serial resource for all arm bridges
 
   // Steps per revolution and home offset per joint.
@@ -266,7 +266,11 @@ private:
 
   int i2c_wait_counter_{0};
   std::array<int, number_arms> can_wait_counter_{};
-  static constexpr int max_wait_ticks_{5};
+  static constexpr int max_wait_ticks_{100};
+
+  // Budgeting
+  static int constexpr max_budget{128};
+  static int constexpr min_budget{-128};
 
   // Set true on first connect and after every reconnect.
   // Separate flags so I2C and CAN resync independently.
@@ -359,7 +363,7 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
   mux_->init(bridge_port, static_cast<uint32_t>(bridge_baud),
       logger); //*/
   
-  auto can_mgr = std::make_shared<CANIfaceManager>("can1", 500000);
+  auto can_mgr = std::make_shared<CANIfaceManager>(can_interface, 500000);
   can_mgr->setLogger(logger);
 
   for (int i = 0; i < number_arms; ++i) {
@@ -490,25 +494,48 @@ inline void HardwareDriverNode::tickCAN() {
   bool do_poll = (can_poll_ticks_++ >= feedback_poll_interval_ticks_);
   if (do_poll) can_poll_ticks_ = 0;
 
-  for (int i = 0; i < number_arms; ++i) {
-    auto &arm = stepper_arms[i];
+  std::array<int, number_arms> order;
+  int count = 0;
 
-    // 1. Connection guard — independent recovery per arm
-    if (!arm.connected() && !errorRecoveryCANArm(i)) continue;
+  for (int i = 0; i < number_arms; ++i) {
+      if (stepper_arms[i].connected() || errorRecoveryCANArm(i)) {
+          credit[i] = std::min(credit[i] + 8, max_budget);
+          order[count++] = i;   // <-- tu arreglo pre-declarado
+      }
+  }
+
+  // 2. Ordenar por score (mayor primero)
+  std::sort(order.data(), order.data() + count, [&](int a, int b) {
+      int sa = stepper_arms[a].msgQueued() * 8 + credit[a];
+      int sb = stepper_arms[b].msgQueued() * 8 + credit[b];
+      return sa > sb;
+  });
+
+  // 3. Procesar en orden
+  for (int k = 0; k < count; ++k) {
+    int i = order[k];
+    auto &arm = stepper_arms[i];
 
     // 2. Read responses then flush TX queue
     arm.readPending();
     arm.sendQueue();
-    if (!arm.connected()) { can_wait_counter_[i] = 0; continue; }
 
-    // 3. Periodic feedback poll — ask each arm to report current state
+    credit[i] = std::max(credit[i] - arm.byteSentFromQueue(), min_budget);
+
+    if (!arm.connected()) { 
+        can_wait_counter_[i] = 0; 
+        credit[i] = 0; 
+        continue; 
+    }
+
+    // 3. Periodic feedback poll
     if (do_poll) {
       arm.addCommand(std::make_unique<ReadInstESP<Cmd::ESP32::Read::POSITION>>());
       arm.addCommand(std::make_unique<ReadInstESP<Cmd::ESP32::Read::SPEED>>());
       arm.addCommand(std::make_unique<ReadInstESP<Cmd::ESP32::Read::ACCEL>>());
     }
 
-    // 4. Send commands when something changed, periodically, or on resync
+    // 4. Send commands
     if (do_send) prepareCANCommands(i);
   }
 

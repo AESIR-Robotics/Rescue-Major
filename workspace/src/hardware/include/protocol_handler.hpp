@@ -11,10 +11,10 @@
 #include <unordered_map>
 
 #include "commands.hpp"
-#include "crc.hpp"
-#include "tuple_utils.hpp"
 
-#include "logger.hpp"
+#include "utils/crc.hpp"
+#include "utils/tuple_utils.hpp"
+#include "utils/logger.hpp"
 
 // micros / stdclock / deadline_t / LogFn come from the transport header,
 // included transitively. Declare them here too so this file is self-contained
@@ -69,6 +69,7 @@ public:
 
   bool addCommand(std::unique_ptr<Cmd::Command> &&input);
   int msgQueued();
+  int byteSentFromQueue();
 
   /// Flush the outbound queue. Sends at most one full frame per call.
   bool sendQueue(micros timeout = micros(8000), micros timePerMsg = micros(4000));
@@ -118,6 +119,7 @@ private:
   uint32_t total_attmp_ { 0 };
 
   constexpr static unsigned int max_queue { 50 };
+  uint8_t bytes_sent{0};
   std::queue<std::unique_ptr<Cmd::Command>> sending;
 
   std::unordered_map<uint8_t, std::function<void(const uint8_t *, size_t)>>
@@ -189,11 +191,16 @@ inline int Protocol_Handler<Transport, ReadEnum, WriteEnum>::msgQueued() {
 }
 
 template <typename Transport, typename ReadEnum, typename WriteEnum>
+inline int Protocol_Handler<Transport, ReadEnum, WriteEnum>::byteSentFromQueue() {
+  return bytes_sent;
+}
+
+template <typename Transport, typename ReadEnum, typename WriteEnum>
 bool Protocol_Handler<Transport, ReadEnum, WriteEnum>::sendQueue(micros timeout, micros timePerMsg) {
   if (!this->connected()) return false;
 
   const deadline_t dl = stdclock::now() + timeout;
-  size_t bytes{0};
+  bytes_sent = 0;
 
   constexpr size_t SEND_BUDGET =
       MAX_PAYLOAD_SIZE + tuple_size(header{}) + tuple_size(tail{});
@@ -202,13 +209,13 @@ bool Protocol_Handler<Transport, ReadEnum, WriteEnum>::sendQueue(micros timeout,
   while (!sending.empty() && Transport::canSend() &&
          (expectedsize = sending.front()->getPckSize() +
                          tuple_size(header{}) + tuple_size(tail{})) &&
-         bytes + expectedsize <= SEND_BUDGET &&
+         bytes_sent + expectedsize <= SEND_BUDGET &&
          stdclock::now() + timePerMsg < dl) {
     auto sent = sendNext(dl);
     if (sent != expectedsize) {
       return false;
     }
-    bytes += sent;
+    bytes_sent += sent;
   }
   return true;
 }

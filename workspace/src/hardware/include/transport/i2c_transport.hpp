@@ -18,8 +18,8 @@
 #include <poll.h>
 #include <unistd.h>
 
-#include "logger.hpp"
-#include "crc.hpp"
+#include "utils/logger.hpp"
+#include "utils/crc.hpp"
 
 using micros    = std::chrono::microseconds;
 using stdclock  = std::chrono::steady_clock;

@@ -28,7 +28,7 @@
 #include <sys/file.h>
 #include <cerrno>
 
-#include "logger.hpp"
+#include "utils/logger.hpp"
 
 // =============================================================================
 // MuxRing — SPSC lock-free ring buffer

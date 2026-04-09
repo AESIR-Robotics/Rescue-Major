@@ -15,7 +15,7 @@
 #include <sys/file.h>
 #include <termios.h>
 
-#include "logger.hpp"
+#include "utils/logger.hpp"
 
 using micros    = std::chrono::microseconds;
 using stdclock  = std::chrono::steady_clock;
