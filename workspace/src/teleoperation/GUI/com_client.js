@@ -34,7 +34,7 @@ class InputHandler {
 
     try {
       Object.entries(configJson).forEach(([keyId, action]) => {
-        const { type, data_type, topics, payload, actions } = action;
+        const { type, data_type, topics, payload, release_payload, actions } = action;
 
         if (!type) {
           console.warn(`[InputHandler] Skipping action for ${keyId}: missing type`);
@@ -59,7 +59,7 @@ class InputHandler {
           }
         }
 
-        this.actionMap[keyId] = { type, data_type, topics, payload };
+        this.actionMap[keyId] = { type, data_type, topics, payload, release_payload, actions };
         console.log(`[InputHandler] Mapped ${keyId} -> ${type} (${topics ? topics.length : 0} targets)`);
       });
 
@@ -297,9 +297,27 @@ class InputHandler {
   ];
 
   // Flipper state
-  let flipperPositions = [0.0, 0.0, 0.0, 0.0];
+  let flipperVelocities = [0.0, 0.0, 0.0, 0.0];
+  let flipperPositions = [];
   let flipperDirection = 1;  // 1 = add, 0 = subtract
-  const FLIPPER_STEP = 0.1;  // Incrementos pequeños en radianes
+  let flipperDirections = [1, 1, 1, 1]; 
+  let lastFlipperPressTime = [0, 0, 0, 0]; 
+  const FLIPPER_DOUBLE_CLICK_DELAY = 400; // ms
+  const FLIPPER_STEP = 0.1;
+  let currentControlMode = "velocity";
+  window.switch_control_mode = function(mode) {
+    if (mode !== "velocity" && mode !== "position") return;
+    currentControlMode = mode;
+    if (typeof robotAPI !== "undefined" && robotAPI) {
+      robotAPI.sendService("/controller_manager/switch_controller", "controller_manager_msgs/srv/SwitchController", {
+        activate_controllers: mode === "velocity" ? ["velocity_controller"] : ["arm_controller"],
+        deactivate_controllers: mode === "velocity" ? ["arm_controller"] : ["velocity_controller"],
+        strictness: 1,
+        activate_asap: true,
+        timeout: { sec: 0, nanosec: 0 }
+      });
+    }
+  };  // Incrementos pequeños en radianes
   let flipperVelocity = 1.0;
   let flipperAcceleration = 0.5;
   let dcMotorVelocity = 1.0;
@@ -481,14 +499,26 @@ class InputHandler {
     });
   }
   
-  function modifyFlipperPosition(index) {
-    const delta = flipperDirection === 1 ? FLIPPER_STEP : -FLIPPER_STEP;
-    let newPos = flipperPositions[index] + delta;
-    if (newPos < 0.0) newPos = 0.0;
-    if (newPos > 2 * Math.PI) newPos = 2 * Math.PI;
-    
-    flipperPositions[index] = newPos;
-    log(`${FLIPPER_JOINTS[index]}: ${flipperPositions[index].toFixed(2)}`);
+  function modifyFlipperVelocity(index, state) {
+    if (state === 'released') {
+      flipperVelocities[index] = 0.0;
+    } else {
+      const now = Date.now();
+      
+      // Detect double-click to toggle individual direction
+      if (now - lastFlipperPressTime[index] < FLIPPER_DOUBLE_CLICK_DELAY) {
+        flipperDirections[index] = flipperDirections[index] === 1 ? 0 : 1;
+        log(`${FLIPPER_JOINTS[index]} individual direction: ${flipperDirections[index] === 1 ? 'ADD' : 'SUBTRACT'}`);
+        lastFlipperPressTime[index] = 0; // Reset to prevent repetitive toggles
+      } else {
+        lastFlipperPressTime[index] = now;
+      }
+
+      const sign = flipperDirections[index] === 1 ? 1 : -1;
+      flipperVelocities[index] = sign * flipperVelocity;
+    }
+    publishFlippers();
+    log(`${FLIPPER_JOINTS[index]} Vel: ${flipperVelocities[index].toFixed(2)}`);
   }
   
   function sendCmdVel(linear, angular) {
@@ -507,18 +537,20 @@ class InputHandler {
   function registerFlipperFunctions() {
     inputHandler.registerLocalFunction('toggleFlipperDirection', () => {
       flipperDirection = flipperDirection === 1 ? 0 : 1;
-      log(`Flipper direction: ${flipperDirection === 1 ? 'ADD' : 'SUBTRACT'}`);
+      flipperDirections = [flipperDirection, flipperDirection, flipperDirection, flipperDirection];
+      log(`Global flipper direction: ${flipperDirection === 1 ? 'ADD' : 'SUBTRACT'}`);
     });
     
     inputHandler.registerLocalFunction('modifyFlipper', (payload) => {
       if (typeof payload.index === 'number') {
-        modifyFlipperPosition(payload.index);
+        modifyFlipperVelocity(payload.index, payload.state);
       }
     });
     
     inputHandler.registerLocalFunction('resetFlipperPositions', () => {
-      flipperPositions = [0, 0, 0, 0];
-      log('Flipper positions reset to 0');
+      flipperVelocities = [0, 0, 0, 0];
+      publishFlippers();
+      log('Flipper velocities reset to 0');
     });
     
     inputHandler.registerLocalFunction('sendCmdVel', (payload) => {
@@ -563,7 +595,7 @@ class InputHandler {
     }
   }
 
-  function publishControlMessages() {
+  function publishFlippers() {
     if (!jointCommandTopic || !inputHandler) return;
     
   
@@ -575,8 +607,8 @@ class InputHandler {
         frame_id: ''
       },
       joint_names: FLIPPER_JOINTS,
-      position: flipperPositions.slice(),
-      velocity: [flipperVelocity, flipperVelocity, flipperVelocity, flipperVelocity],
+      position: [],
+      velocity: flipperVelocities.slice(),
       acceleration: [flipperAcceleration, flipperAcceleration, flipperAcceleration, flipperAcceleration],
       effort: []
     });
@@ -613,10 +645,14 @@ class InputHandler {
           });
           cmdVelTopic.publish(stopTwist);
         }
-      } else {
-        if (!controlInterval) {
-          controlInterval = setInterval(publishControlMessages, UPDATE_INTERVAL);
+        
+        // Stop flippers
+        if (jointCommandTopic) {
+          flipperVelocities = [0.0, 0.0, 0.0, 0.0];
+          publishFlippers();
         }
+      } else {
+        // Interval removed: flippers now publish on press/release events
       }
     });
   } else {
@@ -650,7 +686,8 @@ class InputHandler {
   };
   
   window.getFlipperState = () => ({
-    positions: flipperPositions.slice(),
+    velocities: flipperVelocities.slice(),
+    directions: flipperDirections.slice(), 
     direction: flipperDirection,
     joints: FLIPPER_JOINTS
   });

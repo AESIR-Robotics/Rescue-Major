@@ -195,11 +195,19 @@
       "payload": {
         "function_name": "modifyFlipper",
         "index": 0
+      },
+      "release_payload": {
+        "function_name": "modifyFlipper",
+        "index": 0
       }
     },
     "7": {
       "type": "local_function",
       "payload": {
+        "function_name": "modifyFlipper",
+        "index": 1
+      },
+      "release_payload": {
         "function_name": "modifyFlipper",
         "index": 1
       }
@@ -209,11 +217,19 @@
       "payload": {
         "function_name": "modifyFlipper",
         "index": 2
+      },
+      "release_payload": {
+        "function_name": "modifyFlipper",
+        "index": 2
       }
     },
     "4": {
       "type": "local_function",
       "payload": {
+        "function_name": "modifyFlipper",
+        "index": 3
+      },
+      "release_payload": {
         "function_name": "modifyFlipper",
         "index": 3
       }
@@ -225,6 +241,11 @@
       }
     }
   },
+
+
+
+
+
 
   "custom": {
     "button_mute_server": {
@@ -372,53 +393,6 @@
       "type": "local_function",
       "payload": {
         "function_name": "toggleFlipperDirection"
-      }
-    },
-    "9": {
-      "type": "local_function",
-      "payload": {
-        "function_name": "modifyFlipper",
-        "index": 0
-      }
-    },
-    "7": {
-      "type": "local_function",
-      "payload": {
-        "function_name": "modifyFlipper",
-        "index": 1
-      }
-    },
-    "6": {
-      "type": "local_function",
-      "payload": {
-        "function_name": "modifyFlipper",
-        "index": 2
-      }
-    },
-    "4": {
-      "type": "local_function",
-      "payload": {
-        "function_name": "modifyFlipper",
-        "index": 3
-      }
-    },
-    "0": {
-      "type": "local_function",
-      "payload": {
-        "function_name": "resetFlipperPositions"
-      }
-    },
-    "l": {
-      "type": "local_function",
-      "payload": {
-        "function_name": "sendCmdVel",
-        "linear_dir": 1,
-        "angular_dir": 1
-      },
-      "release_payload": {
-        "function_name": "sendCmdVel",
-        "linear_dir": 0,
-        "angular_dir": 0
       }
     }
   }
