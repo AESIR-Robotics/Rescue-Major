@@ -2,6 +2,8 @@
 // =============================================================================
 // bridge_transport.hpp
 //
+// Currently unused, statusReport is unoperative
+//
 // Transport que conecta Protocol_Handler con SerialMux.
 // Cada instancia registra su canal RX y comparte el fd serial via shared_ptr.
 //
@@ -16,6 +18,7 @@
 #include "serial_mux.hpp"
 #include "can_transport.hpp"   // para can_make_id
 
+#include "utils/diagnostics.hpp"
 #include "utils/logger.hpp"
 
 using micros     = std::chrono::microseconds;
@@ -32,14 +35,30 @@ public:
 
     static constexpr size_t INTERNAL_BUF_SIZE = 64;
 
-    Bridge_Transport() = default;
+    explicit Bridge_Transport(DiagnosticRegistry *reg){
+        statusReport.with([](Status &d){
+            d.hardware_id = "Bridge_Serial_Status_Unused";
+            d.level = Status::OK;
+            d.message = "";
+            d.name = "Bridge_Serial_Status_Unused";
+            d.values.emplace(
+            std::make_pair("attmps", "0")
+            );
+        });
+        if(reg){
+            reg->register_source(&statusReport);
+        }
+    }
 
     // ── init — toma shared_ptr para garantizar lifetime del mux ──────────────
-    bool init(std::shared_ptr<SerialMux> mux,
+    bool init(DiagnosticRegistry *reg, std::shared_ptr<SerialMux> mux,
               uint8_t  my_addr,
               uint8_t  peer_addr,
               uint16_t channel  = 0,
               uint8_t  priority = 6) {
+        if(reg){
+            reg->register_source(&statusReport);
+        }
         mux_     = std::move(mux);
         tx_id_   = can_make_id(my_addr, peer_addr, channel, priority);
         rx_id_   = can_make_id(peer_addr, my_addr, channel, priority);
@@ -143,6 +162,8 @@ protected:
         }
         return total;
     }
+
+    Tracked<Status> statusReport;
 
 private:
     std::shared_ptr<SerialMux> mux_;

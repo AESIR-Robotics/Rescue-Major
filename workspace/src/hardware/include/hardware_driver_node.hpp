@@ -20,6 +20,7 @@
 #include <geometry_msgs/msg/twist.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
 #include <diagnostic_msgs/msg/diagnostic_array.hpp>
+#include "diagnostic_msgs/msg/diagnostic_status.hpp"
 #include "hardware/msg/joint_control.hpp"
 
 #include "commands.hpp"
@@ -28,6 +29,8 @@
 //#include "bridge_transport.hpp"
 
 //#include "transport/serial_mux.hpp"
+#include "transport/can_iface_manager.hpp"
+#include "utils/diagnostics.hpp"
 #include "utils/tuple_utils.hpp"
 #include "utils/logger.hpp"
 
@@ -150,7 +153,7 @@ namespace geom = geometry_msgs::msg;
 // run on the same thread — the mutex has zero contention.  If the executor is
 // ever changed to MultiThreadedExecutor this wrapper already provides safety.
 // =============================================================================
-
+/*/
 struct HardwareDiagnostics {
   // Connection
   bool     i2c_connected{false};
@@ -166,7 +169,7 @@ struct HardwareDiagnostics {
   void markUpdated() { updated = true; }
   bool anyUpdated()  const { return updated; }
   void clearUpdated()      { updated = false; }
-};
+};//*/
 
 class HardwareDriverNode : public rclcpp::Node {
 public:
@@ -277,15 +280,13 @@ private:
   bool i2c_needs_resync_{true};
   bool can_needs_resync_{true};
 
-  // Diagnostics state — written by tick thread, snapshotted by diag timer.
-  // Safe for MultiThreadedExecutor via Guarded<>.
-  Guarded<HardwareDiagnostics> diag_data_;
+  DiagnosticRegistry sysStats;
 
   // diagTick() increments this each call; when it reaches diag_force_ticks_
   // a publish is forced even if nothing changed (keeps aggregator alive at ~1 Hz).
   int  diag_ticks_since_pub_{0};
   // At diag_hz_=5 this gives a forced publish every 5 ticks = 1 Hz.
-  static constexpr int  diag_force_ticks_{5};
+  static constexpr int  diag_force_ticks_{500};
   static constexpr double diag_hz_{5.0};
 
   // ROS interfaces
@@ -349,7 +350,7 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
 
   //stepper_micro.setLogger(logger);
 
-  stepper_micro.init(i2c_port_, slave_addr_);
+  stepper_micro.init(&sysStats, i2c_port_, slave_addr_);
 
   /*/ // ── Bridge serial mux — shared resource for all arm instances ────────────
   this->declare_parameter<std::string>("bridge_serial_port", "/dev/ardu_main");
@@ -362,15 +363,15 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
   mux_ = std::make_shared<SerialMux>();
   mux_->init(bridge_port, static_cast<uint32_t>(bridge_baud),
       logger); //*/
-  
-  auto can_mgr = std::make_shared<CANIfaceManager>(can_interface, 500000);
+
+  auto can_mgr = std::make_shared<CANIfaceManager>(&sysStats, can_interface, 500000);
   can_mgr->setLogger(logger);
 
   for (int i = 0; i < number_arms; ++i) {
       stepper_arms[i].setLogger(logger);
       stepper_arms[i].setIfaceManager(can_mgr);
       // Register channel in mux — my addr offset per arm, peer = arm index
-      stepper_arms[i].init(can_interface, /*my=*/static_cast<uint8_t>(0x00 - i - 1),
+      stepper_arms[i].init(&sysStats, can_interface, /*my=*/static_cast<uint8_t>(0x00 - i - 1),
                                   /*peer=*/static_cast<uint8_t>(i + 1), /*channel=*/0);
         
       using Cmd::ESP32::Read;
@@ -731,10 +732,8 @@ inline void HardwareDriverNode::generateCallbacks() {
       Read::BYTELOSS,
       Cmd::make_callback<Read::BYTELOSS>([&](const auto &info) {
         auto &[p0, p1] = info;
-        diag_data_.with([&p0, &p1](HardwareDiagnostics &d){
-          d.tx_byte_loss_count = p0;
-          d.rx_byte_loss_count = p1;
-        });
+        (void)p0;
+        (void)p1;
       }, loggerLocal));
 
   // POSITION: steps  rad
@@ -832,18 +831,8 @@ inline bool HardwareDriverNode::errorRecoveryI2C() {
   i2c_wait_counter_ = 0;
   if (stepper_micro.reconnect()) {
     i2c_needs_resync_ = true;
-    diag_data_.with([](HardwareDiagnostics &d) {
-      d.i2c_connected = true;
-      d.reconnect_attempts = 0;
-      d.markUpdated();
-    });
     return true;
   }
-  diag_data_.with([](HardwareDiagnostics &d) {
-    ++d.reconnect_attempts;
-    d.i2c_connected = false;
-    d.markUpdated();
-  });
   return false;
 }
 
@@ -915,17 +904,15 @@ inline void HardwareDriverNode::publishDCFeedback() {
 }
 
 inline void HardwareDriverNode::diagTick() {
-  bool changed = diag_data_.with([](HardwareDiagnostics &d) {
-    return d.anyUpdated();
-  });
 
+  auto changed = sysStats.amountUpdated();
   bool force = (++diag_ticks_since_pub_ >= diag_force_ticks_);
 
   if (changed || force) {
     diag_ticks_since_pub_ = 0;
     publishDiagnostics();
-    diag_data_.with([](HardwareDiagnostics &d) { d.clearUpdated(); });
   }
+  
 }
 
 // -----------------------------------------------------------------------------
@@ -934,55 +921,26 @@ inline void HardwareDriverNode::diagTick() {
 // are implemented.
 // -----------------------------------------------------------------------------
 inline void HardwareDriverNode::publishDiagnostics() {
-  auto snap = diag_data_.snapshot();
 
   diag::DiagnosticArray array_msg;
   array_msg.header.stamp = this->now();
-  {
-  diag::DiagnosticStatus status;
-  status.name      = this->get_name();
-  status.hardware_id = stepper_micro.getDevice();
+  
+  auto snap = sysStats.consume_updated();
 
-  if (snap.i2c_connected) {
-    status.level   = diag::DiagnosticStatus::OK;
-    status.message = "Connected";
-  } else {
-    status.level   = diag::DiagnosticStatus::ERROR;
-    status.message = "I2C disconnected";
+  for(auto &stat : snap){
+    diag::DiagnosticStatus instance;
+    instance.level = stat.level;
+    instance.hardware_id = std::move(stat.hardware_id);
+    instance.message = std::move(stat.message);
+    instance.name = std::move(stat.name);
+    for(auto &kv : stat.values){
+      diag::KeyValue kv_msg;
+      kv_msg.key = std::move(kv.first);
+      kv_msg.value = std::move(kv.second);
+      instance.values.push_back(std::move(kv_msg));
+    }
+    array_msg.status.push_back(instance);
   }
-
-  // Reconnect attempt counter — always visible in rqt_robot_monitor
-  diag::KeyValue kv_reconnects;
-  kv_reconnects.key   = "reconnect_attempts";
-  kv_reconnects.value = std::to_string(snap.reconnect_attempts);
-  status.values.push_back(kv_reconnects);
-  array_msg.status.push_back(status);
-  }
-
-  {
-  diag::DiagnosticStatus status;
-  status.name      = "Byte Loss";
-  status.hardware_id = stepper_micro.getDevice();
-
-  if (snap.i2c_connected) {
-    status.level   = diag::DiagnosticStatus::OK;
-    status.message = "Info";
-  }
-
-  // Reconnect attempt counter — always visible in rqt_robot_monitor
-  diag::KeyValue kv_reconnects_tx, kv_reconnects_rx;
-  kv_reconnects_tx.key   = "tx_byte_loss";
-  kv_reconnects_tx.value = std::to_string(snap.tx_byte_loss_count);
-  status.values.push_back(kv_reconnects_tx);
-
-  kv_reconnects_rx.key   = "tx_byte_loss";
-  kv_reconnects_rx.value = std::to_string(snap.rx_byte_loss_count);
-  status.values.push_back(kv_reconnects_rx);
-
-  array_msg.status.push_back(status);
-  }
-
-  // TODO: add motor error flags here when MCU error message is implemented
 
   error_state_pub_->publish(array_msg);
 }

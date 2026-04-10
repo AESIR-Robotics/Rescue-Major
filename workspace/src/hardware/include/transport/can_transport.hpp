@@ -21,6 +21,7 @@
 
 #include "utils/logger.hpp"
 #include "can_iface_manager.hpp"
+#include "utils/diagnostics.hpp"
 
 using micros    = std::chrono::microseconds;
 using stdclock  = std::chrono::steady_clock;
@@ -103,7 +104,7 @@ public:
     // Reassembly scratch buffer.  Increase if messages exceed this size.
     static constexpr size_t INTERNAL_BUF_SIZE = 255;
 
-    explicit CAN_Transport(const std::string &interface = "",
+    explicit CAN_Transport(DiagnosticRegistry *reg = nullptr, const std::string &interface = "",
                            uint8_t  my_addr   = 0x00,
                            uint8_t  peer_addr = 0x00,
                            uint16_t channel   = 0,
@@ -113,7 +114,7 @@ public:
     CAN_Transport(const CAN_Transport &)            = delete;
     CAN_Transport &operator=(const CAN_Transport &) = delete;
 
-    bool init(const std::string &interface,
+    bool init(DiagnosticRegistry *reg, const std::string &interface,
               uint8_t  my_addr,
               uint8_t  peer_addr,
               uint16_t channel  = 0,
@@ -155,6 +156,8 @@ protected:
     void disconnect();
 
     Transport_Error transport_error_ { Transport_Error::CLOSED };
+
+    Tracked<Status> statusReport; 
 
 private:
 
@@ -198,7 +201,7 @@ private:
     uint8_t     rx_expected_seq_   { 0     };
     bool        rx_in_progress_    { false };
 
-
+    u_int32_t  attmps { 0 };
     Logger log{};
 };
 
@@ -206,20 +209,39 @@ private:
 // Inline definitions
 // =============================================================================
 
-inline CAN_Transport::CAN_Transport(const std::string &interface,
+inline CAN_Transport::CAN_Transport(DiagnosticRegistry *reg, const std::string &interface,
                                      uint8_t my_addr, uint8_t peer_addr,
                                      uint16_t channel, uint8_t priority)
     : interface_{interface}, my_addr_{my_addr}, peer_addr_{peer_addr},
       channel_{channel}, priority_{priority}
-{
+{   
+    statusReport.with([this](Status &d){
+        // hardware_id is [interface]_[peer_addr]
+        // message is "The status of can interface [peer_addr]"
+        // name is CAN_Transport_[my_addr]
+
+        d.hardware_id = interface_ + "_" + std::to_string(peer_addr_);
+        d.level = Status::OK;
+        d.message = "The status of CAN interface " + std::to_string(peer_addr_);
+        d.name = "CAN_Transport_" + std::to_string(my_addr_);
+        d.values.emplace(std::make_pair("connected", "false"));
+        d.values.emplace(std::make_pair("con_attmps", "0"));
+        d.values.emplace(std::make_pair("kernel", ""));
+    });
+    if(reg){
+        reg->register_source(&statusReport);
+    }
     if (!interface_.empty()) connect();
 }
 
 inline CAN_Transport::~CAN_Transport() noexcept { disconnect(); }
 
-inline bool CAN_Transport::init(const std::string &interface,
+inline bool CAN_Transport::init(DiagnosticRegistry *reg, const std::string &interface,
                                  uint8_t my_addr, uint8_t peer_addr,
                                  uint16_t channel, uint8_t priority) {
+    if(reg){
+        reg->register_source(&statusReport);
+    }
     interface_ = interface;
     my_addr_   = my_addr;
     peer_addr_ = peer_addr;
@@ -239,10 +261,15 @@ inline bool CAN_Transport::reconnect() {
 inline bool CAN_Transport::connect() {
     disconnect_priv();
     transport_error_ = Transport_Error::NONE;
+    attmps++;
+    statusReport.with([this](Status &d){
+        d.values["con_attmps"] = std::to_string(attmps);
+    });
 
     if (!isValidConfig()) {
         transport_error_ = Transport_Error::INVALID_CONFIG;
         log.logError("CAN has invalid config");
+        statusReport.with([](Status &d){d.level = Status::ERROR;});
         return false;
     }
 
@@ -252,6 +279,7 @@ inline bool CAN_Transport::connect() {
             transport_error_ = Transport_Error::OPEN_FAILED;
             log.logError("CAN: interface manager failed to bring up %s",
                          interface_.c_str());
+            statusReport.with([](Status &d){d.level = Status::ERROR;});
             return false;
         }
     }
@@ -264,6 +292,7 @@ inline bool CAN_Transport::connect() {
     if (sock_fd_ < 0) {
         transport_error_ = Transport_Error::OPEN_FAILED;
         log.logError("CAN socket() failed: %s", strerror(errno));
+        statusReport.with([](Status &d){d.level = Status::ERROR;});
         return false;
     }
 
@@ -276,6 +305,7 @@ inline bool CAN_Transport::connect() {
         transport_error_ = Transport_Error::IOCTL_FAILED;
         log.logError("CAN_RAW_FILTER setsockopt failed: %s", strerror(errno));
         disconnect();
+        statusReport.with([](Status &d){d.level = Status::ERROR;});
         return false;
     }
 
@@ -286,6 +316,7 @@ inline bool CAN_Transport::connect() {
         transport_error_ = Transport_Error::OPEN_FAILED;
         log.logError("CAN interface %s not found: %s", interface_.c_str(), strerror(errno));
         disconnect();
+        statusReport.with([](Status &d){d.level = Status::ERROR;});
         return false;
     }
 
@@ -296,6 +327,7 @@ inline bool CAN_Transport::connect() {
         transport_error_ = Transport_Error::OPEN_FAILED;
         log.logError("CAN bind() failed: %s", strerror(errno));
         disconnect();
+        statusReport.with([](Status &d){d.level = Status::ERROR;});
         return false;
     }
 
@@ -310,11 +342,19 @@ inline bool CAN_Transport::connect() {
 
     log.logInfo("CAN 2.0B connected on %s  tx=0x%08X  rx=0x%08X",
             interface_.c_str(), tx_id_, rx_id_);
+    statusReport.with([](Status &d){
+        d.level = Status::OK;
+        d.values["connected"] = "true";
+        d.values["kernel"] = "";
+    });
     return true;
 }
 
 inline void CAN_Transport::disconnect() {
     if (sock_fd_ >= 0) {
+        statusReport.with([](Status &d){
+            d.values["connected"] = "false";
+        });
         ::close(sock_fd_);
         sock_fd_        = -1;
         rx_pos_         = 0;
@@ -322,13 +362,17 @@ inline void CAN_Transport::disconnect() {
         log.logInfo("CAN socket closed on %s", interface_.c_str());
         if (transport_error_ == Transport_Error::NONE)
             transport_error_ = Transport_Error::CLOSED;
+        
+        if (iface_mgr_) iface_mgr_->release();
     }
-
-    if (iface_mgr_) iface_mgr_->release();
+    
 }
 
 inline void CAN_Transport::disconnect_priv() {
     if (sock_fd_ >= 0) {
+        statusReport.with([](Status &d){
+            d.values["connected"] = "false";
+        });
         ::close(sock_fd_);
         sock_fd_        = -1;
         rx_pos_         = 0;
@@ -361,6 +405,10 @@ inline bool CAN_Transport::waitFdReady(short events, deadline_t deadline) {
         if (errno == EBADF) {
             disconnect();
             transport_error_ = Transport_Error::FD_INVALID;
+            statusReport.with([](Status &d){
+                d.level = Status::ERROR;
+                d.values["kernel"] = strerror(errno);
+            });
         }
         return false;
     }
@@ -468,6 +516,10 @@ inline bool CAN_Transport::sendFrame(const uint8_t *frame_data,
         }
 
         log.logError("CAN write() failed on %s: %s", interface_.c_str(), strerror(errno));
+        statusReport.with([](Status &d){
+          d.level = Status::ERROR;
+          d.values["kernel"] = strerror(errno);
+        });
         disconnect();
         transport_error_ = Transport_Error::IOCTL_FAILED;
         return false;
@@ -489,6 +541,10 @@ inline uint8_t CAN_Transport::recvFrame(uint8_t *frame_data, deadline_t deadline
         ssize_t nbytes = ::read(sock_fd_, &frame, sizeof(struct can_frame));
         if (nbytes != static_cast<ssize_t>(sizeof(struct can_frame))) {
             log.logError("CAN read() failed on %s: %s", interface_.c_str(), strerror(errno));
+            statusReport.with([](Status &d){
+                d.level = Status::ERROR;
+                d.values["kernel"] = strerror(errno);
+            });
             disconnect();
             transport_error_ = Transport_Error::FD_INVALID;
             return 0;
@@ -553,7 +609,6 @@ inline size_t CAN_Transport::writeData(const uint8_t *data, size_t length,
 
     return length;
 }
-
 
 inline bool CAN_Transport::assemble(deadline_t deadline){
     
@@ -660,7 +715,6 @@ inline bool CAN_Transport::assemble(deadline_t deadline){
     return false;
         
 }
-
 
 // -----------------------------------------------------------------------------
 // readData — receive and reassemble segmented CAN 2.0B frames

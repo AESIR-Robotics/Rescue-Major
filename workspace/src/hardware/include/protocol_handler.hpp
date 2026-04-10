@@ -14,6 +14,7 @@
 
 #include "utils/crc.hpp"
 #include "utils/tuple_utils.hpp"
+#include "utils/diagnostics.hpp"
 #include "utils/logger.hpp"
 
 // micros / stdclock / deadline_t / LogFn come from the transport header,
@@ -60,8 +61,8 @@ public:
 
   // ── Forwarding constructor — passes args to Transport ─────────────────────
   template <typename... Args>
-  explicit Protocol_Handler(Args&&... args)
-      : Transport(std::forward<Args>(args)...) {
+  explicit Protocol_Handler(DiagnosticRegistry *reg = nullptr, Args&&... args)
+      : Transport(reg, std::forward<Args>(args)...) {
     setupInstructionCallbacks();
   }
 

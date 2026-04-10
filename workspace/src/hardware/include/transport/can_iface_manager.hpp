@@ -20,12 +20,13 @@
 #include <functional>
 #include <mutex>
 #include <string>
-#include <net/if.h>      // if_nametoindex
+#include <net/if.h> 
 #include <sys/wait.h>
 #include <unistd.h>
 #include <fcntl.h>
 
 #include "utils/logger.hpp"
+#include "utils/diagnostics.hpp"
 
 using LogFn = std::function<void(const std::string &)>;
 
@@ -40,13 +41,27 @@ public:
         NOT_FOUND,        ///< la interfaz no existe en el sistema
     };
 
-    explicit CANIfaceManager(std::string  iface,
+    explicit CANIfaceManager(DiagnosticRegistry *reg = nullptr, std::string  iface = "",
                              uint32_t     bitrate    = 500000,
                              uint32_t     restart_ms = 100)
         : iface_{std::move(iface)},
           bitrate_{bitrate},
           restart_ms_{restart_ms}
-    {}
+    {
+        statusReport.with([this](Status &d){
+            d.hardware_id = iface_;
+            d.level = Status::OK;
+            d.message = "The status of the kernel CAN interface";
+            d.name = "CAN_Interface";
+            d.values.emplace(std::make_pair("connected", "false"));
+            d.values.emplace(std::make_pair("instances", "0"));
+            d.values.emplace(std::make_pair("perms", "able"));
+            d.values.emplace(std::make_pair("con_attmps", "0"));
+        });
+        if(reg){
+            reg->register_source(&statusReport);
+        }
+    }
 
     ~CANIfaceManager() {
         // Por si acaso quedan refs — no hacer down si hay instancias activas
@@ -73,12 +88,21 @@ public:
         switch (state) {
         case IfaceState::NOT_FOUND:
             log.logError("CANIfaceManager: interface %s not found", iface_.c_str());
+            statusReport.with([](Status &d){
+                d.level = Status::ERROR;
+                d.values["connected"] = "false";
+            });
             return false;
 
         case IfaceState::UP_CONFIGURED:
             // Ya está bien — solo incrementar
             log.logInfo("CANIfaceManager: %s already up at %u bps", iface_.c_str(), bitrate_);
             ++ref_count_;
+            statusReport.with([this](Status &d){
+                d.level = Status::OK;
+                d.values["connected"] = "true";
+                d.values["instances"] = std::to_string(ref_count_);
+            });
             return true;
 
         case IfaceState::UP_WRONG_BITRATE:
@@ -89,18 +113,32 @@ public:
             if (!doUp()) return false;
             brought_up_ = true;
             ++ref_count_;
+            statusReport.with([this](Status &d){
+                d.values["instances"] = std::to_string(ref_count_);
+            });
             return true;
 
         case IfaceState::DOWN:
         case IfaceState::UNKNOWN:
+            statusReport.with([](Status &d){
+                d.level = Status::OK;
+                d.values["connected"] = "false";
+            });
             // Está down o estado desconocido — configurar y subir
             log.logInfo("CANIfaceManager: bringing up %s at %u bps", iface_.c_str(), bitrate_);
             if (!doConfigure()) {};
             if (!doUp()) return false;
             brought_up_ = true;
             ++ref_count_;
+            statusReport.with([this](Status &d){
+                d.values["instances"] = std::to_string(ref_count_);
+            });
             return true;
         }
+        statusReport.with([](Status &d){
+            d.level = Status::ERROR;
+            d.values["connected"] = "false";
+        });
         return false;
     }
 
@@ -108,12 +146,17 @@ public:
     // Cuando ref_count llega a 0 y la interfaz fue levantada por nosotros, la baja.
     void release() {
         std::lock_guard<std::mutex> lk(mutex_);
-        if (ref_count_.load() == 0) return;
+        
         if (--ref_count_ == 0 && brought_up_) {
             log.logInfo("CANIfaceManager: last user released — bringing down %s", iface_.c_str());
-            ifDown();
+            doDown();
             brought_up_ = false;
         }
+
+        statusReport.with([this](Status &d){
+            d.values["instances"] = std::to_string(ref_count_);
+        });
+        
     }
 
     const std::string &iface()      const { return iface_;   }
@@ -162,10 +205,20 @@ private:
     // ── Operaciones de interfaz ───────────────────────────────────────────────
     bool doDown() {
         std::string cmd = "sudo -n ip link set " + iface_ + " down";
+        
         if (!runCmd(cmd.c_str())) {
             log.logError("CANIfaceManager: failed to bring down %s", iface_.c_str());
+            statusReport.with([](Status &d){
+                d.level = Status::ERROR;
+                d.values["perms"] = "unable";
+            });
             return false;
         }
+        statusReport.with([](Status &d){
+            d.level = Status::OK;
+            d.values["connected"] = "false";
+            d.values["perms"] = "able";
+        });
         return true;
     }
 
@@ -182,11 +235,25 @@ private:
     }
 
     bool doUp() {
+        attmps++;
+        statusReport.with([this](Status &d){
+            d.values["con_attmps"] = std::to_string(attmps);
+        });
+
         std::string cmd = "sudo -n ip link set " + iface_ + " up";
         if (!runCmd(cmd.c_str())) {
             log.logError("CANIfaceManager: failed to bring up %s", iface_.c_str());
+            statusReport.with([](Status &d){
+                d.level = Status::ERROR;
+                d.values["perms"] = "unable";
+            });
             return false;
         }
+        statusReport.with([](Status &d){
+            d.level = Status::OK;
+            d.values["connected"] = "true";
+            d.values["perms"] = "able";
+        });
         return true;
     }
 
@@ -194,6 +261,9 @@ private:
         std::string cmd = "sudo -n ip link set " + iface_ + " down";
         runCmd(cmd.c_str());  // best-effort
         log.logInfo("CANIfaceManager: %s down", iface_.c_str());
+        statusReport.with([](Status &d){
+            d.values["connected"] = "false";
+        });
     }
 
     // ── fork/exec sin system() ────────────────────────────────────────────────
@@ -236,5 +306,7 @@ private:
     std::atomic<int>  ref_count_{ 0 };
     bool              brought_up_{ false };
     std::mutex        mutex_;
+    Tracked<Status> statusReport;
+    u_int32_t  attmps { 0 };
     Logger            log;
 };

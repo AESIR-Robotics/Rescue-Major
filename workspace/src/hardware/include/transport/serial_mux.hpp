@@ -2,6 +2,8 @@
 // =============================================================================
 // serial_mux.hpp
 //
+// Currently unused, statusReport is unoperative
+//
 // Multiplexer local sobre stream serial. Replica el modelo del kernel CAN:
 //   - Un hilo lector parsea frames [CAN_ID 4B][frame...] y los deposita
 //     en el ring del canal registrado con ese rx_id.
@@ -28,6 +30,7 @@
 #include <sys/file.h>
 #include <cerrno>
 
+#include "utils/diagnostics.hpp"
 #include "utils/logger.hpp"
 
 // =============================================================================
@@ -88,15 +91,31 @@ public:
         MuxRing<RING_SIZE> ring{};
     };
 
-    SerialMux()  = default;
+    explicit SerialMux(DiagnosticRegistry *reg){
+        statusReport.with([](Status &d){
+            d.hardware_id = "Serial_Status_Unused";
+            d.level = Status::OK;
+            d.message = "";
+            d.name = "Serial_Status_Unused";
+            d.values.emplace(
+            std::make_pair("attmps", "0")
+            );
+        });
+        if(reg){
+            reg->register_source(&statusReport);
+        }
+    }
     ~SerialMux() { stop(); }
 
     SerialMux(const SerialMux &)            = delete;
     SerialMux &operator=(const SerialMux &) = delete;
 
     // ── Init ─────────────────────────────────────────────────────────────────
-    bool init(const std::string &port, uint32_t baud,
+    bool init(DiagnosticRegistry *reg, const std::string &port, uint32_t baud,
               Logger &in_log) {
+        if(reg){
+            reg->register_source(&statusReport);
+        }
         port_      = port;
         baud_      = baud;
         log = in_log;
@@ -355,7 +374,7 @@ private:
         log.logWarn("SerialMux: no channel for rx_id=0x%08X — frame dropped", rx_id);
     }
 
-
+    Tracked<Status> statusReport;
     Logger log{};
 
     // ── Miembros ──────────────────────────────────────────────────────────────

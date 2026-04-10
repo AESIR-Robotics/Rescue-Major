@@ -17,9 +17,11 @@
 #include <cerrno>
 #include <poll.h>
 #include <unistd.h>
+#include <utility>
 
 #include "utils/logger.hpp"
 #include "utils/crc.hpp"
+#include "utils/diagnostics.hpp"
 
 using micros    = std::chrono::microseconds;
 using stdclock  = std::chrono::steady_clock;
@@ -39,7 +41,7 @@ public:
     FD_INVALID,    ///< Kernel reports fd invalid (EBADF) — fd closed.
   };
 
-  explicit I2C_Transport(const std::string &device_in = "",
+  explicit I2C_Transport(DiagnosticRegistry *reg = nullptr, const std::string &device_in = "",
                          int slave_addr_in = 0x00);
   ~I2C_Transport() noexcept;
 
@@ -47,7 +49,7 @@ public:
   I2C_Transport(const I2C_Transport &)            = delete;
   I2C_Transport &operator=(const I2C_Transport &) = delete;
 
-  bool init(const std::string &device_in, int slave_addr_in);
+  bool init(DiagnosticRegistry *reg, const std::string &device_in, int slave_addr_in);
   bool connect();
   bool reconnect();
   
@@ -85,6 +87,7 @@ protected:
   // Exposed to Protocol_Handler so it can set transport error on protocol faults
   // that imply a transport problem (e.g. partial read after an ioctl failure).
   Transport_Error transport_error_ { Transport_Error::CLOSED };
+  Tracked<Status> statusReport; 
 
 private:
   bool isValidConfig() const noexcept;
@@ -94,8 +97,9 @@ private:
   int i2c_fd    { -1 };
   int slave_addr{ -1 };
 
+  u_int32_t  attmps { 0 };
   uint8_t internal_buf[INTERNAL_BUF_SIZE]{};
-  size_t  internal_pos { INTERNAL_BUF_SIZE }; // start "full" → first read fetches a chunk
+  size_t  internal_pos { INTERNAL_BUF_SIZE };
 
   Logger log{};
 };
@@ -104,14 +108,29 @@ private:
 // Inline definitions
 // =============================================================================
 
-inline I2C_Transport::I2C_Transport(const std::string &device_in, int slave_addr_in)
+inline I2C_Transport::I2C_Transport(DiagnosticRegistry *reg, const std::string &device_in, int slave_addr_in)
     : device{device_in}, slave_addr{slave_addr_in} {
+  statusReport.with([this](Status &d){
+    d.hardware_id = device;
+    d.level = Status::OK;
+    d.message = "The status of the I2C port";
+    d.name = "I2C_Transport";
+    d.values.emplace(std::make_pair("connected", "false"));
+    d.values.emplace(std::make_pair("con_attmps", "0"));
+    d.values.emplace(std::make_pair("kernel", ""));
+  });
+  if(reg){
+    reg->register_source(&statusReport);
+  }
   if (!device.empty()) connect();
 }
 
 inline I2C_Transport::~I2C_Transport() noexcept { disconnect(); }
 
-inline bool I2C_Transport::init(const std::string &device_in, int slave_addr_in) {
+inline bool I2C_Transport::init(DiagnosticRegistry *reg, const std::string &device_in, int slave_addr_in) {
+  if(reg){
+    reg->register_source(&statusReport);
+  }
   device     = device_in;
   slave_addr = slave_addr_in;
   return connect();
@@ -127,14 +146,21 @@ inline bool I2C_Transport::reconnect() {
 
 inline bool I2C_Transport::connect() {
   disconnect();
+  attmps++;
+  statusReport.with([this](Status &d){
+    d.values["con_attmps"] = std::to_string(attmps);
+  });
+
   transport_error_ = Transport_Error::NONE;
   if (!isValidConfig()) {
     transport_error_ = Transport_Error::INVALID_CONFIG;
+    statusReport.with([](Status &d){d.level = Status::ERROR;});
     return false;
   }
   i2c_fd = open(device.c_str(), O_RDWR | O_NONBLOCK);
   if (i2c_fd < 0) {
     transport_error_ = Transport_Error::OPEN_FAILED;
+    statusReport.with([](Status &d){d.level = Status::ERROR;});
     return false;
   }
 
@@ -147,16 +173,23 @@ inline bool I2C_Transport::connect() {
       log.logError("Failed to lock file");
     }
     disconnect();
+    statusReport.with([](Status &d){d.level = Status::ERROR;});
     return false;
   }
 
   if (ioctl(i2c_fd, I2C_SLAVE, slave_addr) < 0) {
     transport_error_ = Transport_Error::IOCTL_FAILED;
     disconnect();
+    statusReport.with([](Status &d){d.level = Status::ERROR;});
     return false;
   }
-
+  
   log.logInfo("Managed to connect %s at %d", device.c_str(), slave_addr);
+  statusReport.with([](Status &d){
+    d.level = Status::OK;
+    d.values["connected"] = "true";
+    d.values["kernel"] = "";
+  });
   return true;
 }
 
@@ -168,6 +201,10 @@ inline void I2C_Transport::disconnect() {
     log.logInfo("Closed connection to %s at %d", device.c_str(), slave_addr);
     if (transport_error_ == Transport_Error::NONE)
       transport_error_ = Transport_Error::CLOSED;
+
+    statusReport.with([](Status &d){
+      d.values["connected"] = "false";
+    });
   }
 }
 
@@ -192,6 +229,10 @@ inline bool I2C_Transport::waitFdReady(short events, deadline_t deadline) {
   if (ret < 0) {
     if (errno == EBADF) {
       disconnect();
+      statusReport.with([](Status &d){
+          d.level = Status::ERROR;
+          d.values["kernel"] = strerror(errno);
+        });
       transport_error_ = Transport_Error::FD_INVALID;
     }
     return false;
@@ -230,6 +271,10 @@ inline size_t I2C_Transport::writeData(const uint8_t *data, size_t length,
 
   if (ioctl(i2c_fd, I2C_RDWR, &iod) != static_cast<int>(iod.nmsgs)) {
     disconnect();
+    statusReport.with([](Status &d){
+          d.level = Status::ERROR;
+          d.values["kernel"] = strerror(errno);
+        });
     transport_error_ = Transport_Error::IOCTL_FAILED;
     return 0;
   }
@@ -290,6 +335,11 @@ inline size_t I2C_Transport::readData(uint8_t *buffer, size_t length,
       iod.msgs = &msgs[i];
       if (ioctl(i2c_fd, I2C_RDWR, &iod) != static_cast<int>(iod.nmsgs)) {
         log.logError("I2C ioctl failed: %s", strerror(errno));
+
+        statusReport.with([](Status &d){
+          d.level = Status::ERROR;
+          d.values["kernel"] = strerror(errno);
+        });
         disconnect();
         transport_error_ = Transport_Error::IOCTL_FAILED;
         return false;

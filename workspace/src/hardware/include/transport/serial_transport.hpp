@@ -16,6 +16,7 @@
 #include <termios.h>
 
 #include "utils/logger.hpp"
+#include "utils/diagnostics.hpp"
 
 using micros    = std::chrono::microseconds;
 using stdclock  = std::chrono::steady_clock;
@@ -24,6 +25,8 @@ using LogFn      = std::function<void(const std::string &)>;
 
 // =============================================================================
 // Serial_Transport
+//
+// Currently unused, statusReport is unoperative
 //
 // Owns a UART file descriptor and all serial-specific I/O.
 // Protocol_Handler<Serial_Transport> inherits this and calls:
@@ -55,7 +58,7 @@ public:
   // Internal read buffer — tunable; does not need to match anything on the MCU.
   static constexpr size_t INTERNAL_BUF_SIZE = 64;
 
-  explicit Serial_Transport(const std::string &port    = "",
+  explicit Serial_Transport(DiagnosticRegistry *reg, const std::string &port    = "",
                              uint32_t           baud    = 115200,
                              bool               hw_flow = false);
   ~Serial_Transport() noexcept;
@@ -63,7 +66,7 @@ public:
   Serial_Transport(const Serial_Transport &)            = delete;
   Serial_Transport &operator=(const Serial_Transport &) = delete;
 
-  bool init(const std::string &port,
+  bool init(DiagnosticRegistry *reg, const std::string &port,
             uint32_t           baud    = 115200,
             bool               hw_flow = false);
   bool connect();
@@ -89,6 +92,8 @@ protected:
 
   Transport_Error transport_error_ { Transport_Error::CLOSED };
 
+  Tracked<Status> statusReport;
+
 private:
   bool isValidConfig() const noexcept;
   bool applyTermios()  const noexcept;
@@ -112,16 +117,32 @@ private:
 // Inline definitions
 // =============================================================================
 
-inline Serial_Transport::Serial_Transport(const std::string &port,
+inline Serial_Transport::Serial_Transport(DiagnosticRegistry *reg, const std::string &port,
                                            uint32_t baud, bool hw_flow)
     : port_{port}, baud_{baud}, hw_flow_{hw_flow} {
+
+  statusReport.with([this](Status &d){
+    d.hardware_id = port_;
+    d.level = Status::OK;
+    d.message = "The status of the Serial port";
+    d.name = "Serial_Transport";
+    d.values.emplace(
+      std::make_pair("attmps", "0")
+    );
+  });
+  if(reg){
+    reg->register_source(&statusReport);
+  }
   if (!port_.empty()) connect();
 }
 
 inline Serial_Transport::~Serial_Transport() noexcept { disconnect(); }
 
-inline bool Serial_Transport::init(const std::string &port,
+inline bool Serial_Transport::init(DiagnosticRegistry *reg, const std::string &port,
                                     uint32_t baud, bool hw_flow) {
+  if(reg){
+    reg->register_source(&statusReport);
+  }
   port_    = port;
   baud_    = baud;
   hw_flow_ = hw_flow;
