@@ -283,6 +283,7 @@ class InputHandler {
   let inputHandler = null;
   let cmdVelTopic = null;
   let jointCommandTopic = null;
+  let cmdArmTopic = null;
   let isControlEnabled = false;
   let controlInterval = null;
   
@@ -317,10 +318,13 @@ class InputHandler {
         timeout: { sec: 0, nanosec: 0 }
       });
     }
-  };  // Incrementos pequeños en radianes
+  };  
+  
   let flipperVelocity = 1.0;
   let flipperAcceleration = 0.5;
   let dcMotorVelocity = 1.0;
+  let armVelocity = 0.2;
+  let armState = { x: 0, y: 0, z: 0, roll: 0, pitch: 0, yaw: 0 };
 
   let allKeymapProfiles = {};
   let currentKeymapProfile = "default";
@@ -389,6 +393,10 @@ class InputHandler {
       jointCommandTopic = robotAPI.getOrCreateTopic(
         '/hardware_node/joint_command',
         'hardware/msg/JointControl'
+      );
+      cmdArmTopic = robotAPI.getOrCreateTopic(
+        '/servo_node/delta_twist_cmds',
+        'geometry_msgs/msg/TwistStamped'
       );
       
       log('Motor control topics ready');
@@ -521,6 +529,28 @@ class InputHandler {
     log(`${FLIPPER_JOINTS[index]} Vel: ${flipperVelocities[index].toFixed(2)}`);
   }
   
+  function sendCmdArm(x, y, z, roll, pitch, yaw) {
+    if (!cmdArmTopic) return;
+    const now = new Date();
+    const secs = Math.floor(now.getTime() / 1000);
+    const nanosecs = (now.getTime() % 1000) * 1000000;
+    const msg = new ROSLIB.Message({
+      header: {
+        stamp: { sec: secs, nanosec: nanosecs },
+        frame_id: 'base_link'
+      },
+      twist: {
+        linear: { x: x, y: y, z: z },
+        angular: { x: roll, y: pitch, z: yaw }
+      }
+    });
+    try {
+      cmdArmTopic.publish(msg);
+    } catch (e) {
+      console.error('cmd_arm publish error:', e);
+    }
+  }
+
   function sendCmdVel(linear, angular) {
     if (!cmdVelTopic) return;
     const msg = new ROSLIB.Message({
@@ -558,6 +588,24 @@ class InputHandler {
       const angularDir = payload.angular_dir ?? 0;
       sendCmdVel(linearDir * dcMotorVelocity, angularDir * dcMotorVelocity);
     });
+
+    inputHandler.registerLocalFunction('sendCmdArm', (payload) => {
+      if (payload.x_dir !== undefined) armState.x = payload.x_dir;
+      if (payload.y_dir !== undefined) armState.y = payload.y_dir;
+      if (payload.z_dir !== undefined) armState.z = payload.z_dir;
+      if (payload.roll_dir !== undefined) armState.roll = payload.roll_dir;
+      if (payload.pitch_dir !== undefined) armState.pitch = payload.pitch_dir;
+      if (payload.yaw_dir !== undefined) armState.yaw = payload.yaw_dir;
+
+      sendCmdArm(
+        armState.x * armVelocity,
+        armState.y * armVelocity,
+        armState.z * armVelocity,
+        armState.roll * armVelocity,
+        armState.pitch * armVelocity,
+        armState.yaw * armVelocity
+      );
+    });
   }
 
   function setupSliders() {
@@ -591,6 +639,17 @@ class InputHandler {
       dcMotorVel.addEventListener('input', (e) => {
         dcMotorVelocity = parseFloat(e.target.value);
         dcMotorVelVal.textContent = dcMotorVelocity.toFixed(2);
+      });
+    }
+
+    const armVel = document.getElementById('arm-vel');
+    const armVelVal = document.getElementById('arm-vel-val');
+    if (armVel && armVelVal) {
+      armVel.value = armVelocity;
+      armVelVal.textContent = armVelocity.toFixed(2);
+      armVel.addEventListener('input', (e) => {
+        armVelocity = parseFloat(e.target.value);
+        armVelVal.textContent = armVelocity.toFixed(2);
       });
     }
   }
