@@ -26,8 +26,6 @@ using std::placeholders::_2;
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 static constexpr int  kNoCamera       = -1;
-static constexpr int  kTimerRgbMs     = 33;   // ~30 Hz
-static constexpr int  kTimerThermalMs = 111;
 static constexpr char kTopicSensors[] = "cam_sensors/image_raw";
 static constexpr char kTopicThermal[] = "cam_thermal/image_raw";
 static constexpr char kServiceName[]  = "command_vision_videoStream";
@@ -42,7 +40,7 @@ public:
         load_parameters();
         init_publishers_to_services();
         init_cameras();
-        init_timers();
+        //init_timers();
     }
 
     ~VideoStreamPublisher()
@@ -291,39 +289,154 @@ private:
         start_capture_threads(); 
     }
 
+
     void start_capture_threads()
     {
-        const size_t n = cameras_.size();
-        capture_frames_.resize(n);
-        latest_frames_.resize(n);
-        
-        frame_mutexes_.clear();
-        for (size_t i = 0; i < n; ++i) {
-            frame_mutexes_.push_back(std::make_unique<std::mutex>());
+        const size_t rgb_count = camera_count();
+
+        // 1. Iniciar hilos para las cámaras RGB normales
+        for (size_t i = 0; i < rgb_count; ++i) {
+            capture_threads_.emplace_back(&VideoStreamPublisher::rgb_capture_loop, this, i);
         }
 
-        for (size_t i = 0; i < n; ++i) {
-            capture_threads_.emplace_back([this, i]() {
-                while (running_) {
-                    if (!cameras_[i].isOpened()) {
-                        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                        continue;
-                    }
-                    
-                    // Timeout
-                     if (!cameras_[i].grab()) {
-                        std::this_thread::sleep_for(std::chrono::milliseconds(200));
-                        continue;
-                    }
+        // 2. Iniciar hilo exclusivo para la térmica (si existe)
+        if (thermal_camera_index_ != kNoCamera) {
+            size_t thermal_idx = cameras_.size() - 1;
+            capture_threads_.emplace_back(&VideoStreamPublisher::thermal_capture_loop, this, thermal_idx);
+        }
+    }
 
-                    cv::Mat frame;
-                    cameras_[i].retrieve(frame);
-                    if (!frame.empty()) {
-                        std::lock_guard<std::mutex> lock(*frame_mutexes_[i]);
-                        std::swap(capture_frames_[i], frame); 
-                    }
+    void rgb_capture_loop(size_t i)
+    {
+        constexpr int kMaxFailures = 10;
+        int consecutive_failures = 0;
+
+        while (running_) {
+
+            // Reconnect loop 
+            if (!cameras_[i].isOpened()) {
+                RCLCPP_WARN(get_logger(),
+                    "Cam RGB slot %zu (/dev/video%d) not open — attempting reconnect...",
+                    i, camera_devices_[i]);
+
+                std::vector<std::string> raw_devices;
+                get_parameter("cameras_devices", raw_devices);
+                if (i < raw_devices.size()) {
+                    int new_idx = resolve_device(raw_devices[i]);
+                    if (new_idx != kNoCamera) camera_devices_[i] = new_idx;
                 }
-            });
+
+                cv::VideoCapture new_cap = open_camera(i);
+                if (new_cap.isOpened()) {
+                    cameras_[i] = std::move(new_cap);
+                    consecutive_failures = 0;
+                    RCLCPP_INFO(get_logger(),
+                        "Cam slot %zu (/dev/video%d) reconnected.", i, camera_devices_[i]);
+                } else {
+                    std::this_thread::sleep_for(std::chrono::seconds(2));
+                }
+                continue;
+            }
+
+            // Capture
+            if (!cameras_[i].grab()) {
+                consecutive_failures++;
+                if (consecutive_failures >= kMaxFailures) {
+                    RCLCPP_WARN(get_logger(),
+                        "Cam slot %zu (/dev/video%d) — %d consecutive failures, releasing.",
+                        i, camera_devices_[i], consecutive_failures);
+                    cameras_[i].release();  // triggers reconnect loop next iteration
+                    consecutive_failures = 0;
+                } else {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                }
+                continue;
+            }
+
+            consecutive_failures = 0;
+
+            cv::Mat frame;
+            cameras_[i].retrieve(frame);
+            if (frame.empty()) continue;
+
+            // Publish
+            const bool is_thermal = (thermal_camera_index_ != kNoCamera)
+                                && (i == cameras_.size() - 1);
+
+            if (is_thermal) {
+                if (thermal_enabled_) publish_frame(frame, pub_thermal_);
+            } else if (static_cast<int>(i) == sensors_cam_idx_) {
+                publish_frame(frame, pub_sensors_);
+            } else if (i < publishers_.size()) {
+                publish_frame(frame, publishers_[i]);
+            }
+        }
+    }
+
+    void thermal_capture_loop(size_t i)
+    {
+        constexpr int kMaxFailures = 10;
+        int consecutive_failures = 0;
+
+        const auto frame_duration = std::chrono::milliseconds(850 / camera_fps_[i]); // Le baje un poquito que diera 9 fps aprox :)
+        auto last_publish_time = std::chrono::steady_clock::now();
+
+        while (running_) {
+
+            // Reconnect loop 
+            if (!cameras_[i].isOpened()) {
+                RCLCPP_WARN(get_logger(),
+                    "Cam Thermal slot %zu (/dev/video%d) not open — attempting reconnect...",
+                    i, camera_devices_[i]);
+
+                std::string thermal_str;
+                get_parameter("thermal_camera_device", thermal_str);
+
+                int new_idx = resolve_device(thermal_str);
+                if (new_idx != kNoCamera) camera_devices_[i] = new_idx;
+
+                cv::VideoCapture new_cap = open_camera(i);
+                if (new_cap.isOpened()) {
+                    cameras_[i] = std::move(new_cap);
+                    consecutive_failures = 0;
+                    RCLCPP_INFO(get_logger(),
+                        "Cam slot %zu (/dev/video%d) reconnected.", i, camera_devices_[i]);
+                } else {
+                    std::this_thread::sleep_for(std::chrono::seconds(2));
+                }
+                continue;
+            }
+
+            // Capture
+            if (!cameras_[i].grab()) {
+                consecutive_failures++;
+                if (consecutive_failures >= kMaxFailures) {
+                    RCLCPP_WARN(get_logger(),
+                        "Cam slot %zu (/dev/video%d) — %d consecutive failures, releasing.",
+                        i, camera_devices_[i], consecutive_failures);
+                    cameras_[i].release();  // triggers reconnect loop next iteration
+                    consecutive_failures = 0;
+                } else {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                }
+                continue;
+            }
+
+            consecutive_failures = 0;
+
+            auto now = std::chrono::steady_clock::now();
+            if (now - last_publish_time < frame_duration) {
+                continue; 
+            }
+            last_publish_time = now;
+
+            cv::Mat frame;
+            cameras_[i].retrieve(frame);
+            if (frame.empty()) continue;
+
+            if (thermal_enabled_) {
+                if (thermal_enabled_) publish_frame(frame, pub_thermal_);
+            }
         }
     }
  
@@ -384,61 +497,6 @@ private:
         }
  
         return cap;
-    }
-
-    // ── Timer initialisation ──────────────────────────────────────────────────
-    void init_timers()
-    {
-        const size_t rgb_count = camera_count();
-
-        camera_timers_.resize(cameras_.size());
-        // RGB cameras
-        for (size_t i = 0; i < rgb_count; ++i) {
-            int ms = static_cast<int>(1000 / camera_fps_[i]);
-            camera_timers_[i] = create_wall_timer(
-                std::chrono::milliseconds(ms),
-                [this, i]() { camera_callback(i); });
-        }
- 
-        // Thermal camera timer (only if a thermal device is configured)
-        if (thermal_camera_index_ != kNoCamera) {
-            size_t thermal_idx = cameras_.size() - 1;
-            int ms = static_cast<int>(1000 / camera_fps_[thermal_idx]);
-            camera_timers_[thermal_idx] = create_wall_timer(
-                std::chrono::milliseconds(ms),
-                [this, thermal_idx]() { thermal_callback(thermal_idx); });
-        }
-    }
-
-    // ── Camera callbacks ───────────────────────────────────────────────────────
-    void camera_callback(size_t i) {
-        cv::Mat frame;
-        {
-            std::lock_guard<std::mutex> lock(*frame_mutexes_[i]);
-            std::swap(latest_frames_[i], capture_frames_[i]); 
-            frame = latest_frames_[i]; 
-        }
-        if (frame.empty()) return;
-
-        if (static_cast<int>(i) == sensors_cam_idx_) {
-            publish_frame(frame, pub_sensors_);
-        } else if (i < publishers_.size()) {
-            publish_frame(frame, publishers_[i]);
-        }
-    }
-
-    void thermal_callback(size_t thermal_idx) {
-        if (!thermal_enabled_ || thermal_camera_index_ == kNoCamera) return;
-
-        cv::Mat frame;
-        {
-            std::lock_guard<std::mutex> lock(*frame_mutexes_[thermal_idx]);
-            std::swap(latest_frames_[thermal_idx], capture_frames_[thermal_idx]);
-            frame = latest_frames_[thermal_idx];
-        }
-        if (frame.empty()) return;
-
-        publish_frame(frame, pub_thermal_);
     }
 
     // ── Service callback ──────────────────────────────────────────────────────
@@ -527,9 +585,6 @@ private:
     std::vector<cv::VideoCapture> cameras_;
 
     // Capture threads
-    std::vector<cv::Mat>        latest_frames_;
-    std::vector<cv::Mat>        capture_frames_; 
-    std::vector<std::unique_ptr<std::mutex>> frame_mutexes_;
     std::vector<std::thread>    capture_threads_;
     std::atomic<bool>           running_{true};
 
@@ -538,9 +593,8 @@ private:
     rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr              pub_sensors_;
     rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr              pub_thermal_;
 
-    // Service & timers
+    // Services
     rclcpp::Service<vision::srv::Command>::SharedPtr command_service_;
-    std::vector<rclcpp::TimerBase::SharedPtr> camera_timers_;
 };
 
 int main(int argc, char * argv[]) {
