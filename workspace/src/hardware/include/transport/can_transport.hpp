@@ -497,7 +497,7 @@ inline bool CAN_Transport::sendFrame(const uint8_t *frame_data,
     if (stdclock::now() >= deadline) return false;
 
     if (!waitFdReady(POLLOUT, deadline)) {
-        log.logWarn("CAN sendFrame: poll timeout on %s", interface_.c_str());
+        log.logWarn("CAN sendFrame: poll timeout on %s, tx=0x%08X  rx=0x%08X", interface_.c_str(), tx_id_, rx_id_);
         return false;
     }
 

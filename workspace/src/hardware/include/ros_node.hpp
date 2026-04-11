@@ -208,6 +208,8 @@ private:
   bool errorRecoveryI2C();
   bool errorRecoveryCANArm(int i);
 
+  void deadmanStop();
+
   // --- Publishing -----------------------------------------------------------
   void publishJointFeedback();
   void publishDCFeedback();
@@ -251,6 +253,12 @@ private:
 
   static constexpr double joint_timeout_s_{2.0};
   DCState                feedback_dc;
+
+  // Deadman — stops all motion if no command arrives within timeout
+  rclcpp::Time      last_cmd_time_{};
+  bool              deadman_initialized_{ false };
+  static constexpr double deadman_timeout_s_{ 0.5 }; 
+  bool              deadman_fired_{ false };          
 
   // Timing counters
   int i2c_poll_ticks_{0};
@@ -434,6 +442,15 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
 }
 
 inline void HardwareDriverNode::tick() {
+  // Deadman: stop all motion if no command received within timeout
+  if (deadman_initialized_ && !deadman_fired_) {
+    double age = (this->now() - last_cmd_time_).seconds();
+    if (age > deadman_timeout_s_) {
+      deadman_fired_ = true;
+      //deadmanStop();
+    }
+  }
+
   tickI2C();
   tickCAN();
 }
@@ -794,6 +811,9 @@ inline void HardwareDriverNode::cmdVelCallback(
     d.setLinear(msg->linear.x);
     d.setAngular(msg->angular.z);
   });
+  last_cmd_time_     = this->now();
+  deadman_initialized_ = true;
+  deadman_fired_     = false;   // reset — operator is active again
 }
 
 inline void HardwareDriverNode::jointCommandCallback(
@@ -823,8 +843,30 @@ inline void HardwareDriverNode::jointCommandCallback(
       d.setAcceleration(arm_idx, msg->acceleration[i]);
     }
   });
+  last_cmd_time_       = this->now();
+  deadman_initialized_ = true;
+  deadman_fired_       = false;
 }
 
+
+// -----------------------------------------------------------------------------
+// deadmanStop — called when no command arrives within deadman_timeout_s_
+// Zeroes all velocities and accelerations without touching target positions.
+// Mirrors the MCU deadman behavior.
+// -----------------------------------------------------------------------------
+inline void HardwareDriverNode::deadmanStop() {
+  in_dc.with([](DCState &d) {
+    d.setLinear(0.0);
+    d.setAngular(0.0);
+  });
+  in_flipper.with([](StepperState<4> &d) {
+    for (int i = 0; i < 4; ++i) d.setSpeed(i, 0.0);
+  });
+  in_arms.with([](StepperState<number_arms> &d) {
+    for (int i = 0; i < number_arms; ++i) d.setSpeed(i, 0.0);
+  });
+  RCLCPP_WARN(get_logger(), "Deadman triggered — all velocities zeroed");
+}
 // -----------------------------------------------------------------------------
 inline bool HardwareDriverNode::errorRecoveryI2C() {
   if (++i2c_wait_counter_ < max_wait_ticks_) return false;

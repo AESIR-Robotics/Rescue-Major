@@ -2,7 +2,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sched.h>
 
-#include "hardware_driver_node.hpp"
+#include "ros_node.hpp"
 
 int main(int argc, char **argv) {
 
