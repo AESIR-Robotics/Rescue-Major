@@ -1,5 +1,29 @@
 {
-  "default": {
+  "flipper_control": {
+    "stop_dc": {
+      "type": "teleop_cmd_vel",
+      "payload": {
+        "linear_dir": 0,
+        "angular_dir": 0
+      }
+    },
+    "stop_arm": {
+      "type": "teleop_cmd_arm",
+      "payload": {
+        "x_dir": 0,
+        "y_dir": 0,
+        "z_dir": 0,
+        "roll_dir": 0,
+        "pitch_dir": 0,
+        "yaw_dir": 0
+      }
+    },
+    "stop_flipper": {
+      "type": "teleop_flipper",
+      "payload": {
+        "action": "reset"
+      }
+    },
     "button_mute_server": {
       "type": "send_service",
       "data_type": "vision/srv/Command",
@@ -21,61 +45,52 @@
       }
     },
     "w": {
-      "type": "local_function",
+      "type": "teleop_cmd_vel",
       "payload": {
-        "function_name": "sendCmdVel",
         "linear_dir": 1,
         "angular_dir": 0
       },
       "release_payload": {
-        "function_name": "sendCmdVel",
         "linear_dir": 0,
         "angular_dir": 0
       }
     },
     "s": {
-      "type": "local_function",
+      "type": "teleop_cmd_vel",
       "payload": {
-        "function_name": "sendCmdVel",
         "linear_dir": -1,
         "angular_dir": 0
       },
       "release_payload": {
-        "function_name": "sendCmdVel",
         "linear_dir": 0,
         "angular_dir": 0
       }
     },
     "a": {
-      "type": "local_function",
+      "type": "teleop_cmd_vel",
       "payload": {
-        "function_name": "sendCmdVel",
         "linear_dir": 1,
         "angular_dir": -1
       },
       "release_payload": {
-        "function_name": "sendCmdVel",
         "linear_dir": 0,
         "angular_dir": 0
       }
     },
     "d": {
-      "type": "local_function",
+      "type": "teleop_cmd_vel",
       "payload": {
-        "function_name": "sendCmdVel",
         "linear_dir": 1,
         "angular_dir": 1
       },
       "release_payload": {
-        "function_name": "sendCmdVel",
         "linear_dir": 0,
         "angular_dir": 0
       }
     },
     " ": {
-      "type": "local_function",
+      "type": "teleop_cmd_vel",
       "payload": {
-        "function_name": "sendCmdVel",
         "linear": 0,
         "angular": 0
       }
@@ -191,46 +206,38 @@
       }
     },
     "9": {
-      "type": "local_function",
+      "type": "teleop_flipper",
       "payload": {
-        "function_name": "modifyFlipper",
         "index": 0
       },
       "release_payload": {
-        "function_name": "modifyFlipper",
         "index": 0
       }
     },
     "7": {
-      "type": "local_function",
+      "type": "teleop_flipper",
       "payload": {
-        "function_name": "modifyFlipper",
         "index": 1
       },
       "release_payload": {
-        "function_name": "modifyFlipper",
         "index": 1
       }
     },
     "6": {
-      "type": "local_function",
+      "type": "teleop_flipper",
       "payload": {
-        "function_name": "modifyFlipper",
         "index": 2
       },
       "release_payload": {
-        "function_name": "modifyFlipper",
         "index": 2
       }
     },
     "4": {
-      "type": "local_function",
+      "type": "teleop_flipper",
       "payload": {
-        "function_name": "modifyFlipper",
         "index": 3
       },
       "release_payload": {
-        "function_name": "modifyFlipper",
         "index": 3
       }
     },
@@ -239,15 +246,19 @@
       "payload": {
         "function_name": "resetFlipperPositions"
       }
+    },
+    "stop_base": {
+      "type": "teleop_cmd_vel",
+      "payload": {
+        "linear_dir": 0,
+        "angular_dir": 0
+      }
     }
   },
 
 
 
-
-
-
-  "custom": {
+  "arm_control": {
     "button_mute_server": {
       "type": "send_service",
       "data_type": "vision/srv/Command",
@@ -269,9 +280,8 @@
       }
     },
     " ": {
-      "type": "local_function",
+      "type": "teleop_cmd_vel",
       "payload": {
-        "function_name": "sendCmdVel",
         "linear": 0,
         "angular": 0
       }
@@ -321,14 +331,12 @@
       }
     },
     "i": {
-      "type": "local_function",
+      "type": "teleop_cmd_vel",
       "payload": {
-        "function_name": "sendCmdVel",
         "linear_dir": 1,
         "angular_dir": 0
       },
       "release_payload": {
-        "function_name": "sendCmdVel",
         "linear_dir": 0,
         "angular_dir": 0
       }
@@ -364,75 +372,109 @@
       }
     },
     "j": {
-      "type": "local_function",
+      "type": "teleop_cmd_vel",
       "payload": {
-        "function_name": "sendCmdVel",
         "linear_dir": 1,
         "angular_dir": -1
       },
       "release_payload": {
-        "function_name": "sendCmdVel",
         "linear_dir": 0,
         "angular_dir": 0
       }
     },
     "k": {
-      "type": "local_function",
+      "type": "teleop_cmd_vel",
       "payload": {
-        "function_name": "sendCmdVel",
         "linear_dir": -1,
         "angular_dir": 0
       },
       "release_payload": {
-        "function_name": "sendCmdVel",
         "linear_dir": 0,
         "angular_dir": 0
       }
     },
     "8": {
-      "type": "local_function",
-      "payload": { "function_name": "sendCmdArm", "x_dir": 1 },
-      "release_payload": { "function_name": "sendCmdArm", "x_dir": 0 }
+      "type": "teleop_cmd_arm",
+      "payload": {
+        "x_dir": 1
+      },
+      "release_payload": {
+        "x_dir": 0
+      }
     },
     "2": {
-      "type": "local_function",
-      "payload": { "function_name": "sendCmdArm", "x_dir": -1 },
-      "release_payload": { "function_name": "sendCmdArm", "x_dir": 0 }
+      "type": "teleop_cmd_arm",
+      "payload": {
+        "x_dir": -1
+      },
+      "release_payload": {
+        "x_dir": 0
+      }
     },
     "4": {
-      "type": "local_function",
-      "payload": { "function_name": "sendCmdArm", "y_dir": 1 },
-      "release_payload": { "function_name": "sendCmdArm", "y_dir": 0 }
+      "type": "teleop_cmd_arm",
+      "payload": {
+        "y_dir": 1
+      },
+      "release_payload": {
+        "y_dir": 0
+      }
     },
     "6": {
-      "type": "local_function",
-      "payload": { "function_name": "sendCmdArm", "y_dir": -1 },
-      "release_payload": { "function_name": "sendCmdArm", "y_dir": 0 }
+      "type": "teleop_cmd_arm",
+      "payload": {
+        "y_dir": -1
+      },
+      "release_payload": {
+        "y_dir": 0
+      }
     },
     "9": {
-      "type": "local_function",
-      "payload": { "function_name": "sendCmdArm", "z_dir": 1 },
-      "release_payload": { "function_name": "sendCmdArm", "z_dir": 0 }
+      "type": "teleop_cmd_arm",
+      "payload": {
+        "z_dir": 1
+      },
+      "release_payload": {
+        "z_dir": 0
+      }
     },
     "3": {
-      "type": "local_function",
-      "payload": { "function_name": "sendCmdArm", "z_dir": -1 },
-      "release_payload": { "function_name": "sendCmdArm", "z_dir": 0 }
+      "type": "teleop_cmd_arm",
+      "payload": {
+        "z_dir": -1
+      },
+      "release_payload": {
+        "z_dir": 0
+      }
     },
     "7": {
-      "type": "local_function",
-      "payload": { "function_name": "sendCmdArm", "roll_dir": 1 },
-      "release_payload": { "function_name": "sendCmdArm", "roll_dir": 0 }
+      "type": "teleop_cmd_arm",
+      "payload": {
+        "roll_dir": 1
+      },
+      "release_payload": {
+        "roll_dir": 0
+      }
     },
     "1": {
-      "type": "local_function",
-      "payload": { "function_name": "sendCmdArm", "roll_dir": -1 },
-      "release_payload": { "function_name": "sendCmdArm", "roll_dir": 0 }
+      "type": "teleop_cmd_arm",
+      "payload": {
+        "roll_dir": -1
+      },
+      "release_payload": {
+        "roll_dir": 0
+      }
     },
     "5": {
-      "type": "local_function",
-      "payload": { "function_name": "sendCmdArm", "pitch_dir": 1 },
-      "release_payload": { "function_name": "sendCmdArm", "pitch_dir": 0 }
+      "type": "teleop_cmd_arm",
+      "payload": {
+        "pitch_dir": 1
+      },
+      "release_payload": {
+        "pitch_dir": 0
+      }
     }
+  },
+  "gamepad": {
   }
 }

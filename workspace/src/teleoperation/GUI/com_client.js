@@ -1,4 +1,147 @@
 
+const TeleopState = {
+  active: false,
+  speeds: { arm: 0.2, base: 1.0, flipper: 1.0, flipperAccel: 0.5 },
+  arm: { x: 0, y: 0, z: 0, roll: 0, pitch: 0, yaw: 0 },
+  flippers: {
+    velocities: [0, 0, 0, 0],
+    directions: [1, 1, 1, 1],
+    globalDirection: 1,
+    lastPressTime: [0, 0, 0, 0]
+  },
+  resetAll: function() {
+    this.arm = { x: 0, y: 0, z: 0, roll: 0, pitch: 0, yaw: 0 };
+    this.flippers.velocities = [0, 0, 0, 0];
+  }
+};
+
+const FLIPPER_JOINTS = ['flipper_0', 'flipper_1', 'flipper_2', 'flipper_3'];
+
+const TeleopActions = {
+  send_topic: (action, payload, handler) => {
+    if (!handler.robotAPI) return { success: false, error: 'RobotAPI not set' };
+    return {
+      success: true,
+      type: 'send_topic',
+      count: action.topics.length,
+      results: handler.robotAPI.sendTopic(action.topics, action.data_type, payload)
+    };
+  },
+  send_service: (action, payload, handler) => {
+    if (!handler.robotAPI) return { success: false, error: 'RobotAPI not set' };
+    return {
+      success: true,
+      type: 'send_service',
+      count: action.topics.length,
+      results: handler.robotAPI.sendService(action.topics, action.data_type, payload)
+    };
+  },
+  local_function: (action, payload, handler) => {
+    const funcName = payload.function_name;
+    if (funcName === 'toggleFlipperDirection') {
+      TeleopState.flippers.globalDirection = TeleopState.flippers.globalDirection === 1 ? -1 : 1;
+      for (let i = 0; i < 4; i++) {
+        TeleopState.flippers.directions[i] = TeleopState.flippers.globalDirection;
+      }
+      return { success: true, type: 'local_function', function: funcName };
+    }
+    if (funcName === 'resetFlipperPositions') {
+      TeleopActions.teleop_flipper({ type: 'teleop_flipper' }, { action: 'reset' }, handler);
+      return { success: true, type: 'local_function', function: funcName };
+    }
+
+    if (!funcName || !handler.localFunctions[funcName]) {
+      return { success: false, error: `Local function "${funcName}" not found` };
+    }
+    handler.localFunctions[funcName](payload);
+    return { success: true, type: 'local_function', function: funcName };
+  },
+  teleop_cmd_vel: (action, payload, handler) => {
+    const lin = payload.linear_dir ?? 0;
+    const ang = payload.angular_dir ?? 0;
+    const isStop = lin === 0 && ang === 0;
+    
+    if (!handler.robotAPI || (!TeleopState.active && !isStop)) {
+        return { success: false, error: 'Control disabled' };
+    }
+    
+    handler.robotAPI.getOrCreateTopic('/hardware_node/cmd_vel', 'geometry_msgs/msg/Twist').publish(
+      new ROSLIB.Message({
+        linear: { x: lin * TeleopState.speeds.base, y: 0.0, z: 0.0 },
+        angular: { x: 0.0, y: 0.0, z: ang * TeleopState.speeds.base }
+      })
+    );
+    return { success: true, type: 'teleop_cmd_vel' };
+  },
+  teleop_cmd_arm: (action, payload, handler) => {
+    const isStop = ['x', 'y', 'z', 'roll', 'pitch', 'yaw'].every(axis => (payload[`${axis}_dir`] || 0) === 0);
+    if (!handler.robotAPI || (!TeleopState.active && !isStop)) return { success: false, error: 'Control disabled' };
+    
+    ['x', 'y', 'z', 'roll', 'pitch', 'yaw'].forEach(axis => {
+      if (payload[`${axis}_dir`] !== undefined) {
+        TeleopState.arm[axis] = payload[`${axis}_dir`];
+      }
+    });
+
+    // Forced zeroing via payload for absolute stops
+    if (isStop) {
+      TeleopState.arm = { x: 0, y: 0, z: 0, roll: 0, pitch: 0, yaw: 0 };
+    }
+    
+    const now = new Date();
+    handler.robotAPI.getOrCreateTopic('/servo_node/delta_twist_cmds', 'geometry_msgs/msg/TwistStamped').publish(
+      new ROSLIB.Message({
+        header: {
+          stamp: { sec: Math.floor(now.getTime()/1000), nanosec: (now.getTime()%1000)*1000000 },
+          frame_id: 'base_link'
+        },
+        twist: {
+          linear: { x: TeleopState.arm.x * TeleopState.speeds.arm, y: TeleopState.arm.y * TeleopState.speeds.arm, z: TeleopState.arm.z * TeleopState.speeds.arm },
+          angular: { x: TeleopState.arm.roll * TeleopState.speeds.arm, y: TeleopState.arm.pitch * TeleopState.speeds.arm, z: TeleopState.arm.yaw * TeleopState.speeds.arm }
+        }
+      })
+    );
+    return { success: true, type: 'teleop_cmd_arm' };
+  },
+  teleop_flipper: (action, payload, handler) => {
+    const actionCmd = payload.action;
+    const isStop = actionCmd === 'reset';
+    if (!handler.robotAPI || (!TeleopState.active && !isStop)) return { success: false, error: 'Control disabled' };
+    
+    if (actionCmd === 'reset') {
+      TeleopState.flippers.velocities = [0, 0, 0, 0];
+    } else if (actionCmd === 'toggle_global_dir') {
+      TeleopState.flippers.globalDirection = TeleopState.flippers.globalDirection === 1 ? 0 : 1;
+      TeleopState.flippers.directions = Array(4).fill(TeleopState.flippers.globalDirection);
+    } else if (payload.index !== undefined) {
+      const idx = payload.index;
+      if (payload.state === 'released') {
+        TeleopState.flippers.velocities[idx] = 0.0;
+      } else {
+        const t = Date.now();
+        if (t - TeleopState.flippers.lastPressTime[idx] < 400) {
+          TeleopState.flippers.directions[idx] = TeleopState.flippers.directions[idx] === 1 ? 0 : 1;
+          TeleopState.flippers.lastPressTime[idx] = 0;
+        } else {
+          TeleopState.flippers.lastPressTime[idx] = t;
+        }
+        TeleopState.flippers.velocities[idx] = (TeleopState.flippers.directions[idx] === 1 ? 1 : -1) * TeleopState.speeds.flipper;
+      }
+    }
+    
+    handler.robotAPI.getOrCreateTopic('/hardware_node/joint_command', 'hardware/msg/JointControl').publish(
+      new ROSLIB.Message({
+        header: { stamp: { sec: 0, nanosec: 0 }, frame_id: '' },
+        joint_names: FLIPPER_JOINTS,
+        position: [], effort: [],
+        velocity: TeleopState.flippers.velocities.slice(),
+        acceleration: Array(4).fill(TeleopState.speeds.flipperAccel)
+      })
+    );
+    return { success: true, type: 'teleop_flipper' };
+  }
+};
+
 //______________________ Input Handler ____________________
 class InputHandler {
   constructor({ deadzone = 0.12, robotAPI = null } = {}) {
@@ -42,7 +185,7 @@ class InputHandler {
         }
 
         // Validate action type
-        if (!['send_topic', 'send_service', 'local_function'].includes(type)) {
+        if (!['send_topic', 'send_service', 'local_function', 'teleop_cmd_vel', 'teleop_cmd_arm', 'teleop_flipper'].includes(type)) {
           console.warn(`[InputHandler] Unknown action type "${type}" for key ${keyId}`);
           return;
         }
@@ -92,39 +235,10 @@ class InputHandler {
     const payloadWithState = basePayload ? { ...basePayload, state: keyState } : { state: keyState };
 
     try {
-      switch (action.type) {
-        case 'send_topic':
-          if (!this.robotAPI) {
-            return { success: false, error: 'RobotAPI not set' };
-          }
-          return {
-            success: true,
-            type: 'send_topic',
-            count: action.topics.length,
-            results: this.robotAPI.sendTopic(action.topics, action.data_type, payloadWithState)
-          };
-
-        case 'send_service':
-          if (!this.robotAPI) {
-            return { success: false, error: 'RobotAPI not set' };
-          }
-          return {
-            success: true,
-            type: 'send_service',
-            count: action.topics.length,
-            results: this.robotAPI.sendService(action.topics, action.data_type, payloadWithState)
-          };
-
-        case 'local_function':
-          const funcName = payloadWithState.function_name;
-          if (!funcName || !this.localFunctions[funcName]) {
-            return { success: false, error: `Local function "${funcName}" not found` };
-          }
-          this.localFunctions[funcName](payloadWithState);
-          return { success: true, type: 'local_function', function: funcName };
-
-        default:
-          return { success: false, error: `Unknown action type: ${action.type}` };
+      if (TeleopActions[action.type]) {
+        return TeleopActions[action.type](action, payloadWithState, this);
+      } else {
+        return { success: false, error: `Unknown action type: ${action.type}` };
       }
     } catch (error) {
       console.error(`[InputHandler] Execute failed for ${keyId}:`, error.message);
@@ -281,30 +395,7 @@ class InputHandler {
 
   let robotAPI = null;
   let inputHandler = null;
-  let cmdVelTopic = null;
-  let jointCommandTopic = null;
-  let cmdArmTopic = null;
-  let isControlEnabled = false;
-  let controlInterval = null;
   
-  const UPDATE_INTERVAL = 50;  // 20Hz 
-  
-  // Flipper joint names (standard ROS naming)
-  const FLIPPER_JOINTS = [
-    'flipper_0',
-    'flipper_1',
-    'flipper_2',
-    'flipper_3'
-  ];
-
-  // Flipper state
-  let flipperVelocities = [0.0, 0.0, 0.0, 0.0];
-  let flipperPositions = [];
-  let flipperDirection = 1;  // 1 = add, 0 = subtract
-  let flipperDirections = [1, 1, 1, 1]; 
-  let lastFlipperPressTime = [0, 0, 0, 0]; 
-  const FLIPPER_DOUBLE_CLICK_DELAY = 400; // ms
-  const FLIPPER_STEP = 0.1;
   let currentControlMode = "velocity";
   window.switch_control_mode = function(mode) {
     if (mode !== "velocity" && mode !== "position") return;
@@ -319,15 +410,9 @@ class InputHandler {
       });
     }
   };  
-  
-  let flipperVelocity = 1.0;
-  let flipperAcceleration = 0.5;
-  let dcMotorVelocity = 1.0;
-  let armVelocity = 0.2;
-  let armState = { x: 0, y: 0, z: 0, roll: 0, pitch: 0, yaw: 0 };
 
   let allKeymapProfiles = {};
-  let currentKeymapProfile = "default";
+  let currentKeymapProfile = "";
   let activeSlot = 1;
 
   window.handleSlotChange = function(slotNum, selectElem) {
@@ -385,25 +470,6 @@ class InputHandler {
       robotAPI = new RobotAPI(ros);
       inputHandler = new InputHandler({ robotAPI });
       
-      // Create topics for motor control
-      cmdVelTopic = robotAPI.getOrCreateTopic(
-        '/hardware_node/cmd_vel',
-        'geometry_msgs/msg/Twist'
-      );
-      jointCommandTopic = robotAPI.getOrCreateTopic(
-        '/hardware_node/joint_command',
-        'hardware/msg/JointControl'
-      );
-      cmdArmTopic = robotAPI.getOrCreateTopic(
-        '/servo_node/delta_twist_cmds',
-        'geometry_msgs/msg/TwistStamped'
-      );
-      
-      log('Motor control topics ready');
-      log('  - /hardware_node/cmd_vel (Twist)');
-      log('  - /hardware_node/joint_command (JointControl)');
-      
-      registerFlipperFunctions();
       setupKeyboardBindings();
       setupSliders();
       
@@ -411,35 +477,58 @@ class InputHandler {
       fetch('static/keymaps.json')
         .then(r => r.json())
         .then(profiles => {
-          allKeymapProfiles = profiles;
-          inputHandler.loadActions(allKeymapProfiles[currentKeymapProfile]);
-          log(`Keyboard profiles loaded (${Object.keys(profiles).length}). Start active: ${currentKeymapProfile}`);
-          const select1 = document.getElementById("keymap-slot-1");
-          const select2 = document.getElementById("keymap-slot-2");
-          if (select1 && select2) {
-            select1.innerHTML = "";
-            select2.innerHTML = "";
-            Object.keys(profiles).forEach(key => {
-              const opt1 = document.createElement("option");
-              opt1.value = key;
-              opt1.textContent = key;
-              select1.appendChild(opt1);
-              const opt2 = document.createElement("option");
-              opt2.value = key;
-              opt2.textContent = key;
-              select2.appendChild(opt2);
-            });
-            // Default select values if available
-            if (profiles["default"]) select1.value = "default";
-            if (profiles["custom"]) select2.value = "custom";
+          // Extract the gamepad mapping so we don't treat it as a keyboard profile
+          let controllerConfig = {};
+          if (profiles["gamepad"]) {
+            controllerConfig = profiles["gamepad"];
+            delete profiles["gamepad"];
           }
-          return fetch('static/keys_map_controller.json');
-        })
-        .then(r => r.json())
-        .then(controllerConfig => {
+          
+          allKeymapProfiles = profiles;
+          const profileKeys = Object.keys(profiles);
+          if (profileKeys.length === 0) {
+            log('Error: No keymap profiles found in keymaps.json.');
+          } else {
+            currentKeymapProfile = profileKeys[0];
+            inputHandler.loadActions(allKeymapProfiles[currentKeymapProfile]);
+            log(`Keyboard profiles loaded (${profileKeys.length}). Start active: ${currentKeymapProfile}`);
+            
+            const select1 = document.getElementById("keymap-slot-1");
+            const select2 = document.getElementById("keymap-slot-2");
+            const profileLabel = document.getElementById("current-profile-label");
+            if (profileLabel) { profileLabel.textContent = "Activo: " + currentKeymapProfile; }
+            
+            if (select1 && select2) {
+              select1.innerHTML = "";
+              select2.innerHTML = "";
+              profileKeys.forEach(key => {
+                const opt1 = document.createElement("option");
+                opt1.value = key;
+                opt1.textContent = key;
+                select1.appendChild(opt1);
+                
+                const opt2 = document.createElement("option");
+                opt2.value = key;
+                opt2.textContent = key;
+                select2.appendChild(opt2);
+              });
+              
+              select1.value = profileKeys[0];
+              if (profileKeys.length > 1) {
+                select2.value = profileKeys[1];
+              } else {
+                select2.value = profileKeys[0];
+              }
+            }
+          }
+          
           // Store controller mappings separately
           inputHandler.controllerActionMap = controllerConfig;
-          log(`Controller actions loaded: ${Object.keys(controllerConfig).length} mappings`);
+          if (Object.keys(controllerConfig).length > 0) {
+            log(`Controller actions loaded: ${Object.keys(controllerConfig).length} mappings`);
+          } else {
+            log(`Warning: 'gamepad' profile not found in keymaps.json. Controller actions not loaded.`);
+          }
           
           inputHandler.on('buttonDown', (padIndex, buttonIndex) => {
             const buttonId = String(buttonIndex);
@@ -507,211 +596,68 @@ class InputHandler {
     });
   }
   
-  function modifyFlipperVelocity(index, state) {
-    if (state === 'released') {
-      flipperVelocities[index] = 0.0;
-    } else {
-      const now = Date.now();
-      
-      // Detect double-click to toggle individual direction
-      if (now - lastFlipperPressTime[index] < FLIPPER_DOUBLE_CLICK_DELAY) {
-        flipperDirections[index] = flipperDirections[index] === 1 ? 0 : 1;
-        log(`${FLIPPER_JOINTS[index]} individual direction: ${flipperDirections[index] === 1 ? 'ADD' : 'SUBTRACT'}`);
-        lastFlipperPressTime[index] = 0; // Reset to prevent repetitive toggles
-      } else {
-        lastFlipperPressTime[index] = now;
-      }
-
-      const sign = flipperDirections[index] === 1 ? 1 : -1;
-      flipperVelocities[index] = sign * flipperVelocity;
-    }
-    publishFlippers();
-    log(`${FLIPPER_JOINTS[index]} Vel: ${flipperVelocities[index].toFixed(2)}`);
-  }
-  
-  function sendCmdArm(x, y, z, roll, pitch, yaw) {
-    if (!cmdArmTopic) return;
-    const now = new Date();
-    const secs = Math.floor(now.getTime() / 1000);
-    const nanosecs = (now.getTime() % 1000) * 1000000;
-    const msg = new ROSLIB.Message({
-      header: {
-        stamp: { sec: secs, nanosec: nanosecs },
-        frame_id: 'base_link'
-      },
-      twist: {
-        linear: { x: x, y: y, z: z },
-        angular: { x: roll, y: pitch, z: yaw }
-      }
-    });
-    try {
-      cmdArmTopic.publish(msg);
-    } catch (e) {
-      console.error('cmd_arm publish error:', e);
-    }
-  }
-
-  function sendCmdVel(linear, angular) {
-    if (!cmdVelTopic) return;
-    const msg = new ROSLIB.Message({
-      linear: { x: linear, y: 0.0, z: 0.0 },
-      angular: { x: 0.0, y: 0.0, z: angular }
-    });
-    try {
-      cmdVelTopic.publish(msg);
-    } catch (e) {
-      console.error('cmd_vel publish error:', e);
-    }
-  }
-  
-  function registerFlipperFunctions() {
-    inputHandler.registerLocalFunction('toggleFlipperDirection', () => {
-      flipperDirection = flipperDirection === 1 ? 0 : 1;
-      flipperDirections = [flipperDirection, flipperDirection, flipperDirection, flipperDirection];
-      log(`Global flipper direction: ${flipperDirection === 1 ? 'ADD' : 'SUBTRACT'}`);
-    });
-    
-    inputHandler.registerLocalFunction('modifyFlipper', (payload) => {
-      if (typeof payload.index === 'number') {
-        modifyFlipperVelocity(payload.index, payload.state);
-      }
-    });
-    
-    inputHandler.registerLocalFunction('resetFlipperPositions', () => {
-      flipperVelocities = [0, 0, 0, 0];
-      publishFlippers();
-      log('Flipper velocities reset to 0');
-    });
-    
-    inputHandler.registerLocalFunction('sendCmdVel', (payload) => {
-      const linearDir = payload.linear_dir ?? 0;
-      const angularDir = payload.angular_dir ?? 0;
-      sendCmdVel(linearDir * dcMotorVelocity, angularDir * dcMotorVelocity);
-    });
-
-    inputHandler.registerLocalFunction('sendCmdArm', (payload) => {
-      if (payload.x_dir !== undefined) armState.x = payload.x_dir;
-      if (payload.y_dir !== undefined) armState.y = payload.y_dir;
-      if (payload.z_dir !== undefined) armState.z = payload.z_dir;
-      if (payload.roll_dir !== undefined) armState.roll = payload.roll_dir;
-      if (payload.pitch_dir !== undefined) armState.pitch = payload.pitch_dir;
-      if (payload.yaw_dir !== undefined) armState.yaw = payload.yaw_dir;
-
-      sendCmdArm(
-        armState.x * armVelocity,
-        armState.y * armVelocity,
-        armState.z * armVelocity,
-        armState.roll * armVelocity,
-        armState.pitch * armVelocity,
-        armState.yaw * armVelocity
-      );
-    });
-  }
-
   function setupSliders() {
     const flipperVel = document.getElementById('flipper-vel');
     const flipperVelVal = document.getElementById('flipper-vel-val');
     if (flipperVel && flipperVelVal) {
-      flipperVel.value = flipperVelocity;
-      flipperVelVal.textContent = flipperVelocity.toFixed(2);
+      flipperVel.value = TeleopState.speeds.flipper;
+      flipperVelVal.textContent = TeleopState.speeds.flipper.toFixed(2);
       flipperVel.addEventListener('input', (e) => {
-        flipperVelocity = parseFloat(e.target.value);
-        flipperVelVal.textContent = flipperVelocity.toFixed(2);
+        TeleopState.speeds.flipper = parseFloat(e.target.value);
+        flipperVelVal.textContent = TeleopState.speeds.flipper.toFixed(2);
       });
     }
 
     const flipperAccel = document.getElementById('flipper-accel');
     const flipperAccelVal = document.getElementById('flipper-accel-val');
     if (flipperAccel && flipperAccelVal) {
-      flipperAccel.value = flipperAcceleration;
-      flipperAccelVal.textContent = flipperAcceleration.toFixed(2);
+      flipperAccel.value = TeleopState.speeds.flipperAccel;
+      flipperAccelVal.textContent = TeleopState.speeds.flipperAccel.toFixed(2);
       flipperAccel.addEventListener('input', (e) => {
-        flipperAcceleration = parseFloat(e.target.value);
-        flipperAccelVal.textContent = flipperAcceleration.toFixed(2);
+        TeleopState.speeds.flipperAccel = parseFloat(e.target.value);
+        flipperAccelVal.textContent = TeleopState.speeds.flipperAccel.toFixed(2);
       });
     }
 
     const dcMotorVel = document.getElementById('dc-motor-vel');
     const dcMotorVelVal = document.getElementById('dc-motor-vel-val');
     if (dcMotorVel && dcMotorVelVal) {
-      dcMotorVel.value = dcMotorVelocity;
-      dcMotorVelVal.textContent = dcMotorVelocity.toFixed(2);
+      dcMotorVel.value = TeleopState.speeds.base;
+      dcMotorVelVal.textContent = TeleopState.speeds.base.toFixed(2);
       dcMotorVel.addEventListener('input', (e) => {
-        dcMotorVelocity = parseFloat(e.target.value);
-        dcMotorVelVal.textContent = dcMotorVelocity.toFixed(2);
+        TeleopState.speeds.base = parseFloat(e.target.value);
+        dcMotorVelVal.textContent = TeleopState.speeds.base.toFixed(2);
       });
     }
 
     const armVel = document.getElementById('arm-vel');
     const armVelVal = document.getElementById('arm-vel-val');
     if (armVel && armVelVal) {
-      armVel.value = armVelocity;
-      armVelVal.textContent = armVelocity.toFixed(2);
+      armVel.value = TeleopState.speeds.arm;
+      armVelVal.textContent = TeleopState.speeds.arm.toFixed(2);
       armVel.addEventListener('input', (e) => {
-        armVelocity = parseFloat(e.target.value);
-        armVelVal.textContent = armVelocity.toFixed(2);
+        TeleopState.speeds.arm = parseFloat(e.target.value);
+        armVelVal.textContent = TeleopState.speeds.arm.toFixed(2);
       });
-    }
-  }
-
-  function publishFlippers() {
-    if (!jointCommandTopic || !inputHandler) return;
-    
-  
-    
-    // Publish joint_command (JointControl) 
-    const jointMsg = new ROSLIB.Message({
-      header: {
-        stamp: { sec: 0, nanosec: 0 },
-        frame_id: ''
-      },
-      joint_names: FLIPPER_JOINTS,
-      position: [],
-      velocity: flipperVelocities.slice(),
-      acceleration: [flipperAcceleration, flipperAcceleration, flipperAcceleration, flipperAcceleration],
-      effort: []
-    });
-    
-    try {
-      jointCommandTopic.publish(jointMsg);
-    } catch (e) {
-      console.error('joint_command publish error:', e);
     }
   }
 
   const startButton = document.getElementById('toggle-teleoperation');
   if (startButton) {
     startButton.addEventListener('click', () => {
-      isControlEnabled = !isControlEnabled;
+      TeleopState.active = !TeleopState.active;
       
       const btnText = document.getElementById('teleoperation-btn-text');
       if (btnText) {
-        btnText.textContent = isControlEnabled ? 'Stop Teleoperation' : 'Start Teleoperation';
+        btnText.textContent = TeleopState.active ? 'Stop Teleoperation' : 'Start Teleoperation';
       }
       
-      log('Teleoperation ' + (isControlEnabled ? 'ENABLED' : 'DISABLED'));
+      log('Teleoperation ' + (TeleopState.active ? 'ENABLED' : 'DISABLED'));
       
-      if (!isControlEnabled) {
-        if (controlInterval) {
-          clearInterval(controlInterval);
-          controlInterval = null;
-        }
-        // Send stop commands
-        if (cmdVelTopic) {
-          const stopTwist = new ROSLIB.Message({
-            linear: { x: 0.0, y: 0.0, z: 0.0 },
-            angular: { x: 0.0, y: 0.0, z: 0.0 }
-          });
-          cmdVelTopic.publish(stopTwist);
-        }
-        
-        // Stop flippers
-        if (jointCommandTopic) {
-          flipperVelocities = [0.0, 0.0, 0.0, 0.0];
-          publishFlippers();
-        }
-      } else {
-        // Interval removed: flippers now publish on press/release events
+      if (!TeleopState.active && robotAPI) { 
+        inputHandler.executeAction('stop_dc', 'pressed');
+        inputHandler.executeAction('stop_arm', 'pressed');
+        inputHandler.executeAction('stop_flipper', 'pressed');
       }
     });
   } else {
@@ -745,22 +691,17 @@ class InputHandler {
   };
   
   window.getFlipperState = () => ({
-    velocities: flipperVelocities.slice(),
-    directions: flipperDirections.slice(), 
-    direction: flipperDirection,
+    velocities: TeleopState.flippers.velocities.slice(),
+    directions: TeleopState.flippers.directions.slice(), 
+    direction: TeleopState.flippers.globalDirection,
     joints: FLIPPER_JOINTS
   });
 
   window.addEventListener('beforeunload', () => {
-    if (cmdVelTopic) {
-      try {
-        cmdVelTopic.publish(new ROSLIB.Message({
-          linear: { x: 0.0, y: 0.0, z: 0.0 },
-          angular: { x: 0.0, y: 0.0, z: 0.0 }
-        }));
-      } catch (e) {
-        console.error('Error publishing emergency stop:', e);
-      }
+    if (inputHandler) {
+      inputHandler.executeAction('stop_dc', 'pressed');
+      inputHandler.executeAction('stop_arm', 'pressed');
+      inputHandler.executeAction('stop_flipper', 'pressed');
     }
     if (robotAPI) robotAPI.dispose();
     if (inputHandler) inputHandler.dispose();
