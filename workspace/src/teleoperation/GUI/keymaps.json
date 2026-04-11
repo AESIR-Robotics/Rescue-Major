@@ -1,5 +1,7 @@
 {
   "flipper_control": {
+
+
     "stop_dc": {
       "type": "teleop_cmd_vel",
       "payload": {
@@ -22,26 +24,6 @@
       "type": "teleop_flipper",
       "payload": {
         "action": "reset"
-      }
-    },
-    "button_mute_server": {
-      "type": "send_service",
-      "data_type": "vision/srv/Command",
-      "topics": [
-        "/web_rtc_commands"
-      ],
-      "payload": {
-        "data": "audio:mute"
-      }
-    },
-    "button_unmute_server": {
-      "type": "send_service",
-      "data_type": "vision/srv/Command",
-      "topics": [
-        "/web_rtc_commands"
-      ],
-      "payload": {
-        "data": "audio:unmute"
       }
     },
     "w": {
@@ -93,110 +75,6 @@
       "payload": {
         "linear": 0,
         "angular": 0
-      }
-    },
-    "r": {
-      "type": "send_service",
-      "data_type": "vision/srv/Command",
-      "topics": [
-        "/command_vision_videoStream",
-        "/web_rtc_commands"
-      ],
-      "payload": {
-        "data": "vision:camera,0"
-      }
-    },
-    "t": {
-      "type": "send_service",
-      "data_type": "vision/srv/Command",
-      "topics": [
-        "/command_vision_videoStream",
-        "/web_rtc_commands"
-      ],
-      "payload": {
-        "data": "vision:camera,1"
-      }
-    },
-    "y": {
-      "type": "send_service",
-      "data_type": "vision/srv/Command",
-      "topics": [
-        "/command_vision_videoStream",
-        "/web_rtc_commands"
-      ],
-      "payload": {
-        "data": "vision:camera,2"
-      }
-    },
-    "u": {
-      "type": "send_service",
-      "data_type": "vision/srv/Command",
-      "topics": [
-        "/command_vision_videoStream",
-        "/web_rtc_commands"
-      ],
-      "payload": {
-        "data": "vision:camera,3"
-      }
-    },
-    "i": {
-      "type": "send_service",
-      "data_type": "vision/srv/Command",
-      "topics": [
-        "/command_vision_videoStream"
-      ],
-      "payload": {
-        "data": "vision:thermal,on"
-      }
-    },
-    "f": {
-      "type": "send_service",
-      "data_type": "vision/srv/Command",
-      "topics": [
-        "/command_vision_videoStream"
-      ],
-      "payload": {
-        "data": "vision:thermal,off"
-      }
-    },
-    "g": {
-      "type": "send_service",
-      "data_type": "vision/srv/Command",
-      "topics": [
-        "/command_vision_sensors"
-      ],
-      "payload": {
-        "data": "vision:mode,0"
-      }
-    },
-    "h": {
-      "type": "send_service",
-      "data_type": "vision/srv/Command",
-      "topics": [
-        "/command_vision_sensors"
-      ],
-      "payload": {
-        "data": "vision:mode,1"
-      }
-    },
-    "j": {
-      "type": "send_service",
-      "data_type": "vision/srv/Command",
-      "topics": [
-        "/command_vision_sensors"
-      ],
-      "payload": {
-        "data": "vision:mode,2"
-      }
-    },
-    "k": {
-      "type": "send_service",
-      "data_type": "vision/srv/Command",
-      "topics": [
-        "/command_vision_sensors"
-      ],
-      "payload": {
-        "data": "vision:mode,3"
       }
     },
     "8": {
@@ -259,75 +137,13 @@
 
 
   "arm_control": {
-    "button_mute_server": {
-      "type": "send_service",
-      "data_type": "vision/srv/Command",
-      "topics": [
-        "/web_rtc_commands"
-      ],
-      "payload": {
-        "data": "audio:mute"
-      }
-    },
-    "button_unmute_server": {
-      "type": "send_service",
-      "data_type": "vision/srv/Command",
-      "topics": [
-        "/web_rtc_commands"
-      ],
-      "payload": {
-        "data": "audio:unmute"
-      }
-    },
+
+
     " ": {
       "type": "teleop_cmd_vel",
       "payload": {
         "linear": 0,
         "angular": 0
-      }
-    },
-    "r": {
-      "type": "send_service",
-      "data_type": "vision/srv/Command",
-      "topics": [
-        "/command_vision_videoStream",
-        "/web_rtc_commands"
-      ],
-      "payload": {
-        "data": "vision:camera,0"
-      }
-    },
-    "t": {
-      "type": "send_service",
-      "data_type": "vision/srv/Command",
-      "topics": [
-        "/command_vision_videoStream",
-        "/web_rtc_commands"
-      ],
-      "payload": {
-        "data": "vision:camera,1"
-      }
-    },
-    "y": {
-      "type": "send_service",
-      "data_type": "vision/srv/Command",
-      "topics": [
-        "/command_vision_videoStream",
-        "/web_rtc_commands"
-      ],
-      "payload": {
-        "data": "vision:camera,2"
-      }
-    },
-    "u": {
-      "type": "send_service",
-      "data_type": "vision/srv/Command",
-      "topics": [
-        "/command_vision_videoStream",
-        "/web_rtc_commands"
-      ],
-      "payload": {
-        "data": "vision:camera,3"
       }
     },
     "i": {
@@ -339,36 +155,6 @@
       "release_payload": {
         "linear_dir": 0,
         "angular_dir": 0
-      }
-    },
-    "f": {
-      "type": "send_service",
-      "data_type": "vision/srv/Command",
-      "topics": [
-        "/command_vision_videoStream"
-      ],
-      "payload": {
-        "data": "vision:thermal,off"
-      }
-    },
-    "g": {
-      "type": "send_service",
-      "data_type": "vision/srv/Command",
-      "topics": [
-        "/command_vision_sensors"
-      ],
-      "payload": {
-        "data": "vision:mode,0"
-      }
-    },
-    "h": {
-      "type": "send_service",
-      "data_type": "vision/srv/Command",
-      "topics": [
-        "/command_vision_sensors"
-      ],
-      "payload": {
-        "data": "vision:mode,1"
       }
     },
     "j": {
@@ -475,6 +261,139 @@
       }
     }
   },
+
+  
   "gamepad": {
+  },
+
+
+  "gui_buttons":{
+
+
+    "mute_server": {
+      "type": "send_service",
+      "data_type": "vision/srv/Command",
+      "topics": [
+        "/web_rtc_commands"
+      ],
+      "payload": {
+        "data": "audio:mute"
+      }
+    },
+    "unmute_server": {
+      "type": "send_service",
+      "data_type": "vision/srv/Command",
+      "topics": [
+        "/web_rtc_commands"
+      ],
+      "payload": {
+        "data": "audio:unmute"
+      }
+    },
+
+    "r": {
+      "type": "send_service",
+      "data_type": "vision/srv/Command",
+      "topics": [
+        "/command_vision_videoStream",
+        "/web_rtc_commands"
+      ],
+      "payload": {
+        "data": "vision:camera,0"
+      }
+    },
+    "t": {
+      "type": "send_service",
+      "data_type": "vision/srv/Command",
+      "topics": [
+        "/command_vision_videoStream",
+        "/web_rtc_commands"
+      ],
+      "payload": {
+        "data": "vision:camera,1"
+      }
+    },
+    "y": {
+      "type": "send_service",
+      "data_type": "vision/srv/Command",
+      "topics": [
+        "/command_vision_videoStream",
+        "/web_rtc_commands"
+      ],
+      "payload": {
+        "data": "vision:camera,2"
+      }
+    },
+    "u": {
+      "type": "send_service",
+      "data_type": "vision/srv/Command",
+      "topics": [
+        "/command_vision_videoStream",
+        "/web_rtc_commands"
+      ],
+      "payload": {
+        "data": "vision:camera,3"
+      }
+    },
+    "i": {
+      "type": "send_service",
+      "data_type": "vision/srv/Command",
+      "topics": [
+        "/command_vision_videoStream"
+      ],
+      "payload": {
+        "data": "vision:thermal,on"
+      }
+    },
+    "f": {
+      "type": "send_service",
+      "data_type": "vision/srv/Command",
+      "topics": [
+        "/command_vision_videoStream"
+      ],
+      "payload": {
+        "data": "vision:thermal,off"
+      }
+    },
+    "g": {
+      "type": "send_service",
+      "data_type": "vision/srv/Command",
+      "topics": [
+        "/command_vision_sensors"
+      ],
+      "payload": {
+        "data": "vision:mode,0"
+      }
+    },
+    "h": {
+      "type": "send_service",
+      "data_type": "vision/srv/Command",
+      "topics": [
+        "/command_vision_sensors"
+      ],
+      "payload": {
+        "data": "vision:mode,1"
+      }
+    },
+    "j": {
+      "type": "send_service",
+      "data_type": "vision/srv/Command",
+      "topics": [
+        "/command_vision_sensors"
+      ],
+      "payload": {
+        "data": "vision:mode,2"
+      }
+    },
+    "k": {
+      "type": "send_service",
+      "data_type": "vision/srv/Command",
+      "topics": [
+        "/command_vision_sensors"
+      ],
+      "payload": {
+        "data": "vision:mode,3"
+      }
+    }
   }
 }
