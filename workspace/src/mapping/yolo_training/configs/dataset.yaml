@@ -1,0 +1,43 @@
+# YOLOv8 Dataset Configuration
+# Equipo Aesir - RoboCup Rescue 2026
+#
+# INSTRUCCIONES:
+# 1. Reemplaza las rutas de abajo con tus directorios de dataset
+# 2. Estructura esperada:
+#    dataset/
+#    ├── images/
+#    │   ├── train/        (70% imágenes de entrenamiento)
+#    │   ├── val/          (15% imágenes de validación)
+#    │   └── test/         (15% imágenes de prueba, opcional)
+#    └── labels/
+#        ├── train/        (anotaciones YOLO txt)
+#        ├── val/
+#        └── test/
+#
+# 3. Formato de anotación YOLO (.txt):
+#    - Un archivo .txt por imagen
+#    - Cada línea: <class_id> <x_center> <y_center> <width> <height>
+#    - Todas las coordenadas normalizadas entre 0 y 1
+#
+# Ejemplo línea de anotación:
+#   0 0.5 0.5 0.3 0.4    (clase=pessoa, centro=050%, ancho=30%, alto=40%)
+
+# Ruta base del dataset (relativa o absoluta)
+path: /opt/robot/Repos/aesir/workspace/src/mapping/yolo_training/datasets/rescue_dataset
+
+# Subdirectorios
+train: images/train
+val: images/val
+test: images/test  # opcional, comenta si no lo tienes
+
+# Número de clases
+nc: 6
+
+# Nombres de clases (¡IMPORTANTE! Deben coincidir con class_id en labels/)
+names:
+  0: victim
+  1: hazmat
+  2: fire
+  3: smoke
+  4: door
+  5: rubble

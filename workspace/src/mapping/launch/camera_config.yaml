@@ -1,0 +1,10 @@
+/yolov4_spatial_node:
+  ros__parameters:
+    preview_width: 640
+    preview_height: 640
+    image_width: 640
+    image_height: 640
+    # Estos parámetros obligan al sensor a cambiar su resolución nativa de preview
+    camera_model: "OAK-D"
+    nn_path: "/home/aesir/Rescue-Major/workspace/src/mapping/yolo_training/runs/detect/runs/detect/aesir_rescue_v27_final3/weights/best.blob"
+    nn_config_path: "/home/aesir/Rescue-Major/workspace/src/mapping/yolo_training/runs/detect/runs/detect/aesir_rescue_v27_final3/weights/best.json"

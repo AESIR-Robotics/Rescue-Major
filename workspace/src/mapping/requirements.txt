@@ -9,13 +9,30 @@
 
 # ── Core ─────────────────────────────────────────────────────────────────────
 numpy>=1.24.0
+scipy>=1.10.0
 
 # ── Visión / YOLO ────────────────────────────────────────────────────────────
-ultralytics>=8.0.0          # YOLOv8
+ultralytics>=8.0.0          # YOLOv8 - Detección y entrenamiento
 opencv-python-headless>=4.8.0  # Sin GUI para Jetson/server
+Pillow>=9.0.0               # Procesamiento de imágenes
+
+# ── Training / Visualización ─────────────────────────────────────────────────
+torch>=2.0.0                # PyTorch (CPU/GPU)
+torchvision>=0.15.0         # Visión con PyTorch
+tensorboard>=2.12.0         # Visualización de entrenamiento
+matplotlib>=3.7.0           # Gráficos
+pandas>=1.5.0               # Análisis de datos
 
 # ── Procesamiento de nubes de puntos ─────────────────────────────────────────
 open3d>=0.17.0              # Para export_map_ply.py
+
+# ── Utilidades ──────────────────────────────────────────────────────────────
+pyyaml>=6.0                 # Archivos YAML (dataset.yaml)
+tqdm>=4.65.0                # Barras de progreso
+requests>=2.31.0            # Descargas
+
+# ── ROI Annotation (opcional pero útil para preparar datasets) ────────────────
+# labelImg>=1.8.6            # Herramienta GUI para anotar imágenes
 
 # ── Nota: Las siguientes son dependencias ROS 2, se instalan via apt ─────────
 # ros-humble-cv-bridge

@@ -1,0 +1,6 @@
+Invoking command in '/home/aesir/Rescue-Major/build/unitree_lidar_ros2': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake /home/aesir/Rescue-Major/workspace/src/unilidar_sdk2/unitree_lidar_ros2/src/unitree_lidar_ros2 -DCMAKE_INSTALL_PREFIX=/home/aesir/Rescue-Major/install/unitree_lidar_ros2
+Invoked command in '/home/aesir/Rescue-Major/build/unitree_lidar_ros2' returned '0': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake /home/aesir/Rescue-Major/workspace/src/unilidar_sdk2/unitree_lidar_ros2/src/unitree_lidar_ros2 -DCMAKE_INSTALL_PREFIX=/home/aesir/Rescue-Major/install/unitree_lidar_ros2
+Invoking command in '/home/aesir/Rescue-Major/build/unitree_lidar_ros2': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --build /home/aesir/Rescue-Major/build/unitree_lidar_ros2 -- -j8 -l8
+Invoked command in '/home/aesir/Rescue-Major/build/unitree_lidar_ros2' returned '0': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --build /home/aesir/Rescue-Major/build/unitree_lidar_ros2 -- -j8 -l8
+Invoking command in '/home/aesir/Rescue-Major/build/unitree_lidar_ros2': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --install /home/aesir/Rescue-Major/build/unitree_lidar_ros2
+Invoked command in '/home/aesir/Rescue-Major/build/unitree_lidar_ros2' returned '0': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --install /home/aesir/Rescue-Major/build/unitree_lidar_ros2

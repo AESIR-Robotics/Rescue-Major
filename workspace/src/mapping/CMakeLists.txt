@@ -13,9 +13,24 @@ find_package(rclpy REQUIRED)
 # Install Python scripts as executables
 install(PROGRAMS
   scripts/object_detection_node.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME object_detection_node
+)
+
+install(PROGRAMS
   scripts/export_map_ply.py
   DESTINATION lib/${PROJECT_NAME}
+  RENAME export_map_ply
 )
+
+# ---------------------------------------------------------
+# NUEVO: Registrar landmark_tf_publisher.py
+# (No usamos RENAME para que conserve el .py como lo pide el launch)
+install(PROGRAMS
+  scripts/landmark_tf_publisher.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+# ---------------------------------------------------------
 
 # Install launch files
 install(DIRECTORY

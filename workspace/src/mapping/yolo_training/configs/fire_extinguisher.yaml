@@ -1,0 +1,5 @@
+path: /home/aesir/Rescue-Major/workspace/src/mapping/yolo_training/datasets/unified/fire_extinguisher
+train: images/train
+val: images/val
+nc: 1
+names: ['fire_extinguisher']

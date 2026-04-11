@@ -1,0 +1,9 @@
+digraph G {
+"unilidar_lidar" -> "oak_rgb_camera_optical_frame"[label=" Broadcaster: default_authority\nAverage rate: 10000.0\nBuffer length: 0.0\nMost recent transform: 0.0\nOldest transform: 0.0\n"];
+"unilidar_imu" -> "unilidar_lidar"[label=" Broadcaster: default_authority\nAverage rate: 250.008\nBuffer length: 4.408\nMost recent transform: 1775796675.143668\nOldest transform: 1775796670.735802\n"];
+"unilidar_imu_initial" -> "unilidar_imu"[label=" Broadcaster: default_authority\nAverage rate: 250.008\nBuffer length: 4.408\nMost recent transform: 1775796675.143668\nOldest transform: 1775796670.735802\n"];
+edge [style=invis];
+ subgraph cluster_legend { style=bold; color=black; label ="view_frames Result";
+"Recorded at time: 1775796675.1525147"[ shape=plaintext ] ;
+}->"unilidar_imu_initial";
+}
