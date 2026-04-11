@@ -20,3 +20,6 @@ workspace/src/teleoperation/GUI/assets/placeholder.jpg
 
 # Cerrtificates
 *.pem
+
+workspace/src/mapping/yolo_training/dataset
+workspace/src/unilidar_sdk2
