@@ -125,6 +125,24 @@
         "function_name": "resetFlipperPositions"
       }
     },
+    "q": {
+      "type": "teleop_cmd_arm_joint_vel",
+      "payload": {
+        "index": 0
+      },
+      "release_payload": {
+        "index": 0
+      }
+    },
+    "e": {
+      "type": "teleop_cmd_arm_joint_vel",
+      "payload": {
+        "index": 5
+      },
+      "release_payload": {
+        "index": 5
+      }
+    },
     "stop_base": {
       "type": "teleop_cmd_vel",
       "payload": {
@@ -139,14 +157,14 @@
   "arm_control": {
 
 
-    " ": {
+    "d": {
       "type": "teleop_cmd_vel",
       "payload": {
-        "linear": 0,
-        "angular": 0
+        "linear": 1,
+        "angular": 1
       }
     },
-    "i": {
+    "w": {
       "type": "teleop_cmd_vel",
       "payload": {
         "linear_dir": 1,
@@ -157,7 +175,7 @@
         "angular_dir": 0
       }
     },
-    "j": {
+    "a": {
       "type": "teleop_cmd_vel",
       "payload": {
         "linear_dir": 1,
@@ -168,7 +186,7 @@
         "angular_dir": 0
       }
     },
-    "k": {
+    "s": {
       "type": "teleop_cmd_vel",
       "payload": {
         "linear_dir": -1,
@@ -259,10 +277,19 @@
       "release_payload": {
         "pitch_dir": 0
       }
+    },
+    "0": {
+      "type": "teleop_flipper",
+      "payload": {
+        "index": 4
+      },
+      "release_payload": {
+        "index": 4
+      }
     }
   },
 
-  
+
   "gamepad": {
   },
 

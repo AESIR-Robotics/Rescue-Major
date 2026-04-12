@@ -1,21 +1,29 @@
 
 const TeleopState = {
   active: false,
-  speeds: { arm: 0.2, base: 1.0, flipper: 1.0, flipperAccel: 0.5 },
+  speeds: { arm: 0.2, arm_joint: 0.5, arm_joint_gains: [1.0, 1.0, 2.0, 1.0, 1.0, 1.0], 
+    base: 1.0, flipper: 1.0, flipperAccel: 0.5 },
   arm: { x: 0, y: 0, z: 0, roll: 0, pitch: 0, yaw: 0 },
-  flippers: {
-    velocities: [0, 0, 0, 0],
-    directions: [1, 1, 1, 1],
+  arm_joints: {
+    velocities: [0, 0, 0, 0, 0, 0],
+    directions: [1, 1, 1, 1, 1, 1],
     globalDirection: 1,
-    lastPressTime: [0, 0, 0, 0]
+    lastPressTime: [0, 0, 0, 0, 0, 0]
+  },
+  flippers: {
+    velocities: [0, 0, 0, 0, 0],
+    directions: [1, 1, 1, 1, 1],
+    globalDirection: 1,
+    lastPressTime: [0, 0, 0, 0, 0]
   },
   resetAll: function() {
     this.arm = { x: 0, y: 0, z: 0, roll: 0, pitch: 0, yaw: 0 };
-    this.flippers.velocities = [0, 0, 0, 0];
+    this.arm_joints.velocities = [0, 0, 0, 0, 0, 0];
+    this.flippers.velocities = [0, 0, 0, 0, 0];
   }
 };
 
-const FLIPPER_JOINTS = ['flipper_0', 'flipper_1', 'flipper_2', 'flipper_3'];
+const FLIPPER_JOINTS = ['flipper_0', 'flipper_1', 'flipper_2', 'flipper_3', 'joint_7'];
 
 const TeleopActions = {
   send_topic: (action, payload, handler) => {
@@ -40,7 +48,7 @@ const TeleopActions = {
     const funcName = payload.function_name;
     if (funcName === 'toggleFlipperDirection') {
       TeleopState.flippers.globalDirection = TeleopState.flippers.globalDirection === 1 ? -1 : 1;
-      for (let i = 0; i < 4; i++) {
+      for (let i = 0; i < 5; i++) {
         TeleopState.flippers.directions[i] = TeleopState.flippers.globalDirection;
       }
       return { success: true, type: 'local_function', function: funcName };
@@ -73,6 +81,7 @@ const TeleopActions = {
     );
     return { success: true, type: 'teleop_cmd_vel' };
   },
+  // Inverse Kinematics via MoveIt Servo
   teleop_cmd_arm: (action, payload, handler) => {
     const isStop = ['x', 'y', 'z', 'roll', 'pitch', 'yaw'].every(axis => (payload[`${axis}_dir`] || 0) === 0);
     if (!handler.robotAPI || (!TeleopState.active && !isStop)) return { success: false, error: 'Control disabled' };
@@ -103,16 +112,65 @@ const TeleopActions = {
     );
     return { success: true, type: 'teleop_cmd_arm' };
   },
+  
+  // Joint Velocity Control through moveit
+  teleop_cmd_arm_joint_vel: (action, payload, handler) => {
+    const actionCmd = payload.action;
+    const isStop = actionCmd === 'reset';
+    if (!handler.robotAPI || (!TeleopState.active && !isStop)) return { success: false, error: 'Control disabled' };
+
+    if (actionCmd === 'reset') {
+      TeleopState.arm_joints.velocities = [0, 0, 0, 0, 0, 0];
+    } else if (actionCmd === 'toggle_global_dir') {
+      TeleopState.arm_joints.globalDirection = TeleopState.arm_joints.globalDirection === 1 ? 0 : 1;
+      TeleopState.arm_joints.directions = Array(6).fill(TeleopState.arm_joints.globalDirection);
+    } else if (payload.index !== undefined && payload.index >= 0 && payload.index < 6) {
+      const idx = payload.index;
+      if (payload.state === 'released') {
+        TeleopState.arm_joints.velocities[idx] = 0.0;
+      } else {
+        const t = Date.now();
+        if (t - TeleopState.arm_joints.lastPressTime[idx] < 400) {
+          TeleopState.arm_joints.directions[idx] = TeleopState.arm_joints.directions[idx] === 1 ? 0 : 1;
+          TeleopState.arm_joints.lastPressTime[idx] = 0;
+        } else {
+          TeleopState.arm_joints.lastPressTime[idx] = t;
+        }
+        
+        const dir = TeleopState.arm_joints.directions[idx] === 1 ? 1 : -1;
+        const baseSpeed = TeleopState.speeds.arm_joint;
+        const gain = TeleopState.speeds.arm_joint_gains ? (TeleopState.speeds.arm_joint_gains[idx] || 1.0) : 1.0;
+        
+        TeleopState.arm_joints.velocities[idx] = dir * baseSpeed * gain;
+      }
+    }
+
+    const now = new Date();
+    handler.robotAPI.getOrCreateTopic('/servo_node/delta_joint_cmds', 'control_msgs/msg/JointJog').publish(
+      new ROSLIB.Message({
+        header: {
+          stamp: { sec: Math.floor(now.getTime()/1000), nanosec: (now.getTime()%1000)*1000000 },
+          frame_id: 'base_link'
+        },
+        joint_names: ['joint_1', 'joint_2', 'joint_3', 'joint_4', 'joint_5', 'joint_6'],
+        velocities: TeleopState.arm_joints.velocities.slice(),
+        displacements: [],
+        duration: 0.0
+      })
+    );
+    return { success: true, type: 'teleop_cmd_arm_joint_vel' };
+  },
+
   teleop_flipper: (action, payload, handler) => {
     const actionCmd = payload.action;
     const isStop = actionCmd === 'reset';
     if (!handler.robotAPI || (!TeleopState.active && !isStop)) return { success: false, error: 'Control disabled' };
     
     if (actionCmd === 'reset') {
-      TeleopState.flippers.velocities = [0, 0, 0, 0];
+      TeleopState.flippers.velocities = [0, 0, 0, 0, 0];
     } else if (actionCmd === 'toggle_global_dir') {
       TeleopState.flippers.globalDirection = TeleopState.flippers.globalDirection === 1 ? 0 : 1;
-      TeleopState.flippers.directions = Array(4).fill(TeleopState.flippers.globalDirection);
+      TeleopState.flippers.directions = Array(5).fill(TeleopState.flippers.globalDirection);
     } else if (payload.index !== undefined) {
       const idx = payload.index;
       if (payload.state === 'released') {
@@ -135,7 +193,7 @@ const TeleopActions = {
         joint_names: FLIPPER_JOINTS,
         position: [], effort: [],
         velocity: TeleopState.flippers.velocities.slice(),
-        acceleration: Array(4).fill(TeleopState.speeds.flipperAccel)
+        acceleration: Array(5).fill(TeleopState.speeds.flipperAccel)
       })
     );
     return { success: true, type: 'teleop_flipper' };
@@ -185,7 +243,7 @@ class InputHandler {
         }
 
         // Validate action type
-        if (!['send_topic', 'send_service', 'local_function', 'teleop_cmd_vel', 'teleop_cmd_arm', 'teleop_flipper'].includes(type)) {
+        if (!['send_topic', 'send_service', 'local_function', 'teleop_cmd_vel', 'teleop_cmd_arm', 'teleop_cmd_arm_joint_vel', 'teleop_flipper'].includes(type)) {
           console.warn(`[InputHandler] Unknown action type "${type}" for key ${keyId}`);
           return;
         }
@@ -397,18 +455,11 @@ class InputHandler {
   let inputHandler = null;
   
   let currentControlMode = "velocity";
-  window.switch_control_mode = function(mode) {
+  window.switch_control_mode = function(mode, retriesLeft = 6) {
     if (mode !== "velocity" && mode !== "position") return;
     currentControlMode = mode;
-    if (typeof robotAPI !== "undefined" && robotAPI) {
-      robotAPI.sendService("/controller_manager/switch_controller", "controller_manager_msgs/srv/SwitchController", {
-        activate_controllers: mode === "velocity" ? ["velocity_controller"] : ["arm_controller"],
-        deactivate_controllers: mode === "velocity" ? ["arm_controller"] : ["velocity_controller"],
-        strictness: 1,
-        activate_asap: true,
-        timeout: { sec: 0, nanosec: 0 }
-      });
-    }
+    log(`Control mode set to: ${mode} (Through MoveIt Servo)`);
+    // No hardware-level controller switch needed when running both via MoveIt Servo
   };  
 
   let allKeymapProfiles = {};
@@ -469,6 +520,9 @@ class InputHandler {
       // Create RobotAPI and InputHandler
       robotAPI = new RobotAPI(ros);
       inputHandler = new InputHandler({ robotAPI });
+      
+      // Velocity mode by default
+      window.switch_control_mode("velocity");
       
       setupKeyboardBindings();
       setupSliders();
@@ -556,7 +610,7 @@ class InputHandler {
 
     ros.on('close', () => {
       log('Disconnected from ROS');
-      if (controlInterval) {
+      if (typeof controlInterval !== 'undefined' && controlInterval) {
         clearInterval(controlInterval);
         controlInterval = null;
       }
@@ -696,6 +750,7 @@ class InputHandler {
     direction: TeleopState.flippers.globalDirection,
     joints: FLIPPER_JOINTS
   });
+  window.flipperState = TeleopState.flippers;
 
   window.addEventListener('beforeunload', () => {
     if (inputHandler) {
