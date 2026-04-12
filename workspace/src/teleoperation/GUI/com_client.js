@@ -278,6 +278,35 @@ class InputHandler {
     console.log(`[InputHandler] Registered local function: ${name}`);
   }
 
+  // Load specific actions
+  loadGuiActions(guiConfigJson) {
+    this.guiActionMap = {};
+    if (!guiConfigJson || typeof guiConfigJson !== 'object') return;
+    Object.entries(guiConfigJson).forEach(([key, action]) => {
+      this.guiActionMap[key] = action;
+    });
+    console.log(`[InputHandler] Loaded ${Object.keys(this.guiActionMap).length} GUI actions`);
+  }
+
+  trigger_gui_action(actionName) {
+    const action = this.guiActionMap ? this.guiActionMap[actionName] : null;
+    if (!action) {
+      console.warn(`[InputHandler] GUI action "${actionName}" not found`);
+      return { success: false, error: `GUI action "${actionName}" not found` };
+    }
+    
+    try {
+      if (TeleopActions[action.type]) {
+        return TeleopActions[action.type](action, action.payload, this);
+      } else {
+        return { success: false, error: `Unknown action type: ${action.type}` };
+      }
+    } catch (error) {
+      console.error(`[InputHandler] trigger_gui_action failed for ${actionName}:`, error.message);
+      return { success: false, error: error.message };
+    }
+  }
+
   // Execute an action for a given key
   executeAction(keyId, keyState) {
     const action = this.actionMap[keyId];
@@ -538,6 +567,16 @@ class InputHandler {
             delete profiles["gamepad"];
           }
           
+          // Extract gui_buttons mapping
+          let guiButtonsConfig = {};
+          if (profiles["gui_buttons"]) {
+            guiButtonsConfig = profiles["gui_buttons"];
+            delete profiles["gui_buttons"];
+          }
+          if (inputHandler) {
+            inputHandler.loadGuiActions(guiButtonsConfig);
+          }
+          
           allKeymapProfiles = profiles;
           const profileKeys = Object.keys(profiles);
           if (profileKeys.length === 0) {
@@ -723,7 +762,11 @@ class InputHandler {
       console.warn('InputHandler not initialized');
       return { success: false, error: 'InputHandler not initialized' };
     }
-    return inputHandler.executeAction(actionId);
+    
+    if (inputHandler.guiActionMap && inputHandler.guiActionMap[actionId]) {
+      return inputHandler.trigger_gui_action(actionId);
+    }
+    return inputHandler.executeAction(actionId, 'pressed');
   };
 
   window.toggleServerMic = () => {
@@ -731,9 +774,9 @@ class InputHandler {
     if (!button) return;
     
     const isMuted = button.textContent === 'Unmute Server';
-    const actionId = isMuted ? 'button_unmute_server' : 'button_mute_server';
+    const actionId = isMuted ? 'unmute_server' : 'mute_server';
     
-    const result = window.executeAction(actionId);
+    const result = inputHandler ? inputHandler.trigger_gui_action(actionId) : { success: false, error: 'InputHandler init' };
     
     if (result.success) {
       button.textContent = isMuted ? 'Mute Server' : 'Unmute Server';

@@ -278,14 +278,8 @@
         "pitch_dir": 0
       }
     },
-    "0": {
-      "type": "teleop_flipper",
-      "payload": {
-        "index": 4
-      },
-      "release_payload": {
-        "index": 4
-      }
+    "0":{
+      "type": ""
     }
   },
 
