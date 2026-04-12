@@ -61,6 +61,10 @@ private:
   std::mutex acc_mutex_;   // Protect acceleration vector from concurrent access
   std::mutex state_mutex_; // Protects the state arrays from being read and written at the exact same time
 
+  const std::vector<std::string> target_joints = {
+      "joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6"
+  };
+
   static constexpr double DEFAULT_ACCELERATION = 3.14159265;
 
 public:
@@ -259,17 +263,24 @@ public:
     }
 
     for (size_t i = 0; i < info_.joints.size(); ++i) {
-      // ROS [-π, π]  →  Hardware [0, 2π]
-      double pos_cmd = ros_to_hw(hw_commands_[i]);
+      // Check if the current joint name exists in our target list
+      bool is_target = std::find(target_joints.begin(), target_joints.end(), info_.joints[i].name) != target_joints.end();
+      if (is_target) {
+        // ROS [-π, π]  →  Hardware [0, 2π]
+        double pos_cmd = ros_to_hw(hw_commands_[i]);
 
-      msg.joint_names.push_back(info_.joints[i].name);
-      msg.position.push_back(pos_cmd);
-      msg.velocity.push_back(hw_vel_cmds_[i]);
-      msg.acceleration.push_back(acc_snapshot[i]);
-      msg.effort.push_back(hw_eff_cmds_[i]);
+        msg.joint_names.push_back(info_.joints[i].name);
+        msg.position.push_back(pos_cmd);
+        msg.velocity.push_back(hw_vel_cmds_[i]);
+        msg.acceleration.push_back(acc_snapshot[i]);
+        msg.effort.push_back(hw_eff_cmds_[i]);
+      }
     }
 
-    command_pub_->publish(msg);
+    if (!msg.joint_names.empty()) {
+      command_pub_->publish(msg);
+    }
+
     return hardware_interface::return_type::OK;
   }
 };
