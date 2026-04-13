@@ -10,7 +10,7 @@ int main(int argc, char **argv) {
 
   auto node = std::make_shared<HardwareDriverNode>();
 
-  constexpr int LOOP_HZ = 500;
+  constexpr int LOOP_HZ = 250;
   rclcpp::Rate rate(LOOP_HZ);
 
   RCLCPP_INFO(node->get_logger(), "DC Motors node started");

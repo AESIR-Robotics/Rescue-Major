@@ -277,7 +277,7 @@ private:
 
   int i2c_wait_counter_{0};
   std::array<int, number_arms> can_wait_counter_{};
-  static constexpr int max_wait_ticks_{100};
+  static constexpr int max_wait_ticks_{50};
 
   // Budgeting
   static int constexpr max_budget{128};
@@ -356,7 +356,7 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
         [this](const std::string &msg) { RCLCPP_WARN( get_logger(), "%s", msg.c_str()); },
        [this](const std::string &msg) { RCLCPP_ERROR(get_logger(), "%s", msg.c_str()); });
 
-  //stepper_micro.setLogger(logger);
+  stepper_micro.setLogger(logger);
 
   stepper_micro.init(&sysStats, i2c_port_, slave_addr_);
 
@@ -373,10 +373,10 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
       logger); //*/
 
   auto can_mgr = std::make_shared<CANIfaceManager>(&sysStats, can_interface, 500000);
-  can_mgr->setLogger(logger);
+  //can_mgr->setLogger(logger);
 
   for (int i = 0; i < number_arms; ++i) {
-      stepper_arms[i].setLogger(logger);
+      //stepper_arms[i].setLogger(logger);
       stepper_arms[i].setIfaceManager(can_mgr);
       // Register channel in mux — my addr offset per arm, peer = arm index
       stepper_arms[i].init(&sysStats, can_interface, /*my=*/static_cast<uint8_t>(0x00 - i - 1),
@@ -891,7 +891,7 @@ inline bool HardwareDriverNode::errorRecoveryCANArm(int i) {
     logger.logInfo("Bridge serial reconnected (triggered by arm %d)", i);
     return true;
   }
-  logger.logWarn("Bridge serial reconnect failed (arm %d)", i);
+  //logger.logWarn("Bridge serial reconnect failed (arm %d)", i);
   return false;
 }
 

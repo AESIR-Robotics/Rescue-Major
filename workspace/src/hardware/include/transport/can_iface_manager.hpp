@@ -16,8 +16,8 @@
 
 #include <atomic>
 #include <cstdint>
+#include <ctime>
 #include <fstream>
-#include <functional>
 #include <mutex>
 #include <string>
 #include <net/if.h> 
@@ -28,7 +28,47 @@
 #include "utils/logger.hpp"
 #include "utils/diagnostics.hpp"
 
-using LogFn = std::function<void(const std::string &)>;
+// This should be in its own util with runCmd
+class ChildGuard {
+public:
+    explicit ChildGuard(pid_t pid) : pid_(pid) {}
+
+    ~ChildGuard() {
+        if (pid_ <= 0) return;
+
+        int status = 0;
+        pid_t r = waitpid(pid_, &status, WNOHANG);
+
+        if (r == pid_) {
+            return;
+        }
+
+        if (r == 0) {
+            kill(pid_, SIGKILL);
+            // reap seguro
+            while (waitpid(pid_, nullptr, 0) < 0 && errno == EINTR);
+            return;
+        }
+
+        if (r < 0) {
+            if (errno == ECHILD) {
+                return;
+            }
+
+            kill(pid_, SIGKILL);
+            while (waitpid(pid_, nullptr, 0) < 0 && errno == EINTR);
+        }
+    }
+
+    void release() {
+        pid_ = -1; // ya no soy responsable
+    }
+
+    pid_t pid() const { return pid_; }
+
+private:
+    pid_t pid_;
+};
 
 class CANIfaceManager {
 public:
@@ -282,7 +322,8 @@ private:
         if (argv.empty()) return false;
         argv.push_back(nullptr);
 
-        pid_t pid = fork();
+        ChildGuard guard{fork()};
+        pid_t pid = guard.pid();
         if (pid < 0) return false;
         if (pid == 0) {
             int devnull = open("/dev/null", O_WRONLY);
@@ -294,8 +335,35 @@ private:
             execvp(argv[0], argv.data());
             _exit(127);
         }
+
+        
+        constexpr int timeout_ms = 500;
+        constexpr int poll_ms    = 10;
+        int waited = 0;
         int status = 0;
-        waitpid(pid, &status, 0);
+        while (waited < timeout_ms) {
+            pid_t r = waitpid(pid, &status, WNOHANG);
+
+            if (r == pid) {
+                guard.release();
+                break;
+            }
+
+            if (r < 0) {
+                if (errno == EINTR) continue;
+                return false;
+            }
+
+            struct timespec ts{ 0, poll_ms * 1'000'000L };
+            while (nanosleep(&ts, &ts) < 0 && errno == EINTR);
+
+            waited += poll_ms;
+        }
+
+        if (waited >= timeout_ms) {
+            return false; // destructor mata al hijo
+        }
+
         return WIFEXITED(status) && WEXITSTATUS(status) == 0;
     }
 
