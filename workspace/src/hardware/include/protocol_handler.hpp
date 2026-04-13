@@ -262,13 +262,14 @@ void Protocol_Handler<Transport, ReadEnum, WriteEnum>::setupInstructionCallbacks
     (void)pckg; (void)size;
   });
   instruction_callback.emplace(2, [this](const uint8_t *pckg, uint8_t seq, size_t size) {
-    
+    if(size == 0){return;}
     uint8_t id = pckg[0];
     processAck(id, 2, seq);
     auto it = write_callbacks.find(static_cast<WriteEnum>(id));
     if (it != write_callbacks.end()) it->second(pckg + 1, size - 1);
   });
   instruction_callback.emplace(3, [this](const uint8_t *pckg, uint8_t seq, size_t size) {
+    if(size == 0){return;}
     uint8_t id = pckg[0];
     processAck(id, 3, seq);
     auto it = read_callbacks.find(static_cast<ReadEnum>(id));
@@ -317,7 +318,7 @@ bool Protocol_Handler<Transport, ReadEnum, WriteEnum>::sendQueue(micros timeout,
           log.logWarn("Seq=%u exhausted retries (inst=%u id=%u) — discarding",
                 elem.seq_id, elem.cmd->getInst(), elem.cmd->getID());
 
-          auto it = cmds_lookout.find({elem.cmd->getID(), elem.cmd->getInst()});
+          auto it = cmds_lookout.find({elem.cmd->getInst(), elem.cmd->getID()});
           if (it == cmds_lookout.end()) {
             // Should never happen
             waitingCmds_.erase(waitingCmds_.begin());
@@ -336,7 +337,7 @@ bool Protocol_Handler<Transport, ReadEnum, WriteEnum>::sendQueue(micros timeout,
           continue;
         }
 
-        expectedsize = sending.front()->getPckSize() + tuple_size(header{}) + tuple_size(tail{});
+        expectedsize = elem.cmd->getPckSize() + tuple_size(header{}) + tuple_size(tail{});
         if(bytes_sent + expectedsize > SEND_BUDGET) break;
         
         uint8_t new_seq = allocSeq();
@@ -609,7 +610,8 @@ void Protocol_Handler<Transport, ReadEnum, WriteEnum>::processAck(
   }
 
   auto list_it = it->second;
-
+  if (list_it == waitingCmds_.end()) return;
+  
   if (list_it->seq_id == seq_id) {
     waitingCmds_.erase(list_it);
     cmds_lookout.erase(it);
