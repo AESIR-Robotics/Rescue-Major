@@ -11,6 +11,7 @@ from pyzbar import pyzbar
 from ultralytics import YOLO
 import cv2
 from datetime import datetime
+from kalman_tracker import KalmanTracker
 
 
 class MultiDetectionNode(Node):
@@ -46,6 +47,9 @@ class MultiDetectionNode(Node):
         self.count_hazmat = 0
         self.detected_hazmats = set()
         self.prev_frame = None
+        
+        # Inicializar Tracker
+        self.kalman_tracker = KalmanTracker()
 
         # Publisher al topico del video hacia la interfaz
         self.publisher = self.create_publisher(Image, 'cam_sensors/image', 10)
@@ -201,24 +205,58 @@ class MultiDetectionNode(Node):
         return frame
 
     def detect_motion(self, frame):
+        # Convertir a gris y usar un desenfoque más fuerte (21x21 como en tu script de prueba)
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        gray = cv2.GaussianBlur(gray, (5, 5), 0)
+        gray = cv2.GaussianBlur(gray, (21, 21), 0)
 
         if self.prev_frame is None:
             self.prev_frame = gray
             return frame
 
+        # Diferencia absoluta usando self.prev_frame
         diff = cv2.absdiff(self.prev_frame, gray)
+        
+        # Usamos self.threshold para que sigas pudiendo ajustarlo desde ROS2
         _, thresh = cv2.threshold(diff, self.threshold, 255, cv2.THRESH_BINARY)
-        dilated = cv2.dilate(thresh, None, iterations=3)
+        dilated = cv2.dilate(thresh, None, iterations=2)
 
-        contours, _ = cv2.findContours(dilated, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+        contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        max_area = 0
+        best_center = None
+        best_bbox = None
+
+        # Encontrar el objeto en movimiento MÁS GRANDE (mejor para tracking)
         for contour in contours:
-            if cv2.contourArea(contour) < 10000:
-                continue
-            x, y, w, h = cv2.boundingRect(contour)
-            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            area = cv2.contourArea(contour)
+            if area > 1000 and area > max_area:  # Puedes ajustar el 1000 si es necesario
+                max_area = area
+                x, y, w, h = cv2.boundingRect(contour)
+                best_bbox = (x, y, w, h)
+                best_center = (x + w//2, y + h//2)
 
+        # Actualizar Kalman con el centro detectado (o None si no hay movimiento)
+        estimated_center = self.kalman_tracker.update(best_center)
+
+        # 1. Dibujar Bounding Box de movimiento real detectado (Verde)
+        if best_bbox is not None:
+            x, y, w, h = best_bbox
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            cv2.circle(frame, best_center, 5, (0, 255, 0), -1)
+
+        # 2. Dibujar Centro Estimado por Kalman (Azul)
+        if estimated_center is not None:
+            cv2.circle(frame, estimated_center, 6, (255, 0, 0), -1)
+            cv2.putText(frame, "Kalman", (estimated_center[0]+10, estimated_center[1]),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
+        
+        # Opcional: Mostrar estado en pantalla
+        if best_center is not None:
+            cv2.putText(frame, "TRACKING ACTIVO", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+        elif self.kalman_tracker.initialized:
+            cv2.putText(frame, "PREDICIENDO...", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+
+        # Actualizar el frame anterior para la siguiente iteración
         self.prev_frame = gray
         return frame
 
