@@ -84,6 +84,7 @@ public:
 
   bool addCommand(std::unique_ptr<Cmd::Command> &&input);
   int msgQueued();
+  int msgPending();
   int byteSentFromQueue();
   /// Check retransmission queue — call once per tick before sendQueue.
   /// Returns true if any message was re-queued for retransmission.
@@ -153,6 +154,20 @@ private:
   void       processAck(uint8_t id, uint8_t inst, uint8_t seq_id);
   uint8_t    allocSeq();
   bool       coalesceingAddition(std::unique_ptr<Cmd::Command> &&cmd, uint8_t new_seq);
+
+
+  void resetProtocolState() {
+    sending = {}; 
+
+    cmds_lookout.clear();
+    waitingCmds_.clear();
+
+    already_synced_ = false;
+    synced_byte_ = 0;
+
+    consecutive_unacked_ = 0;
+    channel_dead_ = false;
+  }
 
   // ── Sync state ────────────────────────────────────────────────────────────
   // readPending scans for 0xAA using the global deadline and stores it here.
@@ -290,6 +305,11 @@ bool Protocol_Handler<Transport, ReadEnum, WriteEnum>::addCommand(
 template <typename Transport, typename ReadEnum, typename WriteEnum>
 inline int Protocol_Handler<Transport, ReadEnum, WriteEnum>::msgQueued() {
   return sending.size();
+}
+
+template <typename Transport, typename ReadEnum, typename WriteEnum>
+inline int Protocol_Handler<Transport, ReadEnum, WriteEnum>::msgPending() {
+  return waitingCmds_.size();
 }
 
 template <typename Transport, typename ReadEnum, typename WriteEnum>
@@ -611,7 +631,7 @@ void Protocol_Handler<Transport, ReadEnum, WriteEnum>::processAck(
 
   auto list_it = it->second;
   if (list_it == waitingCmds_.end()) return;
-  
+
   if (list_it->seq_id == seq_id) {
     waitingCmds_.erase(list_it);
     cmds_lookout.erase(it);

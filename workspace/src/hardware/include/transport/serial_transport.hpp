@@ -61,7 +61,7 @@ public:
   explicit Serial_Transport(DiagnosticRegistry *reg, const std::string &port    = "",
                              uint32_t           baud    = 115200,
                              bool               hw_flow = false);
-  ~Serial_Transport() noexcept;
+  virtual ~Serial_Transport() noexcept;
 
   Serial_Transport(const Serial_Transport &)            = delete;
   Serial_Transport &operator=(const Serial_Transport &) = delete;

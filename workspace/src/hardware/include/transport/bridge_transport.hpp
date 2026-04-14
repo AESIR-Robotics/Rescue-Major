@@ -50,6 +50,8 @@ public:
         }
     }
 
+    virtual ~Bridge_Transport() noexcept;
+
     // ── init — toma shared_ptr para garantizar lifetime del mux ──────────────
     bool init(DiagnosticRegistry *reg, std::shared_ptr<SerialMux> mux,
               uint8_t  my_addr,
