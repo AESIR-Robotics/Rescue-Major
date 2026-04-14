@@ -46,8 +46,9 @@ source ../.venv/bin/activate
 
 colcon build --packages-select vision_opencv --cmake-args -DCMAKE_BUILD_TYPE=Release
 colcon build --packages-select hardware --cmake-args -DCMAKE_BUILD_TYPE=Release
+colcon build --packages-select aesir_robot_description --cmake-args -DCMAKE_BUILD_TYPE=Release
 source install/setup.bash
 colcon build --packages-select teleoperation --cmake-args -DCMAKE_BUILD_TYPE=Release
 colcon build --packages-select vision --cmake-args -DCMAKE_BUILD_TYPE=Release
-
+colcon build --packages-select arm_moveit_config --cmake-args -DCMAKE_BUILD_TYPE=Release
 

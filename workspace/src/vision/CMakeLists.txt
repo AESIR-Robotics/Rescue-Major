@@ -15,7 +15,7 @@ find_package(rclpy REQUIRED)
 find_package(sensor_msgs REQUIRED)  
 find_package(std_msgs REQUIRED)   
 find_package(cv_bridge REQUIRED)
-find_package(OpenCV 4.5.4 EXACT REQUIRED)
+find_package(OpenCV REQUIRED)
 find_package(image_transport REQUIRED)
 find_package(std_srvs REQUIRED)
 find_package(example_interfaces REQUIRED)
@@ -71,6 +71,7 @@ install(TARGETS
 # Use ament_python_install_package to install Python code
 install(PROGRAMS
   scripts/sensors_master.py
+  scripts/kalman_tracker.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
