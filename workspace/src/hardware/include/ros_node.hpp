@@ -197,7 +197,7 @@ private:
   void jointCommandCallback(const hardware::msg::JointControl::SharedPtr msg);
 
   // --- Command preparation --------------------------------------------------
-  static constexpr int number_arms{4};
+  static constexpr int number_arms{5};
   void prepareI2CCommands();
   void prepareCANCommands(int arm_index);
   void enqueueFlipperInfo(const StepperState<4> &snap);

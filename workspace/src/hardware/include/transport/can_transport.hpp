@@ -248,6 +248,7 @@ inline bool CAN_Transport::init(DiagnosticRegistry *reg, const std::string &inte
     peer_addr_ = peer_addr;
     channel_   = channel;
     priority_  = priority;
+    log.setName("CAN_" + std::to_string(peer_addr_));
     return connect();
 }
 

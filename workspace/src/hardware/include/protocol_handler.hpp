@@ -73,7 +73,7 @@ public:
     setupInstructionCallbacks();
     Transport::setEventCallback([this](TransportInterface::Event ev) {
         if (ev == TransportInterface::Event::DISCONNECTED) {
-            resetProtocolState();
+            resetChannel();
         }
     });
     // Initialize protocol-level diagnostic keys in the shared statusReport
@@ -111,9 +111,14 @@ public:
     consecutive_unacked_  = 0;
     // Drain pending — stale commands from before reconnect are useless
     sending = std::queue<std::unique_ptr<Cmd::Command>>{};
-    waitingCmds_.clear();
+
     cmds_lookout.clear();
-    
+    waitingCmds_.clear();
+
+    already_synced_ = false;
+    synced_byte_ = 0;
+
+    consecutive_unacked_ = 0;
   }
 
   /// Flush the outbound queue. Sends at most one full frame per call.
@@ -154,20 +159,6 @@ private:
   void       processAck(uint8_t id, uint8_t inst, uint8_t seq_id);
   uint8_t    allocSeq();
   bool       coalesceingAddition(std::unique_ptr<Cmd::Command> &&cmd, uint8_t new_seq);
-
-
-  void resetProtocolState() {
-    sending = {}; 
-
-    cmds_lookout.clear();
-    waitingCmds_.clear();
-
-    already_synced_ = false;
-    synced_byte_ = 0;
-
-    consecutive_unacked_ = 0;
-    channel_dead_ = false;
-  }
 
   // ── Sync state ────────────────────────────────────────────────────────────
   // readPending scans for 0xAA using the global deadline and stores it here.
@@ -352,6 +343,7 @@ bool Protocol_Handler<Transport, ReadEnum, WriteEnum>::sendQueue(micros timeout,
           ++consecutive_unacked_;
           if (consecutive_unacked_ >= max_consecutive_unacked_) {
             channel_dead_ = true;
+            Transport::disconnect();
             log.logError("Channel declared dead after %u consecutive unacked messages",
                     consecutive_unacked_);
           }
