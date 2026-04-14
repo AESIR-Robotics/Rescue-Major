@@ -53,6 +53,7 @@ public:
   bool init(DiagnosticRegistry *reg, const std::string &device_in, int slave_addr_in);
   bool connect() override;
   bool reconnect() override;
+  std::string getName() override;
   
 
   bool                connected()       const override { return i2c_fd >= 0; }
@@ -116,6 +117,10 @@ inline I2C_Transport::I2C_Transport(DiagnosticRegistry *reg, const std::string &
     reg->register_source(&statusReport);
   }
   if (!device.empty()) connect();
+}
+
+inline std::string I2C_Transport::getName() {
+  return "I2C";
 }
 
 inline I2C_Transport::~I2C_Transport() noexcept { disconnect(); }

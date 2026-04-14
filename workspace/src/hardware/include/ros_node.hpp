@@ -197,7 +197,7 @@ private:
   void jointCommandCallback(const hardware::msg::JointControl::SharedPtr msg);
 
   // --- Command preparation --------------------------------------------------
-  static constexpr int number_arms{7};
+  static constexpr int number_arms{4};
   void prepareI2CCommands();
   void prepareCANCommands(int arm_index);
   void enqueueFlipperInfo(const StepperState<4> &snap);
@@ -325,7 +325,7 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
       {3.141592653589793, 3.141592653589793, 3.141592653589793, 3.141592653589793, 3.141549976140265, 0.2791842593401257, 6.004033568448903, 1.5708634895150595, 1.5708819964673881, 3.141580759052331, 0.0});
   this->declare_parameter<std::vector<std::string>>(
       "joint_names", {"flipper_0", "flipper_1", "flipper_2", "flipper_3", 
-        "joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6", "joint_7"});
+        "joint_1", "joint_2", "joint_3", "joint_4"});
   this->declare_parameter<double>("track_width_m", 1.1);
   this->declare_parameter<double>("velocity_scale", 70.0);
 
@@ -373,10 +373,10 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
       logger); //*/
 
   auto can_mgr = std::make_shared<CANIfaceManager>(&sysStats, can_interface, 500000);
-  //can_mgr->setLogger(logger);
+  can_mgr->setLogger(logger);
 
   for (int i = 0; i < number_arms; ++i) {
-      //stepper_arms[i].setLogger(logger);
+      stepper_arms[i].setLogger(logger);
       stepper_arms[i].setIfaceManager(can_mgr);
       // Register channel in mux — my addr offset per arm, peer = arm index
       stepper_arms[i].init(&sysStats, can_interface, /*my=*/static_cast<uint8_t>(0x00 - i - 1),

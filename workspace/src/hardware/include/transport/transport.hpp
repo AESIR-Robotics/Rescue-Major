@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <ctime>
 #include <functional>
+#include <string>
 
 using stdclock  = std::chrono::steady_clock;
 using deadline_t = stdclock::time_point;
@@ -52,6 +53,7 @@ protected:
 
     void setLogger(Logger &in_log) {
         log = in_log;
+        log.setName(getName());
     }
 
     Logger log{};
@@ -63,6 +65,8 @@ private:
             eventCallback_(ev);
         }
     }
+
+    virtual std::string getName() { return ""; };
 
     EventCallback eventCallback_; 
 };

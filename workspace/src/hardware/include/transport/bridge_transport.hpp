@@ -91,6 +91,10 @@ public:
         return ok;
     }
 
+    std::string getName() override{
+        return "Bridge";
+    }
+
     // Add better feedback on to when they can send
     // And avoid accidentally not giving priority to other channels 
     // the same mux. 

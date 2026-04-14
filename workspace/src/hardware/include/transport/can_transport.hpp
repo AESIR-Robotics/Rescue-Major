@@ -120,6 +120,7 @@ public:
               uint8_t  peer_addr,
               uint16_t channel  = 0,
               uint8_t  priority = 6);
+    std::string getName() override;
     bool connect() override;
     bool reconnect() override;
 
@@ -231,6 +232,10 @@ inline CAN_Transport::CAN_Transport(DiagnosticRegistry *reg, const std::string &
 }
 
 inline CAN_Transport::~CAN_Transport() noexcept { disconnect(); }
+
+inline std::string CAN_Transport::getName(){
+    return "CAN_" + std::to_string(peer_addr_);
+}
 
 inline bool CAN_Transport::init(DiagnosticRegistry *reg, const std::string &interface,
                                  uint8_t my_addr, uint8_t peer_addr,

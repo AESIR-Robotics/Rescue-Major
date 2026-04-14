@@ -70,6 +70,8 @@ public:
   bool init(DiagnosticRegistry *reg, const std::string &port,
             uint32_t           baud    = 115200,
             bool               hw_flow = false);
+
+  std::string getName() override;
   bool connect() override;
   bool reconnect() override;
 
@@ -130,6 +132,10 @@ inline Serial_Transport::Serial_Transport(DiagnosticRegistry *reg, const std::st
     reg->register_source(&statusReport);
   }
   if (!port_.empty()) connect();
+}
+
+inline std::string Serial_Transport::getName() {
+  return "Serial";
 }
 
 inline Serial_Transport::~Serial_Transport() noexcept { disconnect(); }

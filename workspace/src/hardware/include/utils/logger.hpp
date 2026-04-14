@@ -9,6 +9,8 @@ class Logger{
   LogFn log_warn_{};
   LogFn log_error_{};
 
+  std::string name_ = "";
+
 public:
 
   void setLogger(LogFn info, LogFn warn = {}, LogFn error = {}) {
@@ -18,27 +20,71 @@ public:
   }
 
   template<size_t N, typename... A>
-  static void logDispatch(const LogFn &fn, const char (&fmt)[N], A&&... a){
+  void logDispatch(const LogFn &fn,
+                  const char (&fmt)[N],
+                  A&&... a) const {
     if (!fn) return;
-    
+
+    constexpr size_t BUF_SIZE = 256;
+
+    char msg[BUF_SIZE];
     #pragma GCC diagnostic push
     #pragma GCC diagnostic ignored "-Wformat-security"
-    char buf[256]; std::snprintf(buf, sizeof(buf), fmt, std::forward<A>(a)...);
+    #pragma GCC diagnostic ignored "-Wformat-truncation"
+    std::snprintf(msg, sizeof(msg), fmt, std::forward<A>(a)...);
     #pragma GCC diagnostic pop
 
-    fn(buf);
+    if (!name_.empty()) {
+      char final[BUF_SIZE];
+
+      // escribir prefijo (truncado si es necesario)
+      #pragma GCC diagnostic push
+      #pragma GCC diagnostic ignored "-Wformat-security"
+      #pragma GCC diagnostic ignored "-Wformat-truncation"
+      int written = std::snprintf(final, sizeof(final), "[%s] ", name_.c_str());
+      #pragma GCC diagnostic pop
+      if (written < 0) written = 0;
+
+      size_t offset = static_cast<size_t>(written);
+      if (offset >= BUF_SIZE) offset = BUF_SIZE - 1;
+
+      // copiar mensaje lo que quepa
+      #pragma GCC diagnostic push
+      #pragma GCC diagnostic ignored "-Wformat-security"
+      #pragma GCC diagnostic ignored "-Wformat-truncation"
+      std::snprintf(final + offset,
+                    BUF_SIZE - offset,
+                    "%s",
+                    msg);
+      #pragma GCC diagnostic pop
+
+      // asegurar terminación
+      final[BUF_SIZE - 1] = '\0';
+
+      fn(final);
+    } else {
+      msg[BUF_SIZE - 1] = '\0';
+      fn(msg);
+    }
   }
 
   template<size_t N, typename... Args>
   void logInfo(const char (&fmt)[N], Args&&... args) const {
-      logDispatch(log_info_, fmt, std::forward<Args>(args)...);
+    logDispatch(log_info_, fmt, std::forward<Args>(args)...);
   }
+
   template<size_t N, typename... Args>
   void logWarn(const char (&fmt)[N], Args&&... args) const {
-      logDispatch(log_warn_, fmt, std::forward<Args>(args)...);
+    logDispatch(log_warn_, fmt, std::forward<Args>(args)...);
   }
+
   template<size_t N, typename... Args>
   void logError(const char (&fmt)[N], Args&&... args) const {
-      logDispatch(log_error_, fmt, std::forward<Args>(args)...);
+    logDispatch(log_error_, fmt, std::forward<Args>(args)...);
   }
+
+  void setName(std::string name){
+    name_ = std::move(name);
+  }
+
 };
