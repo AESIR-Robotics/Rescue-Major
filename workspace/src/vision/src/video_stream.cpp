@@ -212,7 +212,14 @@ private:
         const cv::Mat& frame,
         const rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr& pub)
     {
-        auto msg = cv_bridge::CvImage(std_msgs::msg::Header(), "bgr8", frame).toImageMsg();
+        cv::Mat bgr_frame;
+
+        if (frame.channels() == 4) {
+            cv::cvtColor(frame, bgr_frame, cv::COLOR_BGRA2BGR);
+        } else {
+            bgr_frame = frame;
+        }
+        auto msg = cv_bridge::CvImage(std_msgs::msg::Header(), "bgr8", bgr_frame).toImageMsg();
         pub->publish(*msg);
     }
 

@@ -2,7 +2,7 @@ video_stream_publisher:
   ros__parameters:
     device: jetson
     cameras_formats: [MJPG, MJPG, THERMAL_BGR]
-    cameras_devices: ["HD Pro Webcam C920", "Logi Webcam C920e"]
+    cameras_devices: ["Logi Webcam C920e", "HD Pro Webcam C920"]
     cameras_widths: [1280, 640, 80]
     cameras_heights: [720, 480, 60]
     cameras_fps: [24, 20, 9]
