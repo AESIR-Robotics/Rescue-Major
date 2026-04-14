@@ -62,6 +62,8 @@ class TeleopInterface(ABC):
 DEFAULT_JOINT_KEYS = {
     'flipper_0': ('q', 'a'), 'flipper_1': ('w', 's'), 'flipper_2': ('e', 'd'),
     'flipper_3': ('r', 'f'), 
+    'joint_1': ('t', 'g'), 'joint_2': ('y', 'h'), 'joint_3': ('u', 'j'), 
+    'joint_4': ('i', 'k'), 'joint_5': ('o', 'l'), 'joint_6': ('n', 'm'), 'joint_7': ('v', 'b')
 }
 
 class JointControlInterface(TeleopInterface):
@@ -115,7 +117,7 @@ class JointControlInterface(TeleopInterface):
             self._update_active_velocities()
             self._publish()
             return True
-        elif key == 'v':
+        elif key == 'c':
             self.velocity_mode = 'hold' if self.velocity_mode == 'constant' else 'constant'
             if self.velocity_mode == "hold":
                 self.positions = self.backupHold
@@ -170,7 +172,7 @@ class JointControlInterface(TeleopInterface):
         msg.header.frame_id = 'world'
         msg.joint_names, msg.position = list(self.joint_names), list(self.positions)
         msg.velocity, msg.effort = list(self.velocities), list(self.efforts)
-        msg.acceleration = [math.pi] * len(self.joint_names)
+        msg.acceleration = [math.pi / 2] * len(self.joint_names)
         self.pub.publish(msg)
         self.last_publish_time = time.time()
     

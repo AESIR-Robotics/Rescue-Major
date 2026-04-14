@@ -180,6 +180,15 @@ using tuple_push_front_t = typename tuple_push_front<Tuple, NewType>::type;
 
 template <typename T>
 struct Guarded {  
+
+  template <typename F>
+  bool try_with(F &&fn) {
+      std::unique_lock<std::mutex> lock{mtx, std::try_to_lock};
+      if (!lock.owns_lock()) return false;
+      fn(data);
+      return true;
+  }
+
   template <typename F>
   auto with(F &&fn) {
       std::lock_guard<std::mutex> lock{mtx};

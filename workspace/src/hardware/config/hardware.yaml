@@ -1,0 +1,15 @@
+hardware_driver_node:
+  ros__parameters:
+    i2c_port: "/dev/i2c-7"
+    i2c_address: 48   # 0x30
+
+    can_interface: "can0"
+
+    steps_per_rev: [40000, 40000, 40000, 40000, 40000, 40000, 40000, 5000, 5000, 5000, 400]
+
+    home_offset_rad: [3.141592653589793, 3.141592653589793, 3.141592653589793, 3.141592653589793, 3.141549976140265, 0.2791842593401257, 6.004033568448903, 1.5708634895150595, 1.5708819964673881, 3.141580759052331, 0.0]
+
+    joint_names: ["flipper_0", "flipper_1", "flipper_2", "flipper_3", "joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6"]
+
+    track_width_m: 1.1
+    velocity_scale: 70.0
