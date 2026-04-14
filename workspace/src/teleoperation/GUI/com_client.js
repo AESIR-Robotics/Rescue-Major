@@ -108,18 +108,20 @@ const TeleopActions = {
     }
     
     const now = new Date();
-    handler.robotAPI.getOrCreatePublisher('/servo_node/delta_twist_cmds', 'geometry_msgs/msg/TwistStamped').publish(
-      new ROSLIB.Message({
-        header: {
-          stamp: { sec: Math.floor(now.getTime()/1000), nanosec: (now.getTime()%1000)*1000000 },
-          frame_id: 'base_link'
-        },
-        twist: {
-          linear: { x: TeleopState.arm.x * TeleopState.speeds.arm, y: TeleopState.arm.y * TeleopState.speeds.arm, z: TeleopState.arm.z * TeleopState.speeds.arm },
-          angular: { x: TeleopState.arm.roll * TeleopState.speeds.arm, y: TeleopState.arm.pitch * TeleopState.speeds.arm, z: TeleopState.arm.yaw * TeleopState.speeds.arm }
-        }
-      })
-    );
+  
+    // handler.robotAPI.getOrCreatePublisher('/servo_node/delta_twist_cmds', 'geometry_msgs/msg/TwistStamped').publish(
+    //   new ROSLIB.Message({
+    //     header: {
+    //       stamp: { sec: Math.floor(now.getTime()/1000), nanosec: (now.getTime()%1000)*1000000 },
+    //       frame_id: 'base_link'
+    //     },
+    //     twist: {
+    //       linear: { x: TeleopState.arm.x * TeleopState.speeds.arm, y: TeleopState.arm.y * TeleopState.speeds.arm, z: TeleopState.arm.z * TeleopState.speeds.arm },
+    //       angular: { x: TeleopState.arm.roll * TeleopState.speeds.arm, y: TeleopState.arm.pitch * TeleopState.speeds.arm, z: TeleopState.arm.yaw * TeleopState.speeds.arm }
+    //     }
+    //   })
+    // );
+    // BYPASS: Cartesian arm control 
     return { success: true, type: 'teleop_cmd_arm' };
   },
   
@@ -156,16 +158,10 @@ const TeleopActions = {
     }
 
     const now = new Date();
-    handler.robotAPI.getOrCreatePublisher('/servo_node/delta_joint_cmds', 'control_msgs/msg/JointJog').publish(
+    // Bypass MoveIt Servo - envíar directamente al velocity_controller
+    handler.robotAPI.getOrCreatePublisher('/velocity_controller/commands', 'std_msgs/msg/Float64MultiArray').publish(
       new ROSLIB.Message({
-        header: {
-          stamp: { sec: Math.floor(now.getTime()/1000), nanosec: (now.getTime()%1000)*1000000 },
-          frame_id: 'base_link'
-        },
-        joint_names: ['joint_1', 'joint_2', 'joint_3', 'joint_4', 'joint_5', 'joint_6'],
-        velocities: TeleopState.arm_joints.velocities.slice(),
-        displacements: [],
-        duration: 0.0
+        data: TeleopState.arm_joints.velocities.slice()
       })
     );
     return { success: true, type: 'teleop_cmd_arm_joint_vel' };
