@@ -45,8 +45,8 @@ class Intermediate(Node):
         
         self.camera_topics = [
             "/cam0/image_raw",
+            "/oak/rgb/image_raw",
             "/cam1/image_raw",
-            "/cam2/image_raw"
         ]
         
         self.source_topics = {
@@ -63,7 +63,7 @@ class Intermediate(Node):
         
         self.latest_images = [None] * self.camera_count
         self.bridge = cv_bridge.CvBridge()
-        self.last_time = time.time()
+        self.last_times = [time.time()] * self.camera_count
         self.fps = 30
         self.lock = threading.Lock()
         self.subscription_lock = threading.Lock()  # Protect subscription operations
@@ -86,7 +86,7 @@ class Intermediate(Node):
         self.new_image = None
         self.rtt = None
         self.last_rtt = None
-        self.manual_resolution = (1881, 1051)
+        self.manual_resolution = (1920, 1080)
         self.resolution = (1920, 1080)
         self.mode = mode
 
@@ -110,26 +110,28 @@ class Intermediate(Node):
     def image_callback(self, msg, index):
         """Callback function to process the incoming image messages."""
         current_time = time.time()
-        if current_time - self.last_time >= 1.0 / self.fps:
-            try:
-                cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
-                if self.mode == "manual":
-                    resized_image = cv2.resize(cv_image, self.manual_resolution)
-                else:
-                    resized_image = self.resize_image(cv_image)
+        if current_time - self.last_times[index] < (1.0 / self.fps) and self.fps <= 15:
+            return
+        
+        try:
+            cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding="rgb8")
+            if self.mode == "manual":
+                resized_image = self.limit_resolution(cv_image, self.manual_resolution)
+            else:
+                resized_image = self.resize_image(cv_image)
 
-                # Thread-safe buffer update
-                with self.subscription_lock:
-                    # Check if buffer needs reallocation due to size change
-                    if self.latest_images[index].shape != resized_image.shape:
-                        logger.info(f"Track {index}: Reallocating buffer from {self.latest_images[index].shape} to {resized_image.shape}")
-                        self.latest_images[index] = np.zeros(resized_image.shape, dtype=np.uint8)
-                    
-                    np.copyto(self.latest_images[index], resized_image)
+            # Thread-safe buffer update
+            with self.subscription_lock:
+                # Check if buffer needs reallocation due to size change
+                if self.latest_images[index].shape != resized_image.shape:
+                    logger.info(f"Track {index}: Reallocating buffer from {self.latest_images[index].shape} to {resized_image.shape}")
+                    self.latest_images[index] = np.zeros(resized_image.shape, dtype=np.uint8)
                 
-                self.last_time = current_time
-            except Exception as e:
-                logger.error(f"Error in image_callback for track {index}: {e}")
+                np.copyto(self.latest_images[index], resized_image)
+            
+            self.last_time = current_time
+        except Exception as e:
+            logger.error(f"Error in image_callback for track {index}: {e}")
 
     def webrtc_command_callback(self, request, response):
         """
@@ -316,7 +318,31 @@ class Intermediate(Node):
             if self.rtt is not self.last_rtt:
                 self.adjust_fps_and_resolution()
                 self.last_rtt = self.rtt
-            return cv2.resize(image, self.resolution)
+            return self.limit_resolution(image, self.resolution)
+        return image
+    
+    def limit_resolution(self, image, max_resolution):
+        """
+        Reduce la imagen solo si excede el límite de resolución, 
+        manteniendo la relación de aspecto y asegurando dimensiones pares para el color en WebRTC.
+        """
+        target_w, target_h = max_resolution
+        h, w = image.shape[:2]
+        
+        # Solo aplicamos cv2.resize si la imagen es MÁS GRANDE que nuestro límite
+        if w > target_w or h > target_h:
+            # Calcular factor de escala para mantener la proporción (aspect ratio)
+            scale = min(target_w / w, target_h / h)
+            new_w = int(w * scale)
+            new_h = int(h * scale)
+            
+            # CRÍTICO: Asegurar que ancho y alto sean PARES para evitar perder el color en YUV420p
+            new_w -= new_w % 2
+            new_h -= new_h % 2
+            
+            return cv2.resize(image, (new_w, new_h))
+            
+        # Si es más pequeña (como la térmica) o igual, se envía en su tamaño original intacto
         return image
 
     def get_latest_image(self, index):
