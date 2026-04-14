@@ -22,6 +22,7 @@
 #include "utils/diagnostics.hpp"
 #include "utils/logger.hpp"
 
+#include "transport/transport.hpp"
 // micros / stdclock / deadline_t / LogFn come from the transport header,
 // included transitively. Declare them here too so this file is self-contained
 // when used with a non-I2C transport.
@@ -70,6 +71,11 @@ public:
   explicit Protocol_Handler(DiagnosticRegistry *reg = nullptr, Args&&... args)
       : Transport(reg, std::forward<Args>(args)...) {
     setupInstructionCallbacks();
+    Transport::setEventCallback([this](TransportInterface::Event ev) {
+        if (ev == TransportInterface::Event::DISCONNECTED) {
+            resetProtocolState();
+        }
+    });
     // Initialize protocol-level diagnostic keys in the shared statusReport
     Transport::statusReport.with([](Status &s) {
       for (const char *k : {"crc_errors","sync_failures","bytes_skipped",
@@ -80,10 +86,15 @@ public:
     });
   }
 
+  ~Protocol_Handler(){
+    Transport::clearDisconnectCallback(); 
+  }
+
   // ── Public API ─────────────────────────────────────────────────────────────
 
   bool addCommand(std::unique_ptr<Cmd::Command> &&input);
   int msgQueued();
+  int msgPending();
   int byteSentFromQueue();
   /// Check retransmission queue — call once per tick before sendQueue.
   /// Returns true if any message was re-queued for retransmission.
@@ -111,16 +122,6 @@ public:
   /// Drain incoming messages and dispatch callbacks.
   /// Returns true if at least one message was dispatched.
   bool readPending(micros timeout = micros(8000), micros timePerMsg = micros(4000));
-
-  /// Returns true if the transport has bytes ready to read without blocking.
-  /// Default: true — stream transports (I2C, Serial) always attempt the read.
-  /// Override in ring-based transports (Bridge_Transport) to avoid spurious
-  /// sync-scan warnings when the ring is empty.
-  bool hasData() {
-    // if constexpr (requires (const Transport& t) { t.hasData(); })
-    return Transport::hasData();
-    //return true;  
-  }
 
   /// Maximum payload bytes per message — mirrors MAX_PAYLOAD_SIZE on the MCU
   /// (MAX_PACKET_SIZE=64 minus 4 bytes of framing).
@@ -153,6 +154,20 @@ private:
   void       processAck(uint8_t id, uint8_t inst, uint8_t seq_id);
   uint8_t    allocSeq();
   bool       coalesceingAddition(std::unique_ptr<Cmd::Command> &&cmd, uint8_t new_seq);
+
+
+  void resetProtocolState() {
+    sending = {}; 
+
+    cmds_lookout.clear();
+    waitingCmds_.clear();
+
+    already_synced_ = false;
+    synced_byte_ = 0;
+
+    consecutive_unacked_ = 0;
+    channel_dead_ = false;
+  }
 
   // ── Sync state ────────────────────────────────────────────────────────────
   // readPending scans for 0xAA using the global deadline and stores it here.
@@ -255,6 +270,7 @@ using Protocol_Handler_SERIAL = Protocol_Handler<Serial_Transport, ReadID, Write
 // Template definitions
 // =============================================================================
 
+
 template <typename Transport, typename ReadEnum, typename WriteEnum>
 void Protocol_Handler<Transport, ReadEnum, WriteEnum>::setupInstructionCallbacks() {
   instruction_callback.emplace(1, [this](const uint8_t *pckg, uint8_t seq, size_t size) {
@@ -290,6 +306,11 @@ bool Protocol_Handler<Transport, ReadEnum, WriteEnum>::addCommand(
 template <typename Transport, typename ReadEnum, typename WriteEnum>
 inline int Protocol_Handler<Transport, ReadEnum, WriteEnum>::msgQueued() {
   return sending.size();
+}
+
+template <typename Transport, typename ReadEnum, typename WriteEnum>
+inline int Protocol_Handler<Transport, ReadEnum, WriteEnum>::msgPending() {
+  return waitingCmds_.size();
 }
 
 template <typename Transport, typename ReadEnum, typename WriteEnum>
@@ -611,7 +632,7 @@ void Protocol_Handler<Transport, ReadEnum, WriteEnum>::processAck(
 
   auto list_it = it->second;
   if (list_it == waitingCmds_.end()) return;
-  
+
   if (list_it->seq_id == seq_id) {
     waitingCmds_.erase(list_it);
     cmds_lookout.erase(it);

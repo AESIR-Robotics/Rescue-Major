@@ -19,13 +19,13 @@
 #include "can_transport.hpp"   // para can_make_id
 
 #include "utils/diagnostics.hpp"
-#include "utils/logger.hpp"
+#include "transport.hpp"
 
 using micros     = std::chrono::microseconds;
 using stdclock   = std::chrono::steady_clock;
 using deadline_t = stdclock::time_point;
 
-class Bridge_Transport {
+class Bridge_Transport : protected TransportInterface {
 public:
     enum class Transport_Error {
         NONE,
@@ -50,6 +50,8 @@ public:
         }
     }
 
+    ~Bridge_Transport() noexcept;
+
     // ── init — toma shared_ptr para garantizar lifetime del mux ──────────────
     bool init(DiagnosticRegistry *reg, std::shared_ptr<SerialMux> mux,
               uint8_t  my_addr,
@@ -73,7 +75,7 @@ public:
     }
 
     // ── Interface requerida por Protocol_Handler ──────────────────────────────
-    bool connected() const {
+    bool connected() const override{
         return mux_ && mux_->connected() && channel_;
     }
 
@@ -82,7 +84,7 @@ public:
     Transport_Error getTransportError() const { return transport_error_; }
 
     // ── reconnect — delega al mux, beneficia a TODAS las instancias ───────────
-    bool reconnect() {
+    bool reconnect() override{
         if (!mux_) { transport_error_ = Transport_Error::INVALID_CONFIG; return false; }
         bool ok = mux_->reconnect();
         transport_error_ = ok ? Transport_Error::NONE : Transport_Error::CLOSED;
@@ -95,17 +97,13 @@ public:
     // (If a lot of devices try to send and the first few block the mux
     // then they will always block it before other ones get a chance of sending
     // essentially blocking them from ever sending through the mux)
-    bool canSend() const {
+    bool canSend() const override{
         return true;
     }
 
     // ── hasData — consultado por Protocol_Handler antes del sync scan ─────────
-    bool hasData() const {
+    bool hasData() const override{
         return channel_ && !channel_->ring.empty();
-    }
-
-    void setLogger(Logger &in_log) {
-        log = in_log;
     }
 
     Transport_Error transport_error_{ Transport_Error::CLOSED };
@@ -118,7 +116,7 @@ protected:
     // CAN separados con el mismo ID. El Protocol_Handler en el MCU destino
     // reconstruye el frame desde el stream — la segmentación es transparente.
     size_t writeData(const uint8_t *data, size_t length,
-                     deadline_t /*deadline*/) {
+                     deadline_t /*deadline*/) override{
         if (!connected() || !data || length == 0) return 0;
 
         constexpr size_t ID_B   = SerialMux::CAN_ID_BYTES;  // 4
@@ -147,7 +145,7 @@ protected:
     // ── readData — drena el ring local del canal ──────────────────────────────
     // No toca el fd. El hilo del mux deposita los bytes aquí.
     // Si el ring está vacío espera 50µs y reintenta hasta el deadline.
-    size_t readData(uint8_t *buffer, size_t length, deadline_t deadline) {
+    size_t readData(uint8_t *buffer, size_t length, deadline_t deadline) override{
         if (!connected() || !buffer || length == 0) return 0;
 
         size_t total = 0;
@@ -170,8 +168,6 @@ private:
     SerialMux::Channel        *channel_{ nullptr };
     uint32_t                   tx_id_  { 0 };
     uint32_t                   rx_id_  { 0 };
-
-    Logger log{};
 
 };
 
