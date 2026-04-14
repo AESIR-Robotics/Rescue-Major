@@ -319,6 +319,15 @@ async def index(request):
     """Serves the index.html page."""
     content = open(os.path.join(ROOT, "../GUI/index.html"), "r").read()
     return web.Response(content_type="text/html", text=content)
+    
+async def feedback_page(request):
+    """Serves the feedback.html page."""
+    feedback_path = os.path.join(ROOT, "../GUI/feedback.html")
+    if not os.path.exists(feedback_path):
+        return web.Response(text="feedback.html not found", status=404)
+    with open(feedback_path, "r") as f:
+        content = f.read()
+    return web.Response(content_type="text/html", text=content)
 
 
 async def offer(request):
@@ -375,6 +384,8 @@ def main(args=None):
     app.router.add_static("/static/", gui_path)
     app.router.add_get("/", index)
     app.router.add_post("/offer", offer)
+    
+    app.router.add_get("/feedback", feedback_page)
 
     # ROS node creation
     rclpy.init()

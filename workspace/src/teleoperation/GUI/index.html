@@ -7,6 +7,13 @@
     <link rel="icon" type="image/png" href="/static/assets/favicon.png">
     <title>AESIR Interface</title>
     <link rel="stylesheet" href="/static/themes.css">
+    <style>
+        
+        .indicator[data-state="normal"] .indicator-dot { background-color: #3b82f6; }
+        .indicator[data-state="qr"] .indicator-dot { background-color: #10b981; }
+        .indicator[data-state="hazmat"] .indicator-dot { background-color: #f59e0b; }
+        .indicator[data-state="motion"] .indicator-dot { background-color: #ef4444; }
+    </style>
 </head>
 
 <body>
@@ -140,20 +147,37 @@
                 <span class="indicator-dot"></span>
                 <span class="indicator-label">Data</span>
             </div>
+            <!-- NUEVO INDICADOR DE MODO DE VISIÓN -->
+            <div class="indicator" id="ind-mode" data-state="normal">
+                <span class="indicator-dot"></span>
+                <span class="indicator-label">Modo: Normal</span>
+            </div>
         </div>
 
         <div class="top-bar-actions">
             <div class="btn-group">
                 <button id="start" onclick="start()" class="btn btn-primary">▶ Iniciar</button>
-                <button id="stop" style="display:none" onclick="stop()" class="btn btn-danger">⏹ Detener</button>
-                <button id="start-communication" class="btn btn-secondary">
+                <button id="stop" style="display:none" onclick="stop()" class="btn btn-danger">Detener</button>
+                <button id="toggle-teleoperation" class="btn btn-secondary">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 -960 960 960"
                         fill="currentColor" style="vertical-align:middle;margin-right:6px;display:inline-block;">
                         <path
                             d="M146-560q0 55.5 18.75 109.75T220-350q8.5 11 8.75 24.5t-9.25 23q-9.5 9.5-23.25 8.5T174-305.5q-46.5-56-69.25-120.5T82-560q0-69.5 22.75-134T174-814.5q8.5-10.5 22.25-11.5t23.25 8.5q9.5 9.5 9.25 23T220-770q-36.5 46-55.25 100.25T146-560Zm132 0q0 29 9 59.5t28.5 57.5q8 11 7.75 24t-9.75 22.5q-9.5 9.5-22.25 9.25T270-398q-28-35.5-42-77.25T214-560q0-43 14-84.75T270-722q8.5-10.5 21.25-10.75t22.25 9.25q9.5 9.5 9.25 22.5t-8.25 24q-19 25.5-27.75 55.75T278-560Zm107 397.5-19 56q-3.5 10.5-12.75 17.25T332.5-82.5q-18.5 0-28.75-14.5T299-129l119-356q-16-14-25.75-33t-9.75-42q0-41 28.25-69.25T480-657.5q41 0 69.25 28.25T577.5-560q0 23-9.75 42T542-485l119 356q5.5 17-4.5 31.75T628-82.5q-11.5 0-21-6.5t-13-18l-18-55.5H385Zm24.5-75h141L480-448l-70.5 210.5ZM682-560q0-29-9-59.5T644.5-677q-8-11-7.75-24t9.75-22.5q9.5-9.5 22.5-9.25T690-722q27.5 35.5 41.25 77.25T746-560q0 43-14 84.75T690-398q-8.5 10.5-21.25 10.75t-22.25-9.25q-9.5-9.5-9.25-22.5t8.25-24q19-25.5 27.75-55.75T682-560Zm113.25-109.75Q776.5-724 740-770q-8.5-11-8.75-24.5t9.25-23q9.5-9.5 23-8.5t22 11.5q46 56 69.25 120.5T878-560q0 69.5-21.75 134T786.5-305.5q-9 10.5-22.5 11.75t-23.5-8.75q-9.5-9.5-9.25-23T740-350q36.5-46 55.25-100.25T814-560q0-55.5-18.75-109.75Z" />
                     </svg>
-                    Comunicación
+                    <span id="teleoperation-btn-text">Start Teleoperation</span>
                 </button>
+            </div>
+            <div class="btn-group" style="display: flex; align-items: center; background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 2px 6px; margin-left: 8px;">
+                <select id="keymap-slot-1" onchange="handleSlotChange(1, this)" style="background: var(--bg-0); color: var(--text-1); border: 1px solid #0dcaf0; border-radius: 4px; padding: 2px; font-size: 11px; outline: none; margin-right: 5px; max-width: 65px;"></select>
+                
+                <button class="btn btn-sm btn-info" onclick="toggleKeymapProfile()" title="Alternar perfiles" style="padding: 2px 6px; font-size: 11px; display: flex; align-items: center; border-radius: 4px; gap: 3px; color: #000000 !important;">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 -960 960 960" fill="currentColor">
+                        <path d="M280-160 80-360l200-200 56 57-103 103h607v80H233l103 103-56 57Zm400-240-56-57 103-103H120v-80h607L624-743l56-57 200 200-200 200Z"/>
+                    </svg>
+                    <span id="current-profile-label">Act.</span>
+                </button>
+                
+                <select id="keymap-slot-2" onchange="handleSlotChange(2, this)" style="background: var(--bg-0); color: var(--text-1); border: 1px solid var(--border); border-radius: 4px; padding: 2px; font-size: 11px; outline: none; margin-left: 5px; max-width: 65px;"></select>
             </div>
             <div class="btn-group">
                 <button id="toggle-microphone" onclick="toggleMicrophone()" class="btn btn-icon-text">
@@ -464,6 +488,35 @@
     <script src="/static/com_client.js"></script>
     <script src="/static/theme_manager.js"></script>
     <script src="/static/camera_layouts.js"></script>
+
+    <!-- visual indicator:change this after tmr -->
+    <script>
+        (function() {
+            function updateVisionModeDisplay(mode) {
+                const modeIndicator = document.getElementById('ind-mode');
+                if (!modeIndicator) return;
+                const labelSpan = modeIndicator.querySelector('.indicator-label');
+                if (labelSpan) labelSpan.textContent = `Modo: ${mode}`;
+                // Cambiar el estado data-state para aplicar estilos (opcional)
+                if (mode === 'Normal') modeIndicator.dataset.state = 'normal';
+                else if (mode === 'QR / AprilTag') modeIndicator.dataset.state = 'qr';
+                else if (mode === 'Hazmat (YOLO)') modeIndicator.dataset.state = 'hazmat';
+                else if (mode === 'Movimiento') modeIndicator.dataset.state = 'motion';
+                else modeIndicator.dataset.state = 'normal';
+            }
+
+            const savedMode = localStorage.getItem('vision_mode');
+            if (savedMode) {
+                updateVisionModeDisplay(savedMode);
+            }
+
+            window.addEventListener('storage', (event) => {
+                if (event.key === 'vision_mode') {
+                    updateVisionModeDisplay(event.newValue);
+                }
+            });
+        })();
+    </script>
 </body>
 
 </html>
