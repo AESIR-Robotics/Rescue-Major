@@ -1,8 +1,6 @@
-
 const TeleopState = {
   active: false,
-  speeds: { arm: 0.2, arm_joint: 0.5, arm_joint_gains: [1.0, 1.0, 2.0, 1.0, 1.0, 1.0], 
-    base: 1.0, flipper: 1.0, flipperAccel: 0.5 },
+  speeds: { arm: 0.2, arm_joint: 0.5, arm_joint_gains: [1.0, 1.0, 2.0, 1.0, 1.0, 1.0], base: 1.0, flipper: 1.0, flipperAccel: 0.5 },
   arm: { x: 0, y: 0, z: 0, roll: 0, pitch: 0, yaw: 0 },
   arm_joints: {
     velocities: [0, 0, 0, 0, 0, 0],
@@ -23,16 +21,28 @@ const TeleopState = {
   }
 };
 
+// Sync speeds across different windows (e.g. index.html and feedback.html)
+window.addEventListener('storage', (e) => {
+  if (e.key === 'teleop_speeds' && e.newValue) {
+    try {
+      const newSpeeds = JSON.parse(e.newValue);
+      Object.assign(TeleopState.speeds, newSpeeds);
+      console.log("[TeleopState] Speeds synced from localStorage:", TeleopState.speeds);
+    } catch(err) { console.error('Error syncing speeds', err) }
+  }
+});
+
+
 const FLIPPER_JOINTS = ['flipper_0', 'flipper_1', 'flipper_2', 'flipper_3', 'joint_7'];
 
 const TeleopActions = {
-  send_topic: (action, payload, handler) => {
+  publish_topic: (action, payload, handler) => {
     if (!handler.robotAPI) return { success: false, error: 'RobotAPI not set' };
     return {
       success: true,
-      type: 'send_topic',
+      type: 'publish_topic',
       count: action.topics.length,
-      results: handler.robotAPI.sendTopic(action.topics, action.data_type, payload)
+      results: handler.robotAPI.publishTopic(action.topics, action.data_type, payload)
     };
   },
   send_service: (action, payload, handler) => {
@@ -73,7 +83,7 @@ const TeleopActions = {
         return { success: false, error: 'Control disabled' };
     }
     
-    handler.robotAPI.getOrCreateTopic('/hardware_node/cmd_vel', 'geometry_msgs/msg/Twist').publish(
+    handler.robotAPI.getOrCreatePublisher('/hardware_node/cmd_vel', 'geometry_msgs/msg/Twist').publish(
       new ROSLIB.Message({
         linear: { x: lin * TeleopState.speeds.base, y: 0.0, z: 0.0 },
         angular: { x: 0.0, y: 0.0, z: ang * TeleopState.speeds.base }
@@ -98,7 +108,7 @@ const TeleopActions = {
     }
     
     const now = new Date();
-    handler.robotAPI.getOrCreateTopic('/servo_node/delta_twist_cmds', 'geometry_msgs/msg/TwistStamped').publish(
+    handler.robotAPI.getOrCreatePublisher('/servo_node/delta_twist_cmds', 'geometry_msgs/msg/TwistStamped').publish(
       new ROSLIB.Message({
         header: {
           stamp: { sec: Math.floor(now.getTime()/1000), nanosec: (now.getTime()%1000)*1000000 },
@@ -146,7 +156,7 @@ const TeleopActions = {
     }
 
     const now = new Date();
-    handler.robotAPI.getOrCreateTopic('/servo_node/delta_joint_cmds', 'control_msgs/msg/JointJog').publish(
+    handler.robotAPI.getOrCreatePublisher('/servo_node/delta_joint_cmds', 'control_msgs/msg/JointJog').publish(
       new ROSLIB.Message({
         header: {
           stamp: { sec: Math.floor(now.getTime()/1000), nanosec: (now.getTime()%1000)*1000000 },
@@ -187,7 +197,7 @@ const TeleopActions = {
       }
     }
     
-    handler.robotAPI.getOrCreateTopic('/hardware_node/joint_command', 'hardware/msg/JointControl').publish(
+    handler.robotAPI.getOrCreatePublisher('/hardware_node/joint_command', 'hardware/msg/JointControl').publish(
       new ROSLIB.Message({
         header: { stamp: { sec: 0, nanosec: 0 }, frame_id: '' },
         joint_names: FLIPPER_JOINTS,
@@ -243,13 +253,13 @@ class InputHandler {
         }
 
         // Validate action type
-        if (!['send_topic', 'send_service', 'local_function', 'teleop_cmd_vel', 'teleop_cmd_arm', 'teleop_cmd_arm_joint_vel', 'teleop_flipper'].includes(type)) {
+        if (!['publish_topic', 'send_service', 'local_function', 'teleop_cmd_vel', 'teleop_cmd_arm', 'teleop_cmd_arm_joint_vel', 'teleop_flipper'].includes(type)) {
           console.warn(`[InputHandler] Unknown action type "${type}" for key ${keyId}`);
           return;
         }
 
         // For send actions, ensure topics array and data_type exist
-        if (type === 'send_topic' || type === 'send_service') {
+        if (type === 'publish_topic' || type === 'send_service') {
           if (!topics || !Array.isArray(topics) || topics.length === 0) {
             console.warn(`[InputHandler] Action ${keyId} missing topics array`);
             return;
@@ -575,6 +585,13 @@ class InputHandler {
           }
           if (inputHandler) {
             inputHandler.loadGuiActions(guiButtonsConfig);
+            
+            // ========== MODIFICACIÓN: EXPONER inputHandler Y NOTIFICAR ==========
+            window.inputHandler = inputHandler;
+            window.guiActionsReady = true;
+            window.dispatchEvent(new Event('guiActionsLoaded'));
+            console.log('[com_client] GUI actions loaded and ready. Total actions:', Object.keys(inputHandler.guiActionMap).length);
+            // ========== FIN MODIFICACIÓN ==========
           }
           
           allKeymapProfiles = profiles;
@@ -635,9 +652,9 @@ class InputHandler {
                 inputHandler.localFunctions[funcName](action.payload);
                 log(`Button ${buttonId} -> ${funcName}()`);
               }
-            } else if (action.type === 'send_topic' && robotAPI) {
-              robotAPI.sendTopic(action.topics, action.data_type, action.payload);
-              log(`Button ${buttonId} -> send_topic`);
+            } else if (action.type === 'publish_topic' && robotAPI) {
+              robotAPI.publishTopic(action.topics, action.data_type, action.payload);
+              log(`Button ${buttonId} -> publish_topic`);
             } else if (action.type === 'send_service' && robotAPI) {
               robotAPI.sendService(action.topics, action.data_type, action.payload);
               log(`Button ${buttonId} -> send_service`);

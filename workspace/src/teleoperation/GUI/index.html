@@ -7,6 +7,13 @@
     <link rel="icon" type="image/png" href="/static/assets/favicon.png">
     <title>AESIR Interface</title>
     <link rel="stylesheet" href="/static/themes.css">
+    <style>
+        
+        .indicator[data-state="normal"] .indicator-dot { background-color: #3b82f6; }
+        .indicator[data-state="qr"] .indicator-dot { background-color: #10b981; }
+        .indicator[data-state="hazmat"] .indicator-dot { background-color: #f59e0b; }
+        .indicator[data-state="motion"] .indicator-dot { background-color: #ef4444; }
+    </style>
 </head>
 
 <body>
@@ -140,12 +147,17 @@
                 <span class="indicator-dot"></span>
                 <span class="indicator-label">Data</span>
             </div>
+            <!-- NUEVO INDICADOR DE MODO DE VISIÓN -->
+            <div class="indicator" id="ind-mode" data-state="normal">
+                <span class="indicator-dot"></span>
+                <span class="indicator-label">Modo: Normal</span>
+            </div>
         </div>
 
         <div class="top-bar-actions">
             <div class="btn-group">
                 <button id="start" onclick="start()" class="btn btn-primary">▶ Iniciar</button>
-                <button id="stop" style="display:none" onclick="stop()" class="btn btn-danger">⏹ Detener</button>
+                <button id="stop" style="display:none" onclick="stop()" class="btn btn-danger">Detener</button>
                 <button id="toggle-teleoperation" class="btn btn-secondary">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 -960 960 960"
                         fill="currentColor" style="vertical-align:middle;margin-right:6px;display:inline-block;">
@@ -154,6 +166,18 @@
                     </svg>
                     <span id="teleoperation-btn-text">Start Teleoperation</span>
                 </button>
+            </div>
+            <div class="btn-group" style="display: flex; align-items: center; background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 2px 6px; margin-left: 8px;">
+                <select id="keymap-slot-1" onchange="handleSlotChange(1, this)" style="background: var(--bg-0); color: var(--text-1); border: 1px solid #0dcaf0; border-radius: 4px; padding: 2px; font-size: 11px; outline: none; margin-right: 5px; max-width: 65px;"></select>
+                
+                <button class="btn btn-sm btn-info" onclick="toggleKeymapProfile()" title="Alternar perfiles" style="padding: 2px 6px; font-size: 11px; display: flex; align-items: center; border-radius: 4px; gap: 3px; color: #000000 !important;">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 -960 960 960" fill="currentColor">
+                        <path d="M280-160 80-360l200-200 56 57-103 103h607v80H233l103 103-56 57Zm400-240-56-57 103-103H120v-80h607L624-743l56-57 200 200-200 200Z"/>
+                    </svg>
+                    <span id="current-profile-label">Act.</span>
+                </button>
+                
+                <select id="keymap-slot-2" onchange="handleSlotChange(2, this)" style="background: var(--bg-0); color: var(--text-1); border: 1px solid var(--border); border-radius: 4px; padding: 2px; font-size: 11px; outline: none; margin-left: 5px; max-width: 65px;"></select>
             </div>
             <div class="btn-group">
                 <button id="toggle-microphone" onclick="toggleMicrophone()" class="btn btn-icon-text">
@@ -172,19 +196,6 @@
                     </svg>
                     Servidor
                 </button>
-            </div>
-            
-            <div class="btn-group" style="display: flex; align-items: center; background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 2px 6px; margin-left: 8px;">
-                <select id="keymap-slot-1" onchange="handleSlotChange(1, this)" style="background: var(--bg-0); color: var(--text-1); border: 1px solid #0dcaf0; border-radius: 4px; padding: 2px; font-size: 11px; outline: none; margin-right: 5px; max-width: 65px;"></select>
-                
-                <button class="btn btn-sm btn-info" onclick="toggleKeymapProfile()" title="Alternar perfiles" style="padding: 2px 6px; font-size: 11px; display: flex; align-items: center; border-radius: 4px; gap: 3px; color: #000000 !important;">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 -960 960 960" fill="currentColor">
-                        <path d="M280-160 80-360l200-200 56 57-103 103h607v80H233l103 103-56 57Zm400-240-56-57 103-103H120v-80h607L624-743l56-57 200 200-200 200Z"/>
-                    </svg>
-                    <span id="current-profile-label">Act.</span>
-                </button>
-                
-                <select id="keymap-slot-2" onchange="handleSlotChange(2, this)" style="background: var(--bg-0); color: var(--text-1); border: 1px solid var(--border); border-radius: 4px; padding: 2px; font-size: 11px; outline: none; margin-left: 5px; max-width: 65px;"></select>
             </div>
         </div>
 
@@ -322,26 +333,6 @@
     </main>
 
     <!-- ====== STATUS BAR ====== -->
-    <!-- ====== SLIDER CONTROLS ====== -->
-    <div class="slider-controls-bar" style="display: flex; gap: 20px; padding: 10px; background: rgba(0,0,0,0.8); color: white; justify-content: center; z-index: 1000; position: relative; border-top: 1px solid #333;">
-        <div style="display: flex; align-items: center;">
-            <label for="flipper-vel" style="font-size: 12px; margin-right: 10px;">Vel. Flipper: <span id="flipper-vel-val">1.0</span></label>
-            <input type="range" id="flipper-vel" min="0" max="1.0" step="0.1" value="1.0" style="vertical-align: middle;">
-        </div>
-        <div style="display: flex; align-items: center;">
-            <label for="flipper-accel" style="font-size: 12px; margin-right: 10px;">Accel. Flipper: <span id="flipper-accel-val">0.5</span></label>
-            <input type="range" id="flipper-accel" min="0" max="0.5" step="0.05" value="0.5" style="vertical-align: middle;">
-        </div>
-        <div style="display: flex; align-items: center;">
-            <label for="dc-motor-vel" style="font-size: 12px; margin-right: 10px;">Vel. Motores DC: <span id="dc-motor-vel-val">1.0</span></label>
-            <input type="range" id="dc-motor-vel" min="0" max="1.0" step="0.05" value="1.0" style="vertical-align: middle;">
-        </div>
-        <div style="display: flex; align-items: center;">
-            <label for="arm-vel" style="font-size: 12px; margin-right: 10px;">Vel. Brazo: <span id="arm-vel-val">0.2</span></label>
-            <input type="range" id="arm-vel" min="0" max="1.0" step="0.05" value="0.2" style="vertical-align: middle;">
-        </div>
-    </div>
-
     <footer class="status-bar">
         <div class="status-section">
             <span class="status-item">ICE: <span id="ice-gathering-state">-</span></span>
@@ -497,6 +488,35 @@
     <script src="/static/com_client.js"></script>
     <script src="/static/theme_manager.js"></script>
     <script src="/static/camera_layouts.js"></script>
+
+    <!-- visual indicator:change this after tmr -->
+    <script>
+        (function() {
+            function updateVisionModeDisplay(mode) {
+                const modeIndicator = document.getElementById('ind-mode');
+                if (!modeIndicator) return;
+                const labelSpan = modeIndicator.querySelector('.indicator-label');
+                if (labelSpan) labelSpan.textContent = `Modo: ${mode}`;
+                // Cambiar el estado data-state para aplicar estilos (opcional)
+                if (mode === 'Normal') modeIndicator.dataset.state = 'normal';
+                else if (mode === 'QR / AprilTag') modeIndicator.dataset.state = 'qr';
+                else if (mode === 'Hazmat (YOLO)') modeIndicator.dataset.state = 'hazmat';
+                else if (mode === 'Movimiento') modeIndicator.dataset.state = 'motion';
+                else modeIndicator.dataset.state = 'normal';
+            }
+
+            const savedMode = localStorage.getItem('vision_mode');
+            if (savedMode) {
+                updateVisionModeDisplay(savedMode);
+            }
+
+            window.addEventListener('storage', (event) => {
+                if (event.key === 'vision_mode') {
+                    updateVisionModeDisplay(event.newValue);
+                }
+            });
+        })();
+    </script>
 </body>
 
 </html>
