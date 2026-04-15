@@ -124,24 +124,7 @@
       "payload": {
         "function_name": "resetFlipperPositions"
       }
-    },
-    "q": {
-      "type": "teleop_cmd_arm_joint_vel",
-      "payload": {
-        "index": 0
-      },
-      "release_payload": {
-        "index": 0
-      }
-    },
-    "e": {
-      "type": "teleop_cmd_arm_joint_vel",
-      "payload": {
-        "index": 5
-      },
-      "release_payload": {
-        "index": 5
-      }
+    
     },
     "stop_base": {
       "type": "teleop_cmd_vel",
@@ -186,6 +169,7 @@
         "angular_dir": 0
       }
     },
+
     "s": {
       "type": "teleop_cmd_vel",
       "payload": {
@@ -197,89 +181,42 @@
         "angular_dir": 0
       }
     },
-    "8": {
-      "type": "teleop_cmd_arm",
-      "payload": {
-        "x_dir": 1
-      },
-      "release_payload": {
-        "x_dir": 0
-      }
-    },
-    "2": {
-      "type": "teleop_cmd_arm",
-      "payload": {
-        "x_dir": -1
-      },
-      "release_payload": {
-        "x_dir": 0
-      }
-    },
-    "4": {
-      "type": "teleop_cmd_arm",
-      "payload": {
-        "y_dir": 1
-      },
-      "release_payload": {
-        "y_dir": 0
-      }
-    },
-    "6": {
-      "type": "teleop_cmd_arm",
-      "payload": {
-        "y_dir": -1
-      },
-      "release_payload": {
-        "y_dir": 0
-      }
-    },
+    
     "9": {
-      "type": "teleop_cmd_arm",
+      "type": "teleop_flipper",
       "payload": {
-        "z_dir": 1
+        "index": 4
       },
       "release_payload": {
-        "z_dir": 0
+        "index": 4
       }
     },
     "3": {
-      "type": "teleop_cmd_arm",
+      "type": "teleop_flipper",
       "payload": {
-        "z_dir": -1
+        "index": 5
       },
       "release_payload": {
-        "z_dir": 0
+        "index": 5
       }
     },
     "7": {
-      "type": "teleop_cmd_arm",
+      "type": "teleop_flipper",
       "payload": {
-        "roll_dir": 1
+        "index": 6
       },
       "release_payload": {
-        "roll_dir": 0
+        "index": 6
       }
     },
     "1": {
-      "type": "teleop_cmd_arm",
+      "type": "teleop_flipper",
       "payload": {
-        "roll_dir": -1
+        "index": 7
       },
       "release_payload": {
-        "roll_dir": 0
+        "index": 7
       }
-    },
-    "5": {
-      "type": "teleop_cmd_arm",
-      "payload": {
-        "pitch_dir": 1
-      },
-      "release_payload": {
-        "pitch_dir": 0
-      }
-    },
-    "0":{
-      "type": ""
     }
   },
 
