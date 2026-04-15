@@ -129,7 +129,7 @@ class Intermediate(Node):
                 
                 np.copyto(self.latest_images[index], resized_image)
             
-            self.last_time = current_time
+            self.last_times[index] = current_time
         except Exception as e:
             logger.error(f"Error in image_callback for track {index}: {e}")
 
