@@ -153,11 +153,13 @@ class Intermediate(Node):
                     return response
 
                 # Determine the target source type toggle
-                target_mode = "thermal" if cmd_type == "thermal" else "sensors"
                 current_source = self.track_sources[track_index]
                 
-                # Toggle: if already on target, switch back to raw
-                target_source = target_mode if current_source != target_mode else "raw"
+                # Toggle logic: if in raw, go to requested mode; otherwise go back to raw
+                if current_source == "raw":
+                    target_source = "thermal" if cmd_type == "thermal" else "sensors"
+                else:
+                    target_source = "raw"
 
                 logger.info(f"Request to switch track {track_index} to {target_source}")
                 self.pending_track_switches.append((track_index, target_source))
