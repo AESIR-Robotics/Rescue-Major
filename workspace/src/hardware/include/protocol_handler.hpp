@@ -20,7 +20,6 @@
 #include "utils/crc.hpp"
 #include "utils/tuple_utils.hpp"
 #include "utils/diagnostics.hpp"
-#include "utils/logger.hpp"
 
 #include "transport/transport.hpp"
 // micros / stdclock / deadline_t / LogFn come from the transport header,
@@ -201,8 +200,6 @@ private:
   std::unordered_map<uint8_t, std::function<void(const uint8_t *, uint8_t, size_t)>>
       instruction_callback{};
 
-  Logger log{};
-
   // ── Diagnostic counters ─────────────────────────────────────────────────
   uint32_t stat_crc_errors_      { 0 };
   uint32_t stat_sync_failures_   { 0 };
@@ -231,10 +228,8 @@ private:
   }
 
 public:
-  // Override setLogger to set both Transport and Protocol_Handler loggers.
-  void setLogger(Logger &in_log) {
-    log = in_log;
-    Transport::setLogger(log);
+  void setLogger(Logger &in_log){
+    Transport::setLogger(in_log);
   }
 };
 
@@ -324,27 +319,25 @@ bool Protocol_Handler<Transport, ReadEnum, WriteEnum>::sendQueue(micros timeout,
     if(!waitingCmds_.empty()){
       auto& elem = waitingCmds_.front();
       auto age_since_send = std::chrono::duration_cast<micros>(stdclock::now() - elem.last_sent);
+      auto age_since_first_send = std::chrono::duration_cast<micros>(stdclock::now() - elem.first_sent);
 
       if (age_since_send >= retry_timeout) { 
-        if(elem.retries_left == 0){
-          log.logWarn("Seq=%u exhausted retries (inst=%u id=%u) — discarding",
+        if(elem.retries_left == 0 || age_since_first_send >= retry_timeout * max_retries_ * 2){
+          Transport::log.logWarn("Seq=%u exhausted retries (inst=%u id=%u) — discarding",
                 elem.seq_id, elem.cmd->getInst(), elem.cmd->getID());
 
-          auto it = cmds_lookout.find({elem.cmd->getInst(), elem.cmd->getID()});
-          if (it == cmds_lookout.end()) {
-            // Should never happen
-            waitingCmds_.erase(waitingCmds_.begin());
-          }
-          auto list_it = it->second;
-          waitingCmds_.erase(list_it);
-          cmds_lookout.erase(it);
+          // Erase from lookout first, then from list.
+          // Use inst+id key from the command — do NOT use the iterator after erase.
+          MsgKey key = {elem.cmd->getInst(), elem.cmd->getID()};
+          cmds_lookout.erase(key);         
+          waitingCmds_.erase(waitingCmds_.begin());  
 
           ++stat_discarded_;
           ++consecutive_unacked_;
           if (consecutive_unacked_ >= max_consecutive_unacked_) {
             channel_dead_ = true;
             Transport::disconnect();
-            log.logError("Channel declared dead after %u consecutive unacked messages",
+            Transport::log.logError("Channel declared dead after %u consecutive unacked messages",
                     consecutive_unacked_);
           }
           continue;
@@ -354,8 +347,11 @@ bool Protocol_Handler<Transport, ReadEnum, WriteEnum>::sendQueue(micros timeout,
         if(bytes_sent + expectedsize > SEND_BUDGET) break;
         
         uint8_t new_seq = allocSeq();
+        //Transport::log.logInfo("Sending old message: ");
+        //Transport::log.logInfo(elem.cmd->info());
         auto sent = sendNext(elem.cmd.get(), new_seq, dl);
         bytes_sent += sent;
+        //Transport::log.logInfo("Sent: %i", sent);
         if (sent != expectedsize) {updateStatus(); return false;}
 
         ++stat_retransmits_;
@@ -368,7 +364,7 @@ bool Protocol_Handler<Transport, ReadEnum, WriteEnum>::sendQueue(micros timeout,
         // Move to back of list (LRU: oldest retry at front)
         waitingCmds_.splice(waitingCmds_.end(), waitingCmds_, waitingCmds_.begin());
 
-        log.logInfo("Retransmit: new_seq=%u retries_left=%u inst=%u id=%u",
+        Transport::log.logInfo("Retransmit: new_seq=%u retries_left=%u inst=%u id=%u",
                     new_seq, elem.retries_left,
                     elem.cmd->getInst(), elem.cmd->getID());
         
@@ -381,13 +377,18 @@ bool Protocol_Handler<Transport, ReadEnum, WriteEnum>::sendQueue(micros timeout,
 
     if(bytes_sent + expectedsize > SEND_BUDGET) break;
     uint8_t seq = allocSeq();
+    //Transport::log.logInfo("Sending new message: ");
+    //Transport::log.logInfo(sending.front()->info());
     auto sent = sendNext(sending.front().get(), seq, dl);
     bytes_sent += sent;
-
+    //Transport::log.logInfo("Sent: %i", sent);
     if (sent != expectedsize) {updateStatus(); return false;}
     coalesceingAddition(std::move(sending.front()), seq);
     sending.pop();
   }
+  //if(bytes_sent > 0){
+  //  Transport::log.logInfo("Ending send queue");
+  //}
   updateStatus();
   return true;
 }
@@ -443,7 +444,7 @@ bool Protocol_Handler<Transport, ReadEnum, WriteEnum>::readPending(micros timeou
       }
       if (!found) {
         ++stat_sync_failures_;
-        log.logWarn("Could not sync to message HEADER: lost %u, total %u",
+        Transport::log.logWarn("Could not sync to message HEADER: lost %u, total %u",
                 lost_bytes_, total_attmp_);
         total_attmp_ = 0;
         break;
@@ -457,7 +458,7 @@ bool Protocol_Handler<Transport, ReadEnum, WriteEnum>::readPending(micros timeou
 
     if (lost_bytes_ > 1) {
       stat_bytes_skipped_ += lost_bytes_ - 1;
-      log.logWarn("Skipped %u bytes in sync", lost_bytes_ - 1);
+      Transport::log.logWarn("Skipped %u bytes in sync", lost_bytes_ - 1);
     }
     lost_bytes_    = 0;
     already_synced_ = false;
@@ -465,9 +466,9 @@ bool Protocol_Handler<Transport, ReadEnum, WriteEnum>::readPending(micros timeou
     auto res = readOneMessage(timePerMsg);
     if (res == ReadResult::OK_DISPATCHED) { dispatched_any = true; continue; }
     if (res == ReadResult::NO_MESSAGE)    { break; }
-    if (res == ReadResult::CRC_MISMATCH)  { ++stat_crc_errors_; log.logWarn("CRC Mismatch"); continue; }
+    if (res == ReadResult::CRC_MISMATCH)  { ++stat_crc_errors_; Transport::log.logWarn("CRC Mismatch"); continue; }
 
-    log.logError("I/O error occurred while reading message");
+    Transport::log.logError("I/O error occurred while reading message");
     updateStatus();
     return false;
   }
@@ -495,7 +496,7 @@ Protocol_Handler<Transport, ReadEnum, WriteEnum>::readOneMessage(micros timePerM
   //processAck(1, inst, seq_id);
 
   if (length > MAX_PAYLOAD_SIZE) {
-    log.logWarn("Payload length %u exceeds MAX_PAYLOAD_SIZE (%zu) — dropping",
+    Transport::log.logWarn("Payload length %u exceeds MAX_PAYLOAD_SIZE (%zu) — dropping",
             static_cast<unsigned>(length), MAX_PAYLOAD_SIZE);
     return ReadResult::IO_ERROR;
   }
@@ -580,7 +581,7 @@ bool Protocol_Handler<Transport, ReadEnum, WriteEnum>::coalesceingAddition(
     pc.old_seq = std::move(list_it->old_seq);
     pc.old_seq.insert(list_it->seq_id);
 
-    pc.retries_left = list_it->retries_left + max_retries_;
+    pc.retries_left = std::min(list_it->retries_left + max_retries_, max_retries_ * 2);
     pc.first_sent   = list_it->first_sent;
     pc.last_sent    = now;
     pc.cmd          = std::move(cmd);
@@ -624,6 +625,8 @@ void Protocol_Handler<Transport, ReadEnum, WriteEnum>::processAck(
 
   auto list_it = it->second;
   if (list_it == waitingCmds_.end()) return;
+
+  consecutive_unacked_ = 0;
 
   if (list_it->seq_id == seq_id) {
     waitingCmds_.erase(list_it);

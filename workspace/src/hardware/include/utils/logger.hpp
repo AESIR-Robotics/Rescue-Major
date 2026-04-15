@@ -73,6 +73,10 @@ public:
     logDispatch(log_info_, fmt, std::forward<Args>(args)...);
   }
 
+  void logInfo(const std::string& fmt) const {
+    logDispatch(log_info_, "%s", fmt.c_str());
+  }
+
   template<size_t N, typename... Args>
   void logWarn(const char (&fmt)[N], Args&&... args) const {
     logDispatch(log_warn_, fmt, std::forward<Args>(args)...);

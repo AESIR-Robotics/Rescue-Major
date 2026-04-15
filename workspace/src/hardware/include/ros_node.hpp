@@ -197,7 +197,7 @@ private:
   void jointCommandCallback(const hardware::msg::JointControl::SharedPtr msg);
 
   // --- Command preparation --------------------------------------------------
-  static constexpr int number_arms{5};
+  static constexpr int number_arms{4};
   void prepareI2CCommands();
   void prepareCANCommands(int arm_index);
   void enqueueFlipperInfo(const StepperState<4> &snap);
@@ -356,7 +356,7 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
         [this](const std::string &msg) { RCLCPP_WARN( get_logger(), "%s", msg.c_str()); },
        [this](const std::string &msg) { RCLCPP_ERROR(get_logger(), "%s", msg.c_str()); });
 
-  stepper_micro.setLogger(logger);
+  //stepper_micro.setLogger(logger);
 
   stepper_micro.init(&sysStats, i2c_port_, slave_addr_);
 
@@ -377,6 +377,7 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
 
   for (int i = 0; i < number_arms; ++i) {
       stepper_arms[i].setLogger(logger);
+      
       stepper_arms[i].setIfaceManager(can_mgr);
       // Register channel in mux — my addr offset per arm, peer = arm index
       stepper_arms[i].init(&sysStats, can_interface, /*my=*/static_cast<uint8_t>(0x00 - i - 1),
