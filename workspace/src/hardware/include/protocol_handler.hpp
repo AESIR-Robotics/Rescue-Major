@@ -107,7 +107,6 @@ public:
   /// Reset the channel-dead flag (call after successful reconnect).
   void resetChannel() {
     channel_dead_         = false;
-    consecutive_unacked_  = 0;
     // Drain pending — stale commands from before reconnect are useless
     sending = std::queue<std::unique_ptr<Cmd::Command>>{};
 
@@ -315,16 +314,19 @@ bool Protocol_Handler<Transport, ReadEnum, WriteEnum>::sendQueue(micros timeout,
       MAX_PAYLOAD_SIZE + tuple_size(header{}) + tuple_size(tail{});
 
   size_t expectedsize{0};
+  //Transport::log.logInfo("sendqueue");
   while(Transport::canSend() && stdclock::now() + timePerMsg < dl){
+    //Transport::log.logInfo("Entering send queue loop: in seq %i in queue %i", waitingCmds_.size(), sending.size());
     if(!waitingCmds_.empty()){
       auto& elem = waitingCmds_.front();
       auto age_since_send = std::chrono::duration_cast<micros>(stdclock::now() - elem.last_sent);
       auto age_since_first_send = std::chrono::duration_cast<micros>(stdclock::now() - elem.first_sent);
 
-      if (age_since_send >= retry_timeout) { 
-        if(elem.retries_left == 0 || age_since_first_send >= retry_timeout * max_retries_ * 2){
-          Transport::log.logWarn("Seq=%u exhausted retries (inst=%u id=%u) — discarding",
-                elem.seq_id, elem.cmd->getInst(), elem.cmd->getID());
+  
+      if (age_since_send >= retry_timeout || (age_since_first_send >= retry_timeout * max_retries_ * 2)) { 
+        if(elem.retries_left == 0 || (age_since_first_send >= retry_timeout * max_retries_ * 2)){
+          //Transport::log.logWarn("Seq=%u exhausted retries (inst=%u id=%u) — discarding",
+          //      elem.seq_id, elem.cmd->getInst(), elem.cmd->getID());
 
           // Erase from lookout first, then from list.
           // Use inst+id key from the command — do NOT use the iterator after erase.
@@ -336,9 +338,9 @@ bool Protocol_Handler<Transport, ReadEnum, WriteEnum>::sendQueue(micros timeout,
           ++consecutive_unacked_;
           if (consecutive_unacked_ >= max_consecutive_unacked_) {
             channel_dead_ = true;
-            Transport::disconnect();
             Transport::log.logError("Channel declared dead after %u consecutive unacked messages",
                     consecutive_unacked_);
+            Transport::disconnect();
           }
           continue;
         }

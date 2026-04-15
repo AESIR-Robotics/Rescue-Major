@@ -356,7 +356,7 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
         [this](const std::string &msg) { RCLCPP_WARN( get_logger(), "%s", msg.c_str()); },
        [this](const std::string &msg) { RCLCPP_ERROR(get_logger(), "%s", msg.c_str()); });
 
-  //stepper_micro.setLogger(logger);
+  stepper_micro.setLogger(logger);
 
   stepper_micro.init(&sysStats, i2c_port_, slave_addr_);
 
@@ -534,7 +534,6 @@ inline void HardwareDriverNode::tickCAN() {
   for (int k = 0; k < count; ++k) {
     int i = order[k];
     auto &arm = stepper_arms[i];
-
     // 2. Read responses then flush TX queue
     arm.readPending();
     arm.sendQueue();
@@ -880,6 +879,7 @@ inline bool HardwareDriverNode::errorRecoveryI2C() {
 }
 
 inline bool HardwareDriverNode::errorRecoveryCANArm(int i) {
+  
   if (++can_wait_counter_[i] < max_wait_ticks_) return false;
   can_wait_counter_[i] = 0;
   // reconnect() delegates to the shared SerialMux — if it succeeds,
