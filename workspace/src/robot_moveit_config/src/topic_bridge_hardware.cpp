@@ -159,7 +159,7 @@ public:
 
     // Subscriber: Listen to physical hardware encoders
     feedback_sub_ = node_->create_subscription<sensor_msgs::msg::JointState>(
-      "/hardware_feedback", 
+      "/hardware_node/joint_states", 
       10,
       [this](const sensor_msgs::msg::JointState::SharedPtr msg)
       {
