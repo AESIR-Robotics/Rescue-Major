@@ -20,7 +20,7 @@ from sensor_msgs.msg import Image
 from vision.srv import Command
 from aiohttp import web
 from ament_index_python.packages import get_package_share_directory
-
+from functools import partial
 from webrtc_manager import WebRTCManager
 
 # Setting up logging and global variables
@@ -45,18 +45,25 @@ class Intermediate(Node):
         
         self.camera_topics = [
             "/cam0/image_raw",
+            "/oak/rgb/image_raw",
             "/cam1/image_raw",
-            "/cam2/image_raw"
         ]
-        self.sensor_topic = "/cam_sensors/image"
         
-        self.active_sensor_track = None
-        self.pending_sensor_track_switch = None  # Pending track switch request
+        self.source_topics = {
+            "raw": self.camera_topics,
+            "sensors": "/cam_sensors/image",
+            "thermal": "/cam_thermal/image_raw"
+        }
         
         self.camera_count = len(self.camera_topics)
+        
+        # All tracks start showing "raw" by default
+        self.track_sources = ["raw"] * self.camera_count
+        self.pending_track_switches = []  # List of tuples: (track_index, target_source)
+        
         self.latest_images = [None] * self.camera_count
         self.bridge = cv_bridge.CvBridge()
-        self.last_time = time.time()
+        self.last_times = [time.time()] * self.camera_count
         self.fps = 30
         self.lock = threading.Lock()
         self.subscription_lock = threading.Lock()  # Protect subscription operations
@@ -79,7 +86,7 @@ class Intermediate(Node):
         self.new_image = None
         self.rtt = None
         self.last_rtt = None
-        self.manual_resolution = (1881, 1051)
+        self.manual_resolution = (1920, 1080)
         self.resolution = (1920, 1080)
         self.mode = mode
 
@@ -103,26 +110,28 @@ class Intermediate(Node):
     def image_callback(self, msg, index):
         """Callback function to process the incoming image messages."""
         current_time = time.time()
-        if current_time - self.last_time >= 1.0 / self.fps:
-            try:
-                cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
-                if self.mode == "manual":
-                    resized_image = cv2.resize(cv_image, self.manual_resolution)
-                else:
-                    resized_image = self.resize_image(cv_image)
+        if current_time - self.last_times[index] < (1.0 / self.fps) and self.fps <= 15:
+            return
+        
+        try:
+            cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding="rgb8")
+            if self.mode == "manual":
+                resized_image = self.limit_resolution(cv_image, self.manual_resolution)
+            else:
+                resized_image = self.resize_image(cv_image)
 
-                # Thread-safe buffer update
-                with self.subscription_lock:
-                    # Check if buffer needs reallocation due to size change
-                    if self.latest_images[index].shape != resized_image.shape:
-                        logger.info(f"Track {index}: Reallocating buffer from {self.latest_images[index].shape} to {resized_image.shape}")
-                        self.latest_images[index] = np.zeros(resized_image.shape, dtype=np.uint8)
-                    
-                    np.copyto(self.latest_images[index], resized_image)
+            # Thread-safe buffer update
+            with self.subscription_lock:
+                # Check if buffer needs reallocation due to size change
+                if self.latest_images[index].shape != resized_image.shape:
+                    logger.info(f"Track {index}: Reallocating buffer from {self.latest_images[index].shape} to {resized_image.shape}")
+                    self.latest_images[index] = np.zeros(resized_image.shape, dtype=np.uint8)
                 
-                self.last_time = current_time
-            except Exception as e:
-                logger.error(f"Error in image_callback for track {index}: {e}")
+                np.copyto(self.latest_images[index], resized_image)
+            
+            self.last_times[index] = current_time
+        except Exception as e:
+            logger.error(f"Error in image_callback for track {index}: {e}")
 
     def webrtc_command_callback(self, request, response):
         """
@@ -131,29 +140,58 @@ class Intermediate(Node):
         command = request.data
         logger.info(f"Received WebRTC command: {command}")
     
-        if command.startswith("vision:camera,"):
-            # switch track N to sensors
+        if command.startswith("vision:"):
             try:
-                track_index = int(command.split(',')[1])
-                
-                # Validate before setting flag
+                parts = command.split(",")
+                cmd_type = parts[0].split(":")[1]  # "camera", "sensors", or "thermal"
+                # Special command to reset all to raw
+                if cmd_type == "raw":
+                    if parts[1] == "all":
+                        logger.info("Request to switch all tracks to raw")
+                        for i in range(self.camera_count):
+                            self.pending_track_switches.append((i, "raw"))
+                        response.success = True
+                        response.message = "All tracks switch requested to raw"
+                        return response
+                    else:
+                        track_index = int(parts[1])
+                        self.pending_track_switches.append((track_index, "raw"))
+                        response.success = True
+                        response.message = f"Track {track_index} switch requested to raw"
+                        return response
+
+                # Special handling for "thermal,on" and "thermal,off"
+                if cmd_type == "thermal" and parts[1] in ["on", "off"]:
+                    track_index = 0 
+                    target_source = "thermal" if parts[1] == "on" else "raw"
+                    logger.info(f"Request to switch track {track_index} to {target_source} (thermal {parts[1]})")
+                    self.pending_track_switches.append((track_index, target_source))
+                    response.success = True
+                    response.message = f"Thermal mode set to {parts[1]} on track {track_index}"
+                    return response
+
+                track_index = int(parts[1])
+
                 if track_index < 0 or track_index >= self.camera_count:
-                    logger.error(f"Invalid track index: {track_index}. Must be 0-{self.camera_count-1}")
+                    logger.error(f"Invalid track index: {track_index}")
                     response.success = False
                     response.message = f"Invalid track index: {track_index}"
-                else:
-                    logger.info(f"Request to switch track {track_index} to {'raw' if self.active_sensor_track == track_index else 'sensors'}")
-                    
-                    # Set pending switch flag - will be processed by timer in main thread
-                    self.pending_sensor_track_switch = track_index
-                    
-                    response.success = True
-                    response.message = f"Track {track_index} switch requested"
+                    return response
+
+                # Target source is explicitly set
+                target_source = "thermal" if cmd_type == "thermal" else "sensors"
+
+                logger.info(f"Request to switch track {track_index} to {target_source}")
+                self.pending_track_switches.append((track_index, target_source))
+
+                response.success = True
+                response.message = f"Track {track_index} switch requested to {target_source}"
+
             except (ValueError, IndexError) as e:
-                logger.error(f"Invalid vision:camera command format: {command}. Error: {e}")
+                logger.error(f"Invalid vision command format: {command}. Error: {e}")
                 response.success = False
                 response.message = f"Invalid command format: {e}"
-        
+
         elif command == "audio:mute":
             try:
                 webrtc_manager.mute_audio()
@@ -183,12 +221,22 @@ class Intermediate(Node):
     
     def _process_pending_switch(self):
         """Timer callback to process pending track switches in main ROS thread."""
-        if self.pending_sensor_track_switch is not None:
-            track_index = self.pending_sensor_track_switch
-            self.pending_sensor_track_switch = None  # Clear flag
-            logger.info(f"Processing track {track_index} switch in main thread")
-            self._switch_sensor_track(track_index)
+        if self.pending_track_switches:
+            for track_index, target_source in list(self.pending_track_switches):
+                logger.info(f"Processing track {track_index} switch to {target_source} in main thread")
+                self._switch_track_source(track_index, target_source)
+            self.pending_track_switches.clear()
     
+    def _get_topic_for_track(self, index, source):
+        """Helper to resolve the topic string based on source mode."""
+        if source == "raw":
+            return self.source_topics["raw"][index]
+        return self.source_topics[source]
+
+    def _clear_image_buffer(self, index):
+        """Re-initializes the image buffer to black to drop stale frames."""
+        self.latest_images[index] = np.zeros(self.resolution[::-1] + (3,), dtype=np.uint8)
+
     def _subscribe_to_cameras(self):
         """Initialize all camera subscriptions. Thread-safe."""
         with self.subscription_lock:
@@ -197,11 +245,11 @@ class Intermediate(Node):
             self.images_subscribers.clear()
             
             for i in range(self.camera_count):
-                topic = self.sensor_topic if i == self.active_sensor_track else self.camera_topics[i]
-                logger.info(f"Track {i} subscribing to: {topic} {'(SENSORS)' if i == self.active_sensor_track else ''}")
+                source = self.track_sources[i]
+                topic = self._get_topic_for_track(i, source)
+                    
+                logger.info(f"Track {i} subscribing to: {topic} ({source.upper()})")
                 
-                # Use functools.partial to avoid closure issues
-                from functools import partial
                 callback = partial(self.image_callback, index=i)
                 
                 sub = self.create_subscription(
@@ -211,69 +259,55 @@ class Intermediate(Node):
                     10
                 )
                 self.images_subscribers.append(sub)
-                
-                # Clear image buffer for this track to avoid showing stale data
-                self.latest_images[i] = np.zeros(self.resolution[::-1] + (3,), dtype=np.uint8)
+                self._clear_image_buffer(i)
     
-    def _switch_sensor_track(self, track_index):
-        """Switch a camera track between raw and sensor feeds."""
+    def _switch_track_source(self, track_index, new_source):
+        """Switch a camera track to a new source (raw, sensors, thermal)."""
         if track_index is not None and (track_index < 0 or track_index >= self.camera_count):
             logger.error(f"Invalid track index: {track_index}. Must be between 0 and {self.camera_count-1}")
             return
+            
+        if new_source not in self.source_topics:
+            logger.error(f"Invalid source: {new_source}. Must be one of {list(self.source_topics.keys())}")
+            return
         
         with self.subscription_lock:
-            # Toggle: if already on sensors, switch back to raw
-            if self.active_sensor_track == track_index:
-                logger.info(f"Track {track_index} toggling back to raw feed")
-                old_sensor_track = self.active_sensor_track
-                self.active_sensor_track = None  # No track reads sensors
+            old_source = self.track_sources[track_index]
+            if old_source == new_source:
+                logger.info(f"Track {track_index} is already on {new_source}, ignoring")
+                return
+                
+            self.track_sources[track_index] = new_source
+            logger.info(f"Track {track_index} switched from {old_source} to {new_source}")
+            
+            # Destroy and recreate subscription
+            if track_index < len(self.images_subscribers):
+                try:
+                    self.destroy_subscription(self.images_subscribers[track_index])
+                except Exception as e:
+                    logger.error(f"Error destroying subscription for track {track_index}: {e}")
             else:
-                old_sensor_track = self.active_sensor_track
-                self.active_sensor_track = track_index
-                logger.info(f"Track {track_index} switching to sensors feed")
+                logger.warning(f"Track {track_index} subscription index out of range")
+                return
+                
+            topic = self._get_topic_for_track(track_index, new_source)
+            logger.info(f"Track {track_index} new subscription: {topic}")
             
-            # Determine which tracks need updating
-            tracks_to_update = set()
-            if old_sensor_track is not None:
-                tracks_to_update.add(old_sensor_track)
-            if track_index is not None:
-                tracks_to_update.add(track_index)
+            callback = partial(self.image_callback, index=track_index)
             
-            # Update only affected subscriptions
-            from functools import partial
-            for i in tracks_to_update:
-                if i >= len(self.images_subscribers):
-                    logger.warning(f"Track {i} subscription index out of range")
-                    continue
+            try:
+                sub = self.create_subscription(
+                    Image,
+                    topic,
+                    callback,
+                    10
+                )
+                self.images_subscribers[track_index] = sub
+                self._clear_image_buffer(track_index)
+                logger.info(f"Track {track_index} buffer cleared")
                 
-                # Destroy previous subscription
-                try:
-                    self.destroy_subscription(self.images_subscribers[i])
-                except Exception as e:
-                    logger.error(f"Error destroying subscription for track {i}: {e}")
-                
-                # Determine new topic
-                topic = self.sensor_topic if i == self.active_sensor_track else self.camera_topics[i]
-                logger.info(f"Track {i} switching to: {topic} {'(SENSORS)' if i == self.active_sensor_track else '(RAW)'}")
-                
-                # Create new subscription with proper closure handling
-                callback = partial(self.image_callback, index=i)
-                
-                try:
-                    sub = self.create_subscription(
-                        Image,
-                        topic,
-                        callback,
-                        10
-                    )
-                    self.images_subscribers[i] = sub
-                    
-                    # Clear image buffer to avoid showing stale frames from previous source
-                    self.latest_images[i] = np.zeros(self.resolution[::-1] + (3,), dtype=np.uint8)
-                    logger.info(f"Track {i} buffer cleared")
-                    
-                except Exception as e:
-                    logger.error(f"Error creating subscription for track {i}: {e}")
+            except Exception as e:
+                logger.error(f"Error creating subscription for track {track_index}: {e}")
 
     def update_bandwidth(self, msg):
         self.bandwidth = msg.data
@@ -306,7 +340,31 @@ class Intermediate(Node):
             if self.rtt is not self.last_rtt:
                 self.adjust_fps_and_resolution()
                 self.last_rtt = self.rtt
-            return cv2.resize(image, self.resolution)
+            return self.limit_resolution(image, self.resolution)
+        return image
+    
+    def limit_resolution(self, image, max_resolution):
+        """
+        Reduce la imagen solo si excede el límite de resolución, 
+        manteniendo la relación de aspecto y asegurando dimensiones pares para el color en WebRTC.
+        """
+        target_w, target_h = max_resolution
+        h, w = image.shape[:2]
+        
+        # Solo aplicamos cv2.resize si la imagen es MÁS GRANDE que nuestro límite
+        if w > target_w or h > target_h:
+            # Calcular factor de escala para mantener la proporción (aspect ratio)
+            scale = min(target_w / w, target_h / h)
+            new_w = int(w * scale)
+            new_h = int(h * scale)
+            
+            # CRÍTICO: Asegurar que ancho y alto sean PARES para evitar perder el color en YUV420p
+            new_w -= new_w % 2
+            new_h -= new_h % 2
+            
+            return cv2.resize(image, (new_w, new_h))
+            
+        # Si es más pequeña (como la térmica) o igual, se envía en su tamaño original intacto
         return image
 
     def get_latest_image(self, index):

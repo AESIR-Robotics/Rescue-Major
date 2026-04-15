@@ -297,7 +297,8 @@
       "type": "send_service",
       "data_type": "vision/srv/Command",
       "topics": [
-        "/command_vision_videoStream"
+        "/command_vision_videoStream",
+        "/web_rtc_commands"
       ],
       "payload": {
         "data": "vision:thermal,on"
@@ -307,7 +308,8 @@
       "type": "send_service",
       "data_type": "vision/srv/Command",
       "topics": [
-        "/command_vision_videoStream"
+        "/command_vision_videoStream",
+        "/web_rtc_commands"
       ],
       "payload": {
         "data": "vision:thermal,off"
@@ -351,6 +353,17 @@
       ],
       "payload": {
         "data": "vision:mode,3"
+      }
+    },
+    "reset_raw": {
+      "type": "send_service",
+      "data_type": "vision/srv/Command",
+      "topics": [
+        "/command_vision_videoStream",
+        "/web_rtc_commands"
+      ],
+      "payload": {
+        "data": "vision:raw,all"
       }
     }
   }

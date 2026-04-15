@@ -4,8 +4,22 @@ Handles PyAudio hardware management for bidirectional audio streaming.
 """
 import logging
 import pyaudio
+import ctypes
+from ctypes.util import find_library
 
 logger = logging.getLogger("audio")
+
+# Suppress ALSA warnings
+def suppress_alsa_warnings():
+    """Silencia logs de ALSA (Advanced Linux Sound Architecture) a nivel de C"""
+    try:
+        asound = ctypes.cdll.LoadLibrary(find_library('asound'))
+        asound.snd_lib_error_set_handler(ctypes.c_char_p(0))
+        logger.debug("ALSA warnings suppressed")
+    except Exception as e:
+        logger.debug(f"Could not suppress ALSA warnings: {e}")
+
+suppress_alsa_warnings()
 
 
 class AudioSystem:

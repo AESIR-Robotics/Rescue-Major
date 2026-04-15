@@ -169,9 +169,10 @@
             <button id="cam-1" class="btn">Cámara 1</button>
             <button id="cam-2" class="btn">Cámara 2</button>
             <button id="cam-3" class="btn">Cámara 3</button>
+            <button id="reset-raw" class="btn">Reset a Raw</button>
         </div>
         <div class="button-group">
-            <button id="thermal-toggle" class="btn">🌡️ Térmica OFF</button>
+            <button id="thermal-toggle" class="btn">🌡️ Térmica</button>
         </div>
         <div class="button-group">
             <button id="mode-normal" class="btn">Normal</button>
@@ -274,33 +275,62 @@
             localStorage.setItem('vision_mode', modeName);
         }
 
-        // ========== CONEXIÓN ROS DIRECTA PARA COMANDOS DE VISIÓN ==========
-        let visionRos = null;
-        let visionApi = null;
+        // ========== ÚNICA CONEXIÓN ROS ROSBRIDGE ==========
+        let rosConnection = null;
+        let rosApi = null;
         let thermalOn = false;
+        const maxRetries = 5;
+        let connectAttempts = 0;
 
-        function connectVision() {
+        function connectToROS() {
             if (typeof ROSLIB === 'undefined') {
                 addLog('❌ ROSLIB no cargado', true);
                 return;
             }
-            visionRos = new ROSLIB.Ros({ url: 'ws://localhost:9090' });
-            visionRos.on('connection', () => {
-                addLog('✅ Conectado a ROSbridge para comandos de visión');
-                visionApi = new RobotAPI(visionRos);
+
+            if (connectAttempts >= maxRetries) {
+                addLog('❌ Máximo de intentos de conexión alcanzado', true);
+                return;
+            }
+
+            const rosUrl = window.location.protocol === 'https:' ? 
+                'wss://127.0.0.1:9090' : 
+                'ws://localhost:9090';
+            
+            addLog(`Intentando conectar a: ${rosUrl}`);
+            rosConnection = new ROSLIB.Ros({ url: rosUrl });
+
+            rosConnection.on('connection', () => {
+                addLog('✅ Conectado a ROSbridge');
+                connectAttempts = 0;  // Reset counter on success
+                rosApi = new RobotAPI(rosConnection);
+                subscribeToTopics();
             });
-            visionRos.on('error', (err) => addLog(`❌ Error ROS visión: ${err}`, true));
-            visionRos.on('close', () => addLog('🔌 Conexión de visión cerrada'));
+
+            rosConnection.on('error', (err) => {
+                const errorMsg = err instanceof Event ? 
+                    `Conexión rechazada (verificar URL: ${rosUrl})` : 
+                    String(err);
+                addLog(`❌ Error ROS: ${errorMsg}`, true);
+                connectAttempts++;
+                setTimeout(connectToROS, 2000); // Reintentar en 2 segundos
+            });
+
+            rosConnection.on('close', () => {
+                addLog('🔌 Conexión ROS cerrada');
+                rosApi = null;
+            });
         }
 
         function sendVisionCommand(service, data, modeName = null) {
-            if (!visionApi) {
+            if (!rosApi) {
                 addLog('❌ No hay conexión ROS para enviar comando', true);
                 return false;
             }
             try {
-                visionApi.sendService(service, 'vision/srv/Command', { data: data });
+                rosApi.sendService(service, 'vision/srv/Command', { data: data });
                 addLog(`📡 Comando enviado: ${service} → ${data}`);
+                
                 if (modeName) {
                     updateModeIndicator(modeName);
                 }
@@ -311,11 +341,66 @@
             }
         }
 
+        function subscribeToTopics() {
+            if (!rosApi) {
+                addLog('⚠️ ROS API no disponible para suscripción', true);
+                return;
+            }
+
+            const diagnosticDiv = document.getElementById('diagnostic-data');
+            const statusDiv = document.getElementById('status-data');
+
+            // Suscribir a diagnóstico
+            rosApi.subscribeTopic('/hardware_node/diagnostic_feed', 'diagnostic_msgs/DiagnosticArray', (msg) => {
+                let html = '';
+                if (msg.status && msg.status.length) {
+                    msg.status.forEach(stat => {
+                        html += `<p><strong>${stat.name}</strong> (${stat.hardware_id || 'N/A'}): ${stat.message || 'Sin mensaje'}</p>`;
+                        if (stat.values && stat.values.length) {
+                            html += `<ul style="margin-left:1rem;">`;
+                            stat.values.forEach(val => { html += `<li>${val.key}: ${val.value}</li>`; });
+                            html += `</ul>`;
+                        }
+                    });
+                } else {
+                    html = `<pre>${JSON.stringify(msg, null, 2)}</pre>`;
+                }
+                diagnosticDiv.innerHTML = html;
+            }, (err) => { 
+                diagnosticDiv.innerHTML = `Error: ${err.message || err}`;
+                addLog(`Error suscribiendo a diagnóstico: ${err}`, true);
+            });
+
+            // Suscribir a estado
+            rosApi.subscribeTopic('/status', 'std_msgs/String', (msg) => {
+                const statusDiv = document.getElementById('status-data');
+                if (typeof msg.data === 'string') statusDiv.innerHTML = `<p>${msg.data}</p>`;
+                else statusDiv.innerHTML = `<pre>${JSON.stringify(msg, null, 2)}</pre>`;
+            }, (err) => { 
+                const statusDiv = document.getElementById('status-data');
+                statusDiv.innerHTML = `Error: ${err.message || err}`;
+                addLog(`Error suscribiendo a estado: ${err}`, true);
+            });
+        }
+
         // ========== BOTONES ==========
-        document.getElementById('cam-0').addEventListener('click', () => sendVisionCommand('/command_vision_videoStream', 'vision:camera,0'));
-        document.getElementById('cam-1').addEventListener('click', () => sendVisionCommand('/command_vision_videoStream', 'vision:camera,1'));
-        document.getElementById('cam-2').addEventListener('click', () => sendVisionCommand('/command_vision_videoStream', 'vision:camera,2'));
-        document.getElementById('cam-3').addEventListener('click', () => sendVisionCommand('/command_vision_videoStream', 'vision:camera,3'));
+        function triggerGuiAction(key, fallbackService, fallbackData, modeName = null) {
+            // Usa el inputHandler si está disponible y tiene acciones GUI cargadas
+            if (window.inputHandler && typeof window.inputHandler.trigger_gui_action === 'function') {
+                window.inputHandler.trigger_gui_action(key);
+                if (modeName) updateModeIndicator(modeName);
+            } else {
+                // Fallback por si com_client.js o inputHandler fallaron
+                addLog(`Fallback GUI action para tecla ${key}`);
+                sendVisionCommand(fallbackService, fallbackData, modeName);
+            }
+        }
+
+        document.getElementById('cam-0').addEventListener('click', () => triggerGuiAction('r', '/command_vision_videoStream', 'vision:camera,0'));
+        document.getElementById('cam-1').addEventListener('click', () => triggerGuiAction('t', '/command_vision_videoStream', 'vision:camera,1'));
+        document.getElementById('cam-2').addEventListener('click', () => triggerGuiAction('y', '/command_vision_videoStream', 'vision:camera,2'));
+        document.getElementById('cam-3').addEventListener('click', () => triggerGuiAction('u', '/command_vision_videoStream', 'vision:camera,3'));
+        document.getElementById('reset-raw').addEventListener('click', () => triggerGuiAction('reset_raw', '/command_vision_videoStream', 'vision:raw,all'));
 
         const thermalBtn = document.getElementById('thermal-toggle');
         function updateThermalButton() {
@@ -324,54 +409,20 @@
         }
         thermalBtn.addEventListener('click', () => {
             thermalOn = !thermalOn;
-            const data = thermalOn ? 'vision:thermal,on' : 'vision:thermal,off';
-            sendVisionCommand('/command_vision_videoStream', data);
+            const actionKey = thermalOn ? 'i' : 'f';
+            const fallbackData = thermalOn ? 'vision:thermal,on' : 'vision:thermal,off';
+            
+            triggerGuiAction(actionKey, '/web_rtc_commands', fallbackData);
             updateThermalButton();
         });
 
-        document.getElementById('mode-normal').addEventListener('click', () => sendVisionCommand('/command_vision_sensors', 'vision:mode,0', 'Normal'));
-        document.getElementById('mode-qr').addEventListener('click', () => sendVisionCommand('/command_vision_sensors', 'vision:mode,1', 'QR / AprilTag'));
-        document.getElementById('mode-hazmat').addEventListener('click', () => sendVisionCommand('/command_vision_sensors', 'vision:mode,2', 'Hazmat (YOLO)'));
-        document.getElementById('mode-motion').addEventListener('click', () => sendVisionCommand('/command_vision_sensors', 'vision:mode,3', 'Movimiento'));
+        document.getElementById('mode-normal').addEventListener('click', () => triggerGuiAction('g', '/command_vision_sensors', 'vision:mode,0', 'Normal'));
+        document.getElementById('mode-qr').addEventListener('click', () => triggerGuiAction('h', '/command_vision_sensors', 'vision:mode,1', 'QR / AprilTag'));
+        document.getElementById('mode-hazmat').addEventListener('click', () => triggerGuiAction('j', '/command_vision_sensors', 'vision:mode,2', 'Hazmat (YOLO)'));
+        document.getElementById('mode-motion').addEventListener('click', () => triggerGuiAction('k', '/command_vision_sensors', 'vision:mode,3', 'Movimiento'));
 
-        // ========== SUSCRIPCIÓN A DIAGNÓSTICO ==========
-        let subRos = null;
-        let subApi = null;
-        const diagnosticDiv = document.getElementById('diagnostic-data');
-        const statusDiv = document.getElementById('status-data');
-
-        function connectSubscriber() {
-            if (typeof ROSLIB === 'undefined') return;
-            subRos = new ROSLIB.Ros({ url: 'ws://localhost:9090' });
-            subRos.on('connection', () => {
-                addLog('Conectado a ROSbridge para suscripción');
-                subApi = new RobotAPI(subRos);
-                subApi.subscribeTopic('/hardware_node/diagnostic_feed', 'diagnostic_msgs/DiagnosticArray', (msg) => {
-                    let html = '';
-                    if (msg.status && msg.status.length) {
-                        msg.status.forEach(stat => {
-                            html += `<p><strong>${stat.name}</strong> (${stat.hardware_id || 'N/A'}): ${stat.message || 'Sin mensaje'}</p>`;
-                            if (stat.values && stat.values.length) {
-                                html += `<ul style="margin-left:1rem;">`;
-                                stat.values.forEach(val => { html += `<li>${val.key}: ${val.value}</li>`; });
-                                html += `</ul>`;
-                            }
-                        });
-                    } else {
-                        html = `<pre>${JSON.stringify(msg, null, 2)}</pre>`;
-                    }
-                    diagnosticDiv.innerHTML = html;
-                }, (err) => { diagnosticDiv.innerHTML = `Error: ${err.message || err}`; });
-                subApi.subscribeTopic('/status', 'std_msgs/String', (msg) => {
-                    if (typeof msg.data === 'string') statusDiv.innerHTML = `<p> ${msg.data}</p>`;
-                    else statusDiv.innerHTML = `<pre>${JSON.stringify(msg, null, 2)}</pre>`;
-                }, (err) => { statusDiv.innerHTML = `Error: ${err.message || err}`; });
-            });
-            subRos.on('error', (e) => addLog(`ROS sub error: ${e}`, true));
-        }
-        
-        connectVision();
-        connectSubscriber();
+        // ========== INICIAR CONEXIÓN ROS AL CARGAR LA PÁGINA ==========
+        connectToROS();
     })();
 </script>
 </body>

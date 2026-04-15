@@ -796,15 +796,24 @@ class InputHandler {
     const button = document.getElementById('toggle-speaker');
     if (!button) return;
     
-    const isMuted = button.textContent === 'Unmute Server';
+    // Check if currently unmuted
+    // The previous text state will dictate logic. Since it starts muted by default,
+    // "Servidor" normally implies we need to switch it. 
+    // We'll update the textContent internally based on current isMuted state tracker.
+    
+    // Instead of relying on specific english text like 'Unmute Server', we track the state using a custom attribute or assume based on color.
+    const isMuted = button.getAttribute('data-muted') !== 'false'; // Defaults to true initially
     const actionId = isMuted ? 'unmute_server' : 'mute_server';
     
     const result = inputHandler ? inputHandler.trigger_gui_action(actionId) : { success: false, error: 'InputHandler init' };
     
     if (result.success) {
-      button.textContent = isMuted ? 'Mute Server' : 'Unmute Server';
-      button.style.backgroundColor = isMuted ? '#dc3545' : '#6c757d';
-      log(`Server microphone ${isMuted ? 'unmuted' : 'muted'}`);
+      const willBeMuted = !isMuted;
+      button.setAttribute('data-muted', willBeMuted.toString());
+      
+      // Retain "Servidor" logic but append status if needed, or simply change color and icon
+      button.style.backgroundColor = willBeMuted ? '#dc3545' : '#22c55e'; // Red if muted, Green if unmuted
+      log(`Server microphone ${willBeMuted ? 'muted' : 'unmuted'}`);
     } else {
       log(`Failed to toggle server mic: ${result.error || 'unknown error'}`);
     }
