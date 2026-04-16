@@ -1,23 +1,27 @@
 const TeleopState = {
   active: false,
-  speeds: { arm: 0.2, arm_joint: 0.5, arm_joint_gains: [1.0, 1.0, 2.0, 1.0], base: 1.0, flipper: 1.0, flipperAccel: 0.5 },
+  speeds: { arm: 0.2, arm_joint: 0.5, arm_joint_gains: [1.0, 1.0, 1.0, 1.0], base: 1.0, flipper: 1.0, flipperAccel: 0.5 },
+  base: { linear: 0, angular: 0 },
   arm: { x: 0, y: 0, z: 0, roll: 0, pitch: 0, yaw: 0 },
   arm_joints: {
     velocities: [0, 0, 0, 0, 0, 0],
     directions: [1, 1, 1, 1, 1, 1],
     globalDirection: 1,
+    currentDir: 0,
     lastPressTime: [0, 0, 0, 0, 0, 0]
   },
   flippers: {
     velocities: [0, 0, 0, 0, 0, 0, 0, 0],
-    directions: [1, 1, 1, 1, 1, 1, 1, 1],
-    globalDirection: 1,
-    lastPressTime: [0, 0, 0, 0, 0, 0, 0, 0]
+    active: [false, false, false, false, false, false, false, false],
+    currentDir: 0,
   },
   resetAll: function() {
+    this.base = { linear: 0, angular: 0 };
     this.arm = { x: 0, y: 0, z: 0, roll: 0, pitch: 0, yaw: 0 };
-    this.arm_joints.velocities = [0, 0, 0, 0, 0, 0];
-    this.flippers.velocities = [0, 0, 0, 0, 0, 0, 0, 0];
+    this.arm_joints.velocities.fill(0);
+    this.flippers.velocities.fill(0);
+    this.flippers.active.fill(false);
+    this.flippers.currentDir = 0;
   }
 };
 
@@ -34,6 +38,8 @@ window.addEventListener('storage', (e) => {
 
 
 const FLIPPER_JOINTS = ['flipper_0', 'flipper_1', 'flipper_2', 'flipper_3', 'joint_1', 'joint_2', 'joint_3', 'joint_4'];
+
+const MAX_RAD_PER_SEC = Math.PI;
 
 const TeleopActions = {
   publish_topic: (action, payload, handler) => {
@@ -56,11 +62,10 @@ const TeleopActions = {
   },
   local_function: (action, payload, handler) => {
     const funcName = payload.function_name;
-    if (funcName === 'toggleFlipperDirection') {
-      TeleopState.flippers.globalDirection = TeleopState.flippers.globalDirection === 1 ? -1 : 1;
-      for (let i = 0; i < 5; i++) {
-        TeleopState.flippers.directions[i] = TeleopState.flippers.globalDirection;
-      }
+    if (funcName === 'setGlobalDirection') {
+      const newDir = payload.dir; 
+      TeleopState.flippers.currentDir = newDir;
+      
       return { success: true, type: 'local_function', function: funcName };
     }
     if (funcName === 'resetFlipperPositions') {
@@ -75,9 +80,17 @@ const TeleopActions = {
     return { success: true, type: 'local_function', function: funcName };
   },
   teleop_cmd_vel: (action, payload, handler) => {
-    const lin = payload.linear_dir ?? 0;
-    const ang = payload.angular_dir ?? 0;
+    if (payload.linear_dir !== undefined) TeleopState.base.linear = payload.linear_dir;
+    if (payload.angular_dir !== undefined) TeleopState.base.angular = payload.angular_dir;
+
+    const lin = TeleopState.base.linear;
+    const ang = TeleopState.base.angular;
     const isStop = lin === 0 && ang === 0;
+
+    if (payload.linear_dir === 0 && payload.angular_dir === 0 && payload.force_stop) {
+        TeleopState.base.linear = 0;
+        TeleopState.base.angular = 0;
+    }
     
     if (!handler.robotAPI || (!TeleopState.active && !isStop)) {
         return { success: false, error: 'Control disabled' };
@@ -151,7 +164,7 @@ const TeleopActions = {
         const baseSpeed = TeleopState.speeds.arm_joint;
         const gain = TeleopState.speeds.arm_joint_gains ? (TeleopState.speeds.arm_joint_gains[idx] || 1.0) : 1.0;
         
-        TeleopState.arm_joints.velocities[idx] = dir * baseSpeed * gain;
+        TeleopState.arm_joints.velocities[idx] = dir * baseSpeed * gain * MAX_RAD_PER_SEC;
       }
     }
 
@@ -164,7 +177,7 @@ const TeleopActions = {
         },
         joint_names: ['joint_1', 'joint_2', 'joint_3', 'joint_4', 'joint_5', 'joint_6'],
         velocities: TeleopState.arm_joints.velocities.slice(),
-        displacements: [],
+        displacements: Array(6).fill(-1.0),
         duration: 0.0
       })
     );
@@ -177,25 +190,21 @@ const TeleopActions = {
     if (!handler.robotAPI || (!TeleopState.active && !isStop)) return { success: false, error: 'Control disabled' };
     
     if (actionCmd === 'reset') {
-      TeleopState.flippers.velocities = [0, 0, 0, 0, 0, 0, 0, 0];
-    } else if (actionCmd === 'toggle_global_dir') {
-      TeleopState.flippers.globalDirection = TeleopState.flippers.globalDirection === 1 ? 0 : 1;
-      TeleopState.flippers.directions = Array(8).fill(TeleopState.flippers.globalDirection);
+      TeleopState.flippers.velocities.fill(0);
+      TeleopState.flippers.active.fill(false);
+      TeleopState.flippers.currentDir = 0;
+    } else if (payload.dir !== undefined) {
+      TeleopState.flippers.currentDir = payload.dir;
     } else if (payload.index !== undefined) {
-      const idx = payload.index;
-      if (payload.state === 'released') {
-        TeleopState.flippers.velocities[idx] = 0.0;
+      TeleopState.flippers.active[payload.index] = (payload.state !== 'released');
+    }
+
+    for (let i = 0; i < 8; i++) {
+      if (TeleopState.flippers.active[i] && TeleopState.flippers.currentDir !== 0) {
+        const speedMultiplier = i < 4 ? TeleopState.speeds.flipper : TeleopState.speeds.arm;
+        TeleopState.flippers.velocities[i] = TeleopState.flippers.currentDir * speedMultiplier * MAX_RAD_PER_SEC;
       } else {
-        const t = Date.now();
-        if (t - TeleopState.flippers.lastPressTime[idx] < 400) {
-          TeleopState.flippers.directions[idx] = TeleopState.flippers.directions[idx] === 1 ? 0 : 1;
-          TeleopState.flippers.lastPressTime[idx] = 0;
-        } else {
-          TeleopState.flippers.lastPressTime[idx] = t;
-        }
-        // Usar flipper speed para flippers 0-3, arm speed para flippers 4-7 (joint_1-4)
-        const speedMultiplier = idx < 4 ? TeleopState.speeds.flipper : TeleopState.speeds.arm;
-        TeleopState.flippers.velocities[idx] = (TeleopState.flippers.directions[idx] === 1 ? 1 : -1) * speedMultiplier;
+        TeleopState.flippers.velocities[i] = 0.0;
       }
     }
     
@@ -203,7 +212,8 @@ const TeleopActions = {
       new ROSLIB.Message({
         header: { stamp: { sec: 0, nanosec: 0 }, frame_id: '' },
         joint_names: FLIPPER_JOINTS,
-        position: [], effort: [],
+        position: Array(8).fill(-1.0), 
+        effort: [],
         velocity: TeleopState.flippers.velocities.slice(),
         acceleration: Array(8).fill(TeleopState.speeds.flipperAccel)
       })
@@ -228,7 +238,7 @@ class InputHandler {
     
     this._setupKeyboard();
     
-    // Descomentar para reactivar control)
+    // Descomentar para reactivar control
     // this._setupGamepadEvents();
     // this._startGamepadPoll();
   }
@@ -545,8 +555,8 @@ class InputHandler {
       return;
     }
 
-    // Use wss:// if page is loaded over https://, otherwise ws://
-    const protocol = location.protocol === 'https:' ? 'wss://' : 'ws://';
+    // Use ws:// for rosbridge connection (rosbridge is running without SSL)
+    const protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
     const rosbridgeUrl = `${protocol}${rosbridgeHost}:${rosbridgePort}`;
     
     log(`Connecting to ROS bridge at ${rosbridgeUrl}`);

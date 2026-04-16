@@ -85,13 +85,13 @@ tmux select-layout tiled
 
 # Comandos
 tmux send-keys -t 0 "python3 src/teleoperation/scripts/server_rtc.py --cert-file /home/aesir/AESIR/develop/cert.pem --key-file /home/aesir/AESIR/develop/key.pem --host 0.0.0.0 --port 8081" Enter
-tmux send-keys -t 1 "ros2 run rosbridge_server rosbridge_websocket --ros-args --param ssl:=false --param port:=9090 --param address:=\"0.0.0.0\"" Enter
+tmux send-keys -t 1 "ros2 run rosbridge_server rosbridge_websocket --ros-args --param ssl:=true --param certfile:="/home/aesir/AESIR/develop/cert.pem" --param keyfile:="/home/aesir/AESIR/develop/key.pem" --param port:=9090 --param address:=\"0.0.0.0"\" Enter
 sleep 1
 tmux send-keys -t 2 "ros2 launch hardware hardware.launch.py" Enter
 sleep 1
 tmux send-keys -t 3 "ros2 launch vision vision.launch.py" Enter
 tmux send-keys -t 4 "ros2 launch depthai_ros_driver camera.launch.py camera.i_nn_type:=none rgb.i_resolution:=720P rgb.i_width:=1280 rgb.i_height:=720 rgb.i_fps:=20.0" Enter
-sleep 1a
+sleep 1
 
 # Temporal
 tmux send-keys -t 6 "cd ../.." Enter
@@ -110,3 +110,4 @@ tmux bind-key -n C-s select-pane -t :.-
 
 # Attach to session
 tmux -2 attach-session -t "$session_name"
+

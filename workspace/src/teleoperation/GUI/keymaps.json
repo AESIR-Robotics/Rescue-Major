@@ -29,44 +29,36 @@
     "w": {
       "type": "teleop_cmd_vel",
       "payload": {
-        "linear_dir": 1,
-        "angular_dir": 0
+        "linear_dir": 1
       },
       "release_payload": {
-        "linear_dir": 0,
-        "angular_dir": 0
+        "linear_dir": 0
       }
     },
     "s": {
       "type": "teleop_cmd_vel",
       "payload": {
-        "linear_dir": -1,
-        "angular_dir": 0
+        "linear_dir": -1
       },
       "release_payload": {
-        "linear_dir": 0,
-        "angular_dir": 0
+        "linear_dir": 0
       }
     },
     "a": {
       "type": "teleop_cmd_vel",
       "payload": {
-        "linear_dir": 1,
         "angular_dir": -1
       },
       "release_payload": {
-        "linear_dir": 0,
         "angular_dir": 0
       }
     },
     "d": {
       "type": "teleop_cmd_vel",
       "payload": {
-        "linear_dir": 1,
         "angular_dir": 1
       },
       "release_payload": {
-        "linear_dir": 0,
         "angular_dir": 0
       }
     },
@@ -74,14 +66,17 @@
       "type": "teleop_cmd_vel",
       "payload": {
         "linear": 0,
-        "angular": 0
+        "angular": 0,
+        "force_stop": true 
       }
+    },
+    "5": {
+      "type": "local_function",
+      "payload": { "function_name": "setGlobalDirection", "dir": -1 }
     },
     "8": {
       "type": "local_function",
-      "payload": {
-        "function_name": "toggleFlipperDirection"
-      }
+      "payload": { "function_name": "setGlobalDirection", "dir": 1 }
     },
     "9": {
       "type": "teleop_flipper",
@@ -135,53 +130,48 @@
     }
   },
 
-
-
   "arm_control": {
-
-
-    "d": {
-      "type": "teleop_cmd_vel",
-      "payload": {
-        "linear": 1,
-        "angular": 1
-      }
-    },
     "w": {
       "type": "teleop_cmd_vel",
-      "payload": {
-        "linear_dir": 1,
-        "angular_dir": 0
+      "payload": { 
+        "linear_dir": 1 
       },
-      "release_payload": {
-        "linear_dir": 0,
-        "angular_dir": 0
+      "release_payload": { 
+        "linear_dir": 0 
+      }
+    },
+    "s": {
+      "type": "teleop_cmd_vel",
+      "payload": { 
+        "linear_dir": -1 
+      },
+      "release_payload": { 
+        "linear_dir": 0 
       }
     },
     "a": {
       "type": "teleop_cmd_vel",
-      "payload": {
-        "linear_dir": 1,
-        "angular_dir": -1
+      "payload": { 
+        "angular_dir": 1 
       },
-      "release_payload": {
-        "linear_dir": 0,
-        "angular_dir": 0
+      "release_payload": { 
+        "angular_dir": 0 
       }
     },
-
-    "s": {
+    "d": {
       "type": "teleop_cmd_vel",
-      "payload": {
-        "linear_dir": -1,
-        "angular_dir": 0
+      "payload": { 
+        "angular_dir": -1 
       },
-      "release_payload": {
-        "linear_dir": 0,
-        "angular_dir": 0
+      "release_payload": { 
+        "angular_dir": 0 
       }
     },
-    
+    " ": {
+      "type": "teleop_cmd_vel",
+      "payload": { 
+        "linear_dir": 0, "angular_dir": 0, "force_stop": true }
+    },
     "9": {
       "type": "teleop_flipper",
       "payload": {
@@ -216,6 +206,24 @@
       },
       "release_payload": {
         "index": 7
+      }
+    },
+    "5": {
+      "type": "teleop_flipper",
+      "payload": {
+        "dir": -1
+      },
+      "release_payload": {
+        "dir": 0
+      }
+    },
+    "8": {
+      "type": "teleop_flipper",
+      "payload": {
+        "dir": 1
+      },
+      "release_payload": {
+        "dir": 0
       }
     }
   },
