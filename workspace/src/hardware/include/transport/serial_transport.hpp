@@ -15,6 +15,7 @@
 #include <sys/file.h>
 #include <termios.h>
 
+#include "transport/transport.hpp"
 #include "utils/logger.hpp"
 #include "utils/diagnostics.hpp"
 
@@ -41,7 +42,7 @@ using LogFn      = std::function<void(const std::string &)>;
 // on the MCU side.
 // =============================================================================
 
-class Serial_Transport {
+class Serial_Transport : protected TransportInterface{
 public:
   enum class Transport_Error {
     NONE,
@@ -69,26 +70,24 @@ public:
   bool init(DiagnosticRegistry *reg, const std::string &port,
             uint32_t           baud    = 115200,
             bool               hw_flow = false);
-  bool connect();
-  bool reconnect();
 
-  bool               connected()         const { return fd_ >= 0;          }
+  std::string getName() override;
+  bool connect() override;
+  bool reconnect() override;
+
+  bool               connected()         const override { return fd_ >= 0;          }
   const std::string &getDevice()         const { return port_;             }
   int                getSlaveAddress()   const { return 0;                 } // unused for serial
   Transport_Error    getTransportError() const { return transport_error_;  }
 
-  void setLogger(Logger &in_log) {
-    log = in_log;
-  }
-
 protected:
-  size_t writeData(const uint8_t *data, size_t length, deadline_t deadline);
-  size_t readData (uint8_t *buffer, size_t length, deadline_t deadline);
+  size_t writeData(const uint8_t *data, size_t length, deadline_t deadline) override;
+  size_t readData (uint8_t *buffer, size_t length, deadline_t deadline) override;
 
-  bool canSend();
-  bool hasData();
+  bool canSend() const override;
+  bool hasData() const override;
 
-  void disconnect();
+  void disconnectImpl() override;
 
   Transport_Error transport_error_ { Transport_Error::CLOSED };
 
@@ -110,7 +109,6 @@ private:
   uint8_t internal_buf_[INTERNAL_BUF_SIZE]{};
   size_t  internal_pos_ { INTERNAL_BUF_SIZE }; // start "full" → first read fetches bytes
 
-  Logger log{};
 };
 
 // =============================================================================
@@ -134,6 +132,10 @@ inline Serial_Transport::Serial_Transport(DiagnosticRegistry *reg, const std::st
     reg->register_source(&statusReport);
   }
   if (!port_.empty()) connect();
+}
+
+inline std::string Serial_Transport::getName() {
+  return "Serial";
 }
 
 inline Serial_Transport::~Serial_Transport() noexcept { disconnect(); }
@@ -242,7 +244,7 @@ inline speed_t Serial_Transport::baudToSpeed(uint32_t baud) noexcept {
   }
 }
 
-inline void Serial_Transport::disconnect() {
+inline void Serial_Transport::disconnectImpl() {
   if (fd_ >= 0) {
     tcdrain(fd_);   // flush pending TX bytes before closing
     ::close(fd_);
@@ -282,8 +284,7 @@ inline bool Serial_Transport::waitFdReady(short events, deadline_t deadline) {
   return ret > 0 && (pfd.revents & events);
 }
 
-
-inline bool Serial_Transport::canSend() {
+inline bool Serial_Transport::canSend() const {
     if (!connected()) return false;
 
     struct pollfd pfd{ fd_, POLLOUT, 0 };
@@ -294,7 +295,7 @@ inline bool Serial_Transport::canSend() {
     return ret > 0 && (pfd.revents & POLLOUT);
 }
 
-inline bool Serial_Transport::hasData() {
+inline bool Serial_Transport::hasData() const {
     if (!connected()) return false;
     // If there are already assembled bytes ready to read, return immediately
     if (internal_pos_ < INTERNAL_BUF_SIZE) return true;
