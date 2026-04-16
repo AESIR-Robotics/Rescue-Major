@@ -1,6 +1,8 @@
 #!/bin/bash
 
-SOURCE_LOCAL_DIR="../workspace/install/setup.bash"
+cd ../workspace
+
+SOURCE_LOCAL_DIR="install/setup.bash"
 SOURCE_VENV_DIR="../.venv/bin/activate"
 # Source global ROS version helper (workspace/launch.bash lives in workspace/)
 # Compute script dir robustly (works when run with bash or sh)
