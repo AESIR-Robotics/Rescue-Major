@@ -40,4 +40,4 @@ source "$SOURCE_VENV_DIR"
 source "$SOURCE_ROS_DIR" 
 source "$SOURCE_LOCAL_DIR"  
 
-ros2 run rosbridge_server rosbridge_websocket --ros-args --param ssl:=false --param port:=9090 --param address:=\"0.0.0.0\"
+ros2 run rosbridge_server rosbridge_websocket --ros-args --param ssl:=true --param certfile:="/home/aesir/AESIR/develop/cert.pem" --param keyfile:="/home/aesir/AESIR/develop/key.pem" --param port:=9090 --param address:="0.0.0.0"
