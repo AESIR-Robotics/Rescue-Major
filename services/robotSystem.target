@@ -1,0 +1,4 @@
+[Unit]
+Description=Robot system
+Requires=robot@hardware.service
+After=network.target
