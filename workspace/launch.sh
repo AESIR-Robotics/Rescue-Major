@@ -93,11 +93,7 @@ tmux send-keys -t 3 "journalctl -u robot@vision.service -f" Enter
 tmux send-keys -t 4 "journalctl -u robot@camera.service -f" Enter
 sleep 1a
 
-# Temporal
-tmux send-keys -t 6 "cd ../.." Enter
-tmux send-keys -t 6 "cd arm/workspace" Enter
-tmux send-keys -t 6 "source install/setup.bash" Enter
-tmux send-keys -t 6 "ros2 launch robot_moveit_config bringup.launch.py" Enter
+tmux send-keys -t 6 "journalctl -u robot@moveit.service -f" Enter
 sleep 1
 tmux send-keys -t 5 "htop" Enter
 tmux send-keys -t 8 "jtop" Enter
