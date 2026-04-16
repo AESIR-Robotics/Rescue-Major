@@ -1,4 +1,4 @@
 [Unit]
 Description=Robot system
-Requires=robot@hardware.service
+Requires=robot@hardware.service robot@camera.service robot@ros_server.service robot@user_server.service robot@vision.service
 After=network.target
