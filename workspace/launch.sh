@@ -91,7 +91,7 @@ tmux send-keys -t 2 "ros2 launch hardware hardware.launch.py" Enter
 sleep 1
 tmux send-keys -t 3 "ros2 launch vision vision.launch.py" Enter
 tmux send-keys -t 4 "ros2 launch depthai_ros_driver camera.launch.py camera.i_nn_type:=none rgb.i_resolution:=720P rgb.i_width:=1280 rgb.i_height:=720 rgb.i_fps:=20.0" Enter
-sleep 1
+sleep 1a
 
 # Temporal
 tmux send-keys -t 6 "cd ../.." Enter

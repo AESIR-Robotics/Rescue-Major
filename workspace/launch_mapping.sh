@@ -25,8 +25,6 @@ else
 	SOURCE_ROS_DIR="/opt/ros/jazzy/setup.bash"
 fi
 
-#sudo chmod 666 /dev/ttyUSB0
-
 echo "launch.bash: using ROS setup: $SOURCE_ROS_DIR"
 echo "launch.bash: using venv:      $SOURCE_VENV_DIR"
 echo "launch.bash: using overlay:   $SOURCE_LOCAL_DIR"
