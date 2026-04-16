@@ -1,4 +1,8 @@
 [Unit]
 Description=Robot system
-Requires=robot@hardware.service robot@camera.service robot@ros_server.service robot@user_server.service robot@vision.service robot@moveit.service
+Wants=robot@hardware.service robot@camera.service robot@ros_server.service robot@user_server.service robot@vision.service robot@moveit.service
 After=network.target
+
+
+[Install]
+WantedBy=multi-user.target
