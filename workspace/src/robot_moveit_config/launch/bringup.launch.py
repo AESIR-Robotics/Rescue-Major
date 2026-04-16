@@ -13,6 +13,7 @@ def generate_launch_description():
             os.path.join(pkg_path, 'launch', 'demo.launch.py')
         ),
         launch_arguments={
+        "use_rviz": "false",
         "planning_pipeline": "ompl",
         "ompl.jiggle_fraction": "0.20",
         "ompl.start_state_max_bounds_error": "0.25",
