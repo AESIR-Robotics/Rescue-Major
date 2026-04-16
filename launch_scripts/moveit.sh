@@ -40,7 +40,7 @@ source "$SOURCE_VENV_DIR"
 source "$SOURCE_ROS_DIR" 
 source "$SOURCE_LOCAL_DIR"  
 
-cd ../..
-cd arm/workspace
+
+cd /home/aesir/AESIR/arm/workspace
 source install/setup.bash
 ros2 launch robot_moveit_config bringup.launch.py
