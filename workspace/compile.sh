@@ -1,5 +1,4 @@
 #!/bin/bash
-set -e
 
 # Locate script directory and source global ROS_UBUNTU_VERSION helper
 if [ -n "${BASH_SOURCE[0]:-}" ]; then
@@ -45,6 +44,11 @@ fi
 
 source ../.venv/bin/activate
 
-colcon build --cmake-args -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
-
+colcon build --packages-select vision_opencv --cmake-args -DCMAKE_BUILD_TYPE=Release
+colcon build --packages-select hardware --cmake-args -DCMAKE_BUILD_TYPE=Release
+colcon build --packages-select aesir_robot_description --cmake-args -DCMAKE_BUILD_TYPE=Release
+source install/setup.bash
+colcon build --packages-select teleoperation --cmake-args -DCMAKE_BUILD_TYPE=Release
+colcon build --packages-select vision --cmake-args -DCMAKE_BUILD_TYPE=Release
+colcon build --packages-select arm_moveit_config --cmake-args -DCMAKE_BUILD_TYPE=Release
 

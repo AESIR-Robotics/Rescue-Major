@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Feedback - AESIR</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            padding: 1.5rem;
+        }
+        .dashboard { max-width: 1400px; margin: 0 auto; }
+        .button-section {
+            background: #1e293b;
+            border-radius: 1rem;
+            border: 1px solid #334155;
+            padding: 1rem 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+        .button-group {
+            display: flex;
+            gap: 0.8rem;
+            flex-wrap: wrap;
+            margin-bottom: 1rem;
+        }
+        .button-group:last-child {
+            margin-bottom: 0;
+        }
+        .btn {
+            background: #0f172a;
+            border: 1px solid #3b82f6;
+            color: #3b82f6;
+            padding: 0.5rem 1.2rem;
+            border-radius: 2rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 0.9rem;
+        }
+        .btn:hover { background: #3b82f6; color: white; transform: scale(0.97); }
+        .btn-active { background: #3b82f6; color: white; border-color: #3b82f6; }
+        .grid-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+        .left-split { display: flex; flex-direction: column; gap: 1.5rem; }
+        .left-half {
+            background: #1e293b;
+            border-radius: 1rem;
+            border: 1px solid #334155;
+            padding: 1rem;
+            min-height: 250px;
+            overflow-y: auto;
+        }
+        .card {
+            background: #1e293b;
+            border-radius: 1rem;
+            padding: 1.2rem;
+            border: 1px solid #334155;
+        }
+        .card-title {
+            font-size: 1.2rem;
+            font-weight: 500;
+            margin-bottom: 1rem;
+            border-left: 4px solid #3b82f6;
+            padding-left: 0.75rem;
+        }
+        .topic-data {
+            font-family: 'Courier New', monospace;
+            font-size: 0.85rem;
+            background: #0f172a;
+            padding: 0.75rem;
+            border-radius: 0.5rem;
+            margin-top: 0.5rem;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        .badge {
+            background: #3b82f6;
+            color: white;
+            padding: 0.2rem 0.5rem;
+            border-radius: 1rem;
+            font-size: 0.7rem;
+            display: inline-block;
+            margin-bottom: 0.5rem;
+        }
+        .mode-indicator {
+            background: #0f172a;
+            border: 1px solid #3b82f6;
+            color: #3b82f6;
+            padding: 0.3rem 0.6rem;
+            border-radius: 1rem;
+            font-size: 0.75rem;
+            margin-top: 0.5rem;
+            text-align: center;
+        }
+        .map-container {
+            background: #0f172a;
+            border-radius: 0.75rem;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 250px;
+            background-image: radial-gradient(circle, #2d3a5e 1px, transparent 1px);
+            background-size: 20px 20px;
+        }
+        .map-placeholder { text-align: center; color: #94a3b8; }
+        .map-placeholder svg { width: 100px; height: 100px; opacity: 0.5; margin-bottom: 0.5rem; }
+        .speed-control { margin-bottom: 1.2rem; }
+        .speed-header { display: flex; justify-content: space-between; margin-bottom: 0.3rem; font-size: 0.9rem; }
+        input[type="range"] {
+            width: 100%;
+            background: #334155;
+            height: 4px;
+            border-radius: 5px;
+            -webkit-appearance: none;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: #3b82f6;
+            cursor: pointer;
+        }
+        .speed-value {
+            background: #0f172a;
+            padding: 2px 8px;
+            border-radius: 20px;
+            font-family: monospace;
+        }
+        .btn-group { display: flex; gap: 12px; margin-top: 1.5rem; }
+        button {
+            background: #3b82f6;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 40px;
+            font-weight: bold;
+            color: white;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+        button:hover { background: #2563eb; transform: scale(0.98); }
+        .btn-outline { background: transparent; border: 1px solid #3b82f6; color: #3b82f6; }
+        .btn-outline:hover { background: #3b82f6; color: white; }
+        .status-msg { margin-top: 12px; font-size: 0.8rem; color: #94a3b8; }
+        @media (max-width: 800px) { .grid-2col { grid-template-columns: 1fr; } }
+        .hidden-for-compat { display: none; }
+        .log-panel {
+            background: #0f172a;
+            border-radius: 0.5rem;
+            padding: 0.5rem;
+            font-family: monospace;
+            font-size: 0.75rem;
+            margin-top: 1rem;
+            max-height: 150px;
+            overflow-y: auto;
+            border: 1px solid #334155;
+        }
+        .log-entry { color: #94a3b8; border-bottom: 1px solid #1e293b; padding: 0.2rem 0; }
+    </style>
+</head>
+<body>
+<div class="dashboard">
+    <!-- Botones agrupados sin títulos de sección -->
+    <div class="button-section">
+        <div class="button-group">
+            <button id="cam-0" class="btn">Cámara 0</button>
+            <button id="cam-1" class="btn">Cámara 1</button>
+            <button id="cam-2" class="btn">Cámara 2</button>
+            <button id="cam-3" class="btn">Cámara 3</button>
+            <button id="reset-raw" class="btn">Reset a Raw</button>
+        </div>
+        <div class="button-group">
+            <button id="thermal-toggle" class="btn">🌡️ Térmica</button>
+        </div>
+        <div class="button-group">
+            <button id="mode-normal" class="btn">Normal</button>
+            <button id="mode-qr" class="btn">QR / AprilTag</button>
+            <button id="mode-hazmat" class="btn">Hazmat</button>
+            <button id="mode-motion" class="btn">Movimiento</button>
+        </div>
+    </div>
+
+    <div class="grid-2col">
+        <div class="left-split">
+            <div class="left-half">
+                <div class="badge">🩺 /hardware_node/diagnostic_feed</div>
+                <div id="diagnostic-data" class="topic-data">Esperando datos...</div>
+            </div>
+            <div class="left-half">
+                <div class="badge">📊 /status</div>
+                <div id="status-data" class="topic-data">Esperando datos...</div>
+                <div id="mode-indicator" class="mode-indicator">Modo actual: Normal</div>
+                <div class="log-panel" id="action-log">
+                    <div class="log-entry">📡 Inicializando...</div>
+                </div>
+            </div>
+        </div>
+
+        <div>
+            <div class="card">
+                <div class="card-title">🗺️ Mapeo del entorno</div>
+                <div class="map-container">
+                    <div class="map-placeholder">
+                        <svg viewBox="0 0 100 100" fill="none" stroke="currentColor">
+                            <rect x="10" y="10" width="80" height="80" rx="8" stroke-width="1.5"/>
+                            <circle cx="50" cy="50" r="8" fill="#3b82f6" stroke="none"/>
+                            <path d="M30 30 L70 70 M70 30 L30 70" stroke="#475569" stroke-width="1"/>
+                            <rect x="40" y="20" width="20" height="10" fill="#334155"/>
+                        </svg>
+                        <p>Mapa de navegación (placeholder)</p>
+                        <small>📸 Imagen real puede integrarse desde /map</small>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card" style="margin-top: 1.5rem;">
+                <div class="card-title">Ajuste de velocidades</div>
+                <div class="slider-controls-bar" style="display: flex; flex-direction: column; gap: 15px; padding: 10px;">
+                    <div style="display: flex; align-items: center; justify-content: space-between;">
+                        <label for="flipper-vel" style="font-size: 14px; flex: 1;">Vol. Flipper: <span id="flipper-vel-val">1.0</span></label>
+                        <input type="range" id="flipper-vel" min="0" max="1.0" step="0.1" value="1.0" style="flex: 2;">
+                    </div>
+                    <div style="display: flex; align-items: center; justify-content: space-between;">
+                        <label for="flipper-accel" style="font-size: 14px; flex: 1;">Accel. Flipper: <span id="flipper-accel-val">0.5</span></label>
+                        <input type="range" id="flipper-accel" min="0" max="3.0" step="0.05" value="0.5" style="flex: 2;">
+                    </div>
+                    <div style="display: flex; align-items: center; justify-content: space-between;">
+                        <label for="dc-motor-vel" style="font-size: 14px; flex: 1;">Velocidad Base: <span id="dc-motor-vel-val">1.0</span></label>
+                        <input type="range" id="dc-motor-vel" min="0" max="1.0" step="0.05" value="1.0" style="flex: 2;">
+                    </div>
+                    <div style="display: flex; align-items: center; justify-content: space-between;">
+                        <label for="arm-vel" style="font-size: 14px; flex: 1;">Velocidad Brazo: <span id="arm-vel-val">0.2</span></label>
+                        <input type="range" id="arm-vel" min="0" max="1.0" step="0.05" value="0.2" style="flex: 2;">
+                    </div>
+                </div>
+                <div id="speed-feedback-msg" class="status-msg" style="margin-top:1rem;color:green;">Sincronizado con variables TeleopState</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Elementos ocultos para compatibilidad con com_client.js -->
+<pre id="info-messages" class="hidden-for-compat" style="display:none;"></pre>
+<div style="display:none;">
+    <select id="keymap-slot-1"></select> <select id="keymap-slot-2"></select>
+    <span id="current-profile-label"></span>
+    <button id="toggle-teleoperation"></button> <span id="teleoperation-btn-text"></span>
+    <button id="toggle-speaker"></button>
+</div>
+
+<!-- Scripts -->
+<script src="/static/vendor/roslib.min.js"></script>
+<script src="/static/rosbridge_api.js"></script>
+<script src="/static/com_client.js"></script>
+
+<script>
+    (function() {
+        const logContainer = document.getElementById('action-log');
+        function addLog(msg, isError = false) {
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            entry.style.color = isError ? '#f87171' : '#94a3b8';
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+            logContainer.appendChild(entry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+            console.log(msg);
+        }
+
+        // ========== INDICADOR DE MODO ==========
+        const modeIndicator = document.getElementById('mode-indicator');
+        function updateModeIndicator(modeName) {
+            modeIndicator.textContent = `Modo actual: ${modeName}`;
+            localStorage.setItem('vision_mode', modeName);
+        }
+
+        // ========== ÚNICA CONEXIÓN ROS ROSBRIDGE ==========
+        let rosConnection = null;
+        let rosApi = null;
+        let thermalOn = false;
+        const maxRetries = 5;
+        let connectAttempts = 0;
+
+        function connectToROS() {
+            if (typeof ROSLIB === 'undefined') {
+                addLog('❌ ROSLIB no cargado', true);
+                return;
+            }
+
+            if (connectAttempts >= maxRetries) {
+                addLog('❌ Máximo de intentos de conexión alcanzado', true);
+                return;
+            }
+
+            const rosUrl = window.location.protocol === 'https:' ? 
+                'wss://127.0.0.1:9090' : 
+                'ws://localhost:9090';
+            
+            addLog(`Intentando conectar a: ${rosUrl}`);
+            rosConnection = new ROSLIB.Ros({ url: rosUrl });
+
+            rosConnection.on('connection', () => {
+                addLog('✅ Conectado a ROSbridge');
+                connectAttempts = 0;  // Reset counter on success
+                rosApi = new RobotAPI(rosConnection);
+                subscribeToTopics();
+            });
+
+            rosConnection.on('error', (err) => {
+                const errorMsg = err instanceof Event ? 
+                    `Conexión rechazada (verificar URL: ${rosUrl})` : 
+                    String(err);
+                addLog(`❌ Error ROS: ${errorMsg}`, true);
+                connectAttempts++;
+                setTimeout(connectToROS, 2000); // Reintentar en 2 segundos
+            });
+
+            rosConnection.on('close', () => {
+                addLog('🔌 Conexión ROS cerrada');
+                rosApi = null;
+            });
+        }
+
+        function sendVisionCommand(service, data, modeName = null) {
+            if (!rosApi) {
+                addLog('❌ No hay conexión ROS para enviar comando', true);
+                return false;
+            }
+            try {
+                rosApi.sendService(service, 'vision/srv/Command', { data: data });
+                addLog(`📡 Comando enviado: ${service} → ${data}`);
+                
+                if (modeName) {
+                    updateModeIndicator(modeName);
+                }
+                return true;
+            } catch (e) {
+                addLog(`❌ Error enviando comando: ${e.message}`, true);
+                return false;
+            }
+        }
+
+        function subscribeToTopics() {
+            if (!rosApi) {
+                addLog('⚠️ ROS API no disponible para suscripción', true);
+                return;
+            }
+
+            const diagnosticDiv = document.getElementById('diagnostic-data');
+            const statusDiv = document.getElementById('status-data');
+
+            // Suscribir a diagnóstico
+            rosApi.subscribeTopic('/hardware_node/diagnostic_feed', 'diagnostic_msgs/DiagnosticArray', (msg) => {
+                let html = '';
+                if (msg.status && msg.status.length) {
+                    msg.status.forEach(stat => {
+                        html += `<p><strong>${stat.name}</strong> (${stat.hardware_id || 'N/A'}): ${stat.message || 'Sin mensaje'}</p>`;
+                        if (stat.values && stat.values.length) {
+                            html += `<ul style="margin-left:1rem;">`;
+                            stat.values.forEach(val => { html += `<li>${val.key}: ${val.value}</li>`; });
+                            html += `</ul>`;
+                        }
+                    });
+                } else {
+                    html = `<pre>${JSON.stringify(msg, null, 2)}</pre>`;
+                }
+                diagnosticDiv.innerHTML = html;
+            }, (err) => { 
+                diagnosticDiv.innerHTML = `Error: ${err.message || err}`;
+                addLog(`Error suscribiendo a diagnóstico: ${err}`, true);
+            });
+
+            // Suscribir a estado
+            rosApi.subscribeTopic('/status', 'std_msgs/String', (msg) => {
+                const statusDiv = document.getElementById('status-data');
+                if (typeof msg.data === 'string') statusDiv.innerHTML = `<p>${msg.data}</p>`;
+                else statusDiv.innerHTML = `<pre>${JSON.stringify(msg, null, 2)}</pre>`;
+            }, (err) => { 
+                const statusDiv = document.getElementById('status-data');
+                statusDiv.innerHTML = `Error: ${err.message || err}`;
+                addLog(`Error suscribiendo a estado: ${err}`, true);
+            });
+        }
+
+        // ========== BOTONES ==========
+        function triggerGuiAction(key, fallbackService, fallbackData, modeName = null) {
+            // Usa el inputHandler si está disponible y tiene acciones GUI cargadas
+            if (window.inputHandler && typeof window.inputHandler.trigger_gui_action === 'function') {
+                window.inputHandler.trigger_gui_action(key);
+                if (modeName) updateModeIndicator(modeName);
+            } else {
+                // Fallback por si com_client.js o inputHandler fallaron
+                addLog(`Fallback GUI action para tecla ${key}`);
+                sendVisionCommand(fallbackService, fallbackData, modeName);
+            }
+        }
+
+        document.getElementById('cam-0').addEventListener('click', () => triggerGuiAction('r', '/command_vision_videoStream', 'vision:camera,0'));
+        document.getElementById('cam-1').addEventListener('click', () => triggerGuiAction('t', '/command_vision_videoStream', 'vision:camera,1'));
+        document.getElementById('cam-2').addEventListener('click', () => triggerGuiAction('y', '/command_vision_videoStream', 'vision:camera,2'));
+        document.getElementById('cam-3').addEventListener('click', () => triggerGuiAction('u', '/command_vision_videoStream', 'vision:camera,3'));
+        document.getElementById('reset-raw').addEventListener('click', () => triggerGuiAction('reset_raw', '/command_vision_videoStream', 'vision:raw,all'));
+
+        const thermalBtn = document.getElementById('thermal-toggle');
+        function updateThermalButton() {
+            thermalBtn.textContent = thermalOn ? '🌡️ Térmica ON' : '🌡️ Térmica OFF';
+            thermalBtn.classList.toggle('btn-active', thermalOn);
+        }
+        thermalBtn.addEventListener('click', () => {
+            thermalOn = !thermalOn;
+            const actionKey = thermalOn ? 'i' : 'f';
+            const fallbackData = thermalOn ? 'vision:thermal,on' : 'vision:thermal,off';
+            
+            triggerGuiAction(actionKey, '/web_rtc_commands', fallbackData);
+            updateThermalButton();
+        });
+
+        document.getElementById('mode-normal').addEventListener('click', () => triggerGuiAction('g', '/command_vision_sensors', 'vision:mode,0', 'Normal'));
+        document.getElementById('mode-qr').addEventListener('click', () => triggerGuiAction('h', '/command_vision_sensors', 'vision:mode,1', 'QR / AprilTag'));
+        document.getElementById('mode-hazmat').addEventListener('click', () => triggerGuiAction('j', '/command_vision_sensors', 'vision:mode,2', 'Hazmat (YOLO)'));
+        document.getElementById('mode-motion').addEventListener('click', () => triggerGuiAction('k', '/command_vision_sensors', 'vision:mode,3', 'Movimiento'));
+
+        // ========== INICIAR CONEXIÓN ROS AL CARGAR LA PÁGINA ==========
+        connectToROS();
+    })();
+</script>
+</body>
+</html>

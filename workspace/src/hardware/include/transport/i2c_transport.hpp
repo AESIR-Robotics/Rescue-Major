@@ -44,7 +44,7 @@ public:
 
   explicit I2C_Transport(DiagnosticRegistry *reg = nullptr, const std::string &device_in = "",
                          int slave_addr_in = 0x00);
-  ~I2C_Transport() noexcept;
+  virtual ~I2C_Transport() noexcept;
 
   // Non-copyable — owns a file descriptor.
   I2C_Transport(const I2C_Transport &)            = delete;

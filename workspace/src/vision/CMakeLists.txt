@@ -71,6 +71,7 @@ install(TARGETS
 # Use ament_python_install_package to install Python code
 install(PROGRAMS
   scripts/sensors_master.py
+  scripts/kalman_tracker.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -86,11 +87,8 @@ add_dependencies(video_stream_publisher ${PROJECT_NAME}__rosidl_generator_cpp)
 
 install(DIRECTORY
   srv
-  DESTINATION share/${PROJECT_NAME}/
-)
-
-install(DIRECTORY
   launch
+  config
   DESTINATION share/${PROJECT_NAME}/
 )
 

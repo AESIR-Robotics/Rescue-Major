@@ -110,7 +110,7 @@ public:
                            uint8_t  peer_addr = 0x00,
                            uint16_t channel   = 0,
                            uint8_t  priority  = 6);
-    ~CAN_Transport() noexcept;
+    virtual ~CAN_Transport() noexcept;
 
     CAN_Transport(const CAN_Transport &)            = delete;
     CAN_Transport &operator=(const CAN_Transport &) = delete;
@@ -124,7 +124,7 @@ public:
     bool connect() override;
     bool reconnect() override;
 
-    bool               connected() const override { return sock_fd_ >= 0;    }
+     bool               connected() const override { return sock_fd_ >= 0;    }
     const std::string &getDevice()         const { return interface_;       }
     int                getSlaveAddress()   const { return peer_addr_;       }
     Transport_Error    getTransportError() const { return transport_error_; }

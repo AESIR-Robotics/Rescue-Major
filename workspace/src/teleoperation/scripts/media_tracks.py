@@ -33,7 +33,8 @@ class ImageVideoTrack(MediaStreamTrack):
 
     async def recv(self):
         frame = await self.get_frame()
-        image_frame = VideoFrame.from_ndarray(frame, format="bgr24")
+        image_frame = VideoFrame.from_ndarray(frame, format="rgb24")
+        image_frame = image_frame.reformat(format="yuv420p")
         image_frame.pts = await self.next_timestamp()
         image_frame.time_base = Fraction(1, 1000)
         return image_frame

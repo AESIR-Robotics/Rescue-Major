@@ -158,6 +158,20 @@ private:
   uint8_t    allocSeq();
   bool       coalesceingAddition(std::unique_ptr<Cmd::Command> &&cmd, uint8_t new_seq);
 
+
+  void resetProtocolState() {
+    sending = {}; 
+
+    cmds_lookout.clear();
+    waitingCmds_.clear();
+
+    already_synced_ = false;
+    synced_byte_ = 0;
+
+    consecutive_unacked_ = 0;
+    channel_dead_ = false;
+  }
+
   // ── Sync state ────────────────────────────────────────────────────────────
   // readPending scans for 0xAA using the global deadline and stores it here.
   // readOneMessage consumes it without re-scanning.
@@ -628,7 +642,7 @@ void Protocol_Handler<Transport, ReadEnum, WriteEnum>::processAck(
   auto list_it = it->second;
   if (list_it == waitingCmds_.end()) return;
 
-  consecutive_unacked_ = 0;
+   consecutive_unacked_ = 0;
 
   if (list_it->seq_id == seq_id) {
     waitingCmds_.erase(list_it);

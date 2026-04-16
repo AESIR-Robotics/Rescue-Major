@@ -4,8 +4,22 @@ Handles PyAudio hardware management for bidirectional audio streaming.
 """
 import logging
 import pyaudio
+import ctypes
+from ctypes.util import find_library
 
 logger = logging.getLogger("audio")
+
+# Suppress ALSA warnings
+def suppress_alsa_warnings():
+    """Silencia logs de ALSA (Advanced Linux Sound Architecture) a nivel de C"""
+    try:
+        asound = ctypes.cdll.LoadLibrary(find_library('asound'))
+        asound.snd_lib_error_set_handler(ctypes.c_char_p(0))
+        logger.debug("ALSA warnings suppressed")
+    except Exception as e:
+        logger.debug(f"Could not suppress ALSA warnings: {e}")
+
+suppress_alsa_warnings()
 
 
 class AudioSystem:
@@ -19,19 +33,29 @@ class AudioSystem:
 
     def __init__(self):
         if not AudioSystem._initialized:
-            # Audio configuration
+            # Audio configuration (no cambios en rate, channels, etc.)
             self.RATE = 48000
             self.CHANNELS = 1
             self.FORMAT = pyaudio.paInt16
-            self.CHUNK = 480  # 10ms at 48kHz (reduced from 20ms for lower latency)
+            self.CHUNK = 480
             
             self.pyaudio_instance = None
             self.input_stream = None
             self.output_stream = None
             self.started = False
+            self.output_device_index = None
             
             AudioSystem._initialized = True
             logger.info("AudioSystem initialized")
+
+    def _find_usb_device(self):
+        """Busca un dispositivo que contenga 'USB Audio Device' en el nombre."""
+        for i in range(self.pyaudio_instance.get_device_count()):
+            info = self.pyaudio_instance.get_device_info_by_index(i)
+            if "USB Audio Device" in info['name']:
+                logger.info(f"USB Audio Device encontrado en índice {i}")
+                return i
+        return None
 
     def start(self):
         """Initialize PyAudio and open streams."""
@@ -42,38 +66,45 @@ class AudioSystem:
         try:
             self.pyaudio_instance = pyaudio.PyAudio()
             
-            # Open input stream (microphone) with minimal latency settings
+            # Detectar USB Audio Device
+            self.output_device_index = self._find_usb_device()
+            if self.output_device_index is None:
+                logger.warning("No se encontró USB Audio Device, usando dispositivo por defecto")
+            
+            # Abrir input stream (micrófono)
             self.input_stream = self.pyaudio_instance.open(
                 format=self.FORMAT,
                 channels=self.CHANNELS,
                 rate=self.RATE,
                 input=True,
                 frames_per_buffer=self.CHUNK,
-                stream_callback=None  # Blocking mode for better control
+                stream_callback=None
             )
             
-            # Open output stream (speakers) with minimal latency
-            self.output_stream = self.pyaudio_instance.open(
+            # Abrir output stream (bocina)
+            output_kwargs = dict(
                 format=self.FORMAT,
                 channels=self.CHANNELS,
                 rate=self.RATE,
                 output=True,
                 frames_per_buffer=self.CHUNK,
-                stream_callback=None  # Blocking mode
+                stream_callback=None
             )
+            if self.output_device_index is not None:
+                output_kwargs["output_device_index"] = self.output_device_index
             
-            # Flush any existing buffers
+            self.output_stream = self.pyaudio_instance.open(**output_kwargs)
+            
+            # Vaciar buffer inicial
             if self.input_stream.is_active():
                 try:
-                    # Drain initial buffer to avoid accumulated latency
                     for _ in range(5):
                         self.input_stream.read(self.CHUNK, exception_on_overflow=False)
-                except:
+                except Exception:
                     pass
             
             self.started = True
             logger.info(f"AudioSystem started - Rate: {self.RATE}Hz, Channels: {self.CHANNELS}, Chunk: {self.CHUNK}")
-            logger.info("Low-latency mode enabled")
         except Exception as e:
             logger.error(f"Failed to start AudioSystem: {e}")
             self.stop()
@@ -100,12 +131,9 @@ class AudioSystem:
             logger.error(f"Error stopping AudioSystem: {e}")
 
     def read_audio(self):
-        """
-        Read audio chunk from microphone (blocking).
-        Returns bytes (960 samples * 2 bytes = 1920 bytes).
-        """
+        """Read audio chunk from microphone (blocking)."""
         if not self.started or not self.input_stream:
-            return b'\x00' * (self.CHUNK * 2)  # Return silence
+            return b'\x00' * (self.CHUNK * 2)
         
         try:
             return self.input_stream.read(self.CHUNK, exception_on_overflow=False)
@@ -114,10 +142,7 @@ class AudioSystem:
             return b'\x00' * (self.CHUNK * 2)
 
     def write_audio(self, audio_data):
-        """
-        Write audio chunk to speakers (blocking).
-        audio_data: bytes (raw PCM data).
-        """
+        """Write audio chunk to speakers (blocking)."""
         if not self.started or not self.output_stream:
             return
         
