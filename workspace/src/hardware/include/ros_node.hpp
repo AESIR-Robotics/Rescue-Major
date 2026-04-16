@@ -327,7 +327,7 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
       "joint_names", {"flipper_0", "flipper_1", "flipper_2", "flipper_3", 
         "joint_1", "joint_2", "joint_3", "joint_4"});
   this->declare_parameter<double>("track_width_m", 1.1);
-  this->declare_parameter<double>("velocity_scale", 85.0);
+  this->declare_parameter<double>("velocity_scale",95.0);
 
   std::string i2c_port_;
   int slave_addr_{};
@@ -697,8 +697,8 @@ inline std::pair<float, float> HardwareDriverNode::twistToMotorPct(
 
   float mult = 1.0;
   float maxVel = std::max(std::fabs(right), std::fabs(left));
-  if(maxVel > 85.0){
-    mult = 85.0 / maxVel;
+  if(maxVel > 95.0){
+    mult = 95.0 / maxVel;
   }
 
   return {left * mult, right * mult};
