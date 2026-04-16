@@ -14,3 +14,6 @@ catkin_pkg
 lark
 numpy<2
 empy==3.3.4
+tornado
+pymongo
+cbor2

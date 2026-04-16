@@ -42,7 +42,7 @@ ENV_CMD="bash -lc ' \
   source \"$SOURCE_LOCAL_DIR\" && \
   exec bash'"
 
-session_name="rescue_aesir_$(date +%s)"
+session_name="monitor"
 
 # Crear sesión con default-command
 tmux new-session -d -s "$session_name" -n main "$ENV_CMD"
@@ -84,20 +84,16 @@ tmux split-window -v -p 50
 tmux select-layout tiled
 
 # Comandos
-tmux send-keys -t 0 "python3 src/teleoperation/scripts/server_rtc.py --cert-file /home/aesir/AESIR/develop/cert.pem --key-file /home/aesir/AESIR/develop/key.pem --host 0.0.0.0 --port 8081" Enter
-tmux send-keys -t 1 "ros2 run rosbridge_server rosbridge_websocket --ros-args --param ssl:=true --param certfile:="/home/aesir/AESIR/develop/cert.pem" --param keyfile:="/home/aesir/AESIR/develop/key.pem" --param port:=9090 --param address:=\"0.0.0.0"\" Enter
+tmux send-keys -t 0 "journalctl -u robot@user_server.service -f" Enter
+tmux send-keys -t 1 "journalctl -u robot@ros_server.service -f" Enter
 sleep 1
-tmux send-keys -t 2 "ros2 launch hardware hardware.launch.py" Enter
+tmux send-keys -t 2 "journalctl -u robot@hardware.service -f" Enter
 sleep 1
-tmux send-keys -t 3 "ros2 launch vision vision.launch.py" Enter
-tmux send-keys -t 4 "ros2 launch depthai_ros_driver camera.launch.py camera.i_nn_type:=none rgb.i_resolution:=720P rgb.i_width:=1280 rgb.i_height:=720 rgb.i_fps:=20.0" Enter
-sleep 1
+tmux send-keys -t 3 "journalctl -u robot@vision.service -f" Enter
+tmux send-keys -t 4 "journalctl -u robot@camera.service -f" Enter
+sleep 1a
 
-# Temporal
-tmux send-keys -t 6 "cd ../.." Enter
-tmux send-keys -t 6 "cd arm/workspace" Enter
-tmux send-keys -t 6 "source install/setup.bash" Enter
-tmux send-keys -t 6 "ros2 launch robot_moveit_config bringup.launch.py" Enter
+tmux send-keys -t 6 "journalctl -u robot@moveit.service -f" Enter
 sleep 1
 tmux send-keys -t 5 "htop" Enter
 tmux send-keys -t 8 "jtop" Enter
@@ -109,5 +105,4 @@ tmux bind-key -n C-a select-pane -t :.+
 tmux bind-key -n C-s select-pane -t :.-
 
 # Attach to session
-
 tmux -2 attach-session -t "$session_name"

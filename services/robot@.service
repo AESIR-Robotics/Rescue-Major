@@ -1,0 +1,27 @@
+[Unit]
+Description=Run robot section: %i
+PartOf=robotSystem.target
+After=network-online.target
+
+[Service]
+Type=simple
+
+Environment=HOME={{USER_HOME}}
+Environment=ROS_LOG_DIR={{USER_HOME}}/.ros/log
+
+ExecStart={{BASE_PATH}}/launch_scripts/%i.sh
+WorkingDirectory={{BASE_PATH}}/launch_scripts
+
+KillSignal=SIGTERM
+TimeoutStopSec=10
+KillMode=control-group
+
+Restart=on-failure
+RestartSec=2
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=%i
+
+[Install]
+WantedBy=multi-user.target
