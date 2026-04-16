@@ -19,6 +19,7 @@
 #include <unistd.h>
 #include <utility>
 
+#include "transport/transport.hpp"
 #include "utils/logger.hpp"
 #include "utils/crc.hpp"
 #include "utils/diagnostics.hpp"
@@ -28,7 +29,7 @@ using stdclock  = std::chrono::steady_clock;
 using deadline_t = stdclock::time_point;
 using LogFn      = std::function<void(const std::string &)>;
 
-class I2C_Transport {
+class I2C_Transport : protected TransportInterface{
 public:
   enum class Transport_Error {
     NONE,          ///< Connected and operating normally.
@@ -50,18 +51,15 @@ public:
   I2C_Transport &operator=(const I2C_Transport &) = delete;
 
   bool init(DiagnosticRegistry *reg, const std::string &device_in, int slave_addr_in);
-  bool connect();
-  bool reconnect();
+  bool connect() override;
+  bool reconnect() override;
+  std::string getName() override;
   
 
-  bool                connected()       const { return i2c_fd >= 0; }
+  bool                connected()       const override { return i2c_fd >= 0; }
   const std::string & getDevice()      const { return device;     }
   int                 getSlaveAddress() const { return slave_addr; }
   Transport_Error     getTransportError() const { return transport_error_; }
-
-  void setLogger(Logger &in_log) {
-    log = in_log;
-  }
 
   // ── Internal buffer constants ─────────────────────────────────────────────
   // WARNING: do not set INTERNAL_BUF_SIZE to 3 — collides with the no-message
@@ -74,15 +72,13 @@ protected:
   // ── Low-level I/O — called by Protocol_Handler, not by external code ──────
 
   /// Write `length` bytes in a single ioctl. Returns bytes written (0 on fail).
-  size_t writeData(const uint8_t *data, size_t length, deadline_t deadline);
+  size_t writeData(const uint8_t *data, size_t length, deadline_t deadline) override;
 
-  bool canSend();
-  bool hasData();
   /// Read `length` bytes using the internal cache + skip protocol.
   /// Returns bytes read (may be < length on timeout or bus error).
-  size_t readData(uint8_t *buffer, size_t length, deadline_t deadline);
+  size_t readData(uint8_t *buffer, size_t length, deadline_t deadline) override;
 
-  void disconnect();
+  void disconnectImpl() override;
 
   // Exposed to Protocol_Handler so it can set transport error on protocol faults
   // that imply a transport problem (e.g. partial read after an ioctl failure).
@@ -100,8 +96,6 @@ private:
   u_int32_t  attmps { 0 };
   uint8_t internal_buf[INTERNAL_BUF_SIZE]{};
   size_t  internal_pos { INTERNAL_BUF_SIZE };
-
-  Logger log{};
 };
 
 // =============================================================================
@@ -123,6 +117,10 @@ inline I2C_Transport::I2C_Transport(DiagnosticRegistry *reg, const std::string &
     reg->register_source(&statusReport);
   }
   if (!device.empty()) connect();
+}
+
+inline std::string I2C_Transport::getName() {
+  return "I2C";
 }
 
 inline I2C_Transport::~I2C_Transport() noexcept { disconnect(); }
@@ -193,7 +191,7 @@ inline bool I2C_Transport::connect() {
   return true;
 }
 
-inline void I2C_Transport::disconnect() {
+inline void I2C_Transport::disconnectImpl() {
   if (i2c_fd >= 0) {
     ::close(i2c_fd);
     i2c_fd = -1;
@@ -239,10 +237,6 @@ inline bool I2C_Transport::waitFdReady(short events, deadline_t deadline) {
   }
   return ret > 0 && (pfd.revents & events);
 }
-
-inline bool I2C_Transport::canSend() { return true; }
-
-inline bool I2C_Transport::hasData() { return true; }
 
 inline size_t I2C_Transport::writeData(const uint8_t *data, size_t length, 
                                         deadline_t deadline) {

@@ -19,6 +19,7 @@
 #include <linux/can.h>
 #include <linux/can/raw.h>
 
+#include "transport/transport.hpp"
 #include "utils/logger.hpp"
 #include "can_iface_manager.hpp"
 #include "utils/diagnostics.hpp"
@@ -89,7 +90,7 @@ namespace seg {
 // Protocol_Handler<CAN_Transport> compiles without changes.
 // =============================================================================
 
-class CAN_Transport {
+class CAN_Transport : protected TransportInterface{
 public:
     enum class Transport_Error {
         NONE,
@@ -119,17 +120,14 @@ public:
               uint8_t  peer_addr,
               uint16_t channel  = 0,
               uint8_t  priority = 6);
-    bool connect();
-    bool reconnect();
+    std::string getName() override;
+    bool connect() override;
+    bool reconnect() override;
 
-    bool               connected()         const { return sock_fd_ >= 0;    }
+     bool               connected() const override { return sock_fd_ >= 0;    }
     const std::string &getDevice()         const { return interface_;       }
     int                getSlaveAddress()   const { return peer_addr_;       }
     Transport_Error    getTransportError() const { return transport_error_; }
-
-    void setLogger(Logger &in_log) {
-      log = in_log;
-    }
 
     /// Set the shared interface manager. Call before init() or connect().
     /// If not set, CAN_Transport manages the interface on its own (legacy).
@@ -142,18 +140,18 @@ protected:
 
     /// Segment `data` into CAN 2.0B frames and transmit all of them.
     /// Returns bytes written (0 on failure).
-    size_t writeData(const uint8_t *data, size_t length, deadline_t deadline);
+    size_t writeData(const uint8_t *data, size_t length, deadline_t deadline) override;
 
-    bool canSend();
-    bool hasData();
+    bool canSend() const override;
+    bool hasData() const override;
 
     bool assemble(deadline_t deadline);
 
     /// Receive and reassemble segmented CAN 2.0B frames into `buffer`.
     /// Returns bytes copied.
-    size_t readData(uint8_t *buffer, size_t length, deadline_t deadline);
+    size_t readData(uint8_t *buffer, size_t length, deadline_t deadline) override;
 
-    void disconnect();
+    void disconnectImpl() override;
 
     Transport_Error transport_error_ { Transport_Error::CLOSED };
 
@@ -202,7 +200,6 @@ private:
     bool        rx_in_progress_    { false };
 
     u_int32_t  attmps { 0 };
-    Logger log{};
 };
 
 // =============================================================================
@@ -236,6 +233,10 @@ inline CAN_Transport::CAN_Transport(DiagnosticRegistry *reg, const std::string &
 
 inline CAN_Transport::~CAN_Transport() noexcept { disconnect(); }
 
+inline std::string CAN_Transport::getName(){
+    return "CAN_" + std::to_string(peer_addr_);
+}
+
 inline bool CAN_Transport::init(DiagnosticRegistry *reg, const std::string &interface,
                                  uint8_t my_addr, uint8_t peer_addr,
                                  uint16_t channel, uint8_t priority) {
@@ -247,6 +248,7 @@ inline bool CAN_Transport::init(DiagnosticRegistry *reg, const std::string &inte
     peer_addr_ = peer_addr;
     channel_   = channel;
     priority_  = priority;
+    log.setName("CAN_" + std::to_string(peer_addr_));
     return connect();
 }
 
@@ -350,7 +352,7 @@ inline bool CAN_Transport::connect() {
     return true;
 }
 
-inline void CAN_Transport::disconnect() {
+inline void CAN_Transport::disconnectImpl() {
     if (sock_fd_ >= 0) {
         statusReport.with([](Status &d){
             d.values["connected"] = "false";
@@ -416,7 +418,7 @@ inline bool CAN_Transport::waitFdReady(short events, deadline_t deadline) {
 }
 
 
-inline bool CAN_Transport::canSend() {
+inline bool CAN_Transport::canSend() const {
     if (!connected()) return false;
 
     struct pollfd pfd{ sock_fd_, POLLOUT, 0 };
@@ -427,7 +429,7 @@ inline bool CAN_Transport::canSend() {
     return ret > 0 && (pfd.revents & POLLOUT);
 }
 
-inline bool CAN_Transport::hasData() {
+inline bool CAN_Transport::hasData() const {
     if (!connected()) return false;
     // If there are already assembled bytes ready to read, return immediately
     if (read_pos_ < rx_pos_) return true;
