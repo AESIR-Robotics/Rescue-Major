@@ -109,4 +109,5 @@ tmux bind-key -n C-a select-pane -t :.+
 tmux bind-key -n C-s select-pane -t :.-
 
 # Attach to session
+
 tmux -2 attach-session -t "$session_name"
