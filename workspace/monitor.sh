@@ -42,7 +42,7 @@ ENV_CMD="bash -lc ' \
   source \"$SOURCE_LOCAL_DIR\" && \
   exec bash'"
 
-session_name="rescue_aesir_$(date +%s)"
+session_name="monitor"
 
 # Crear sesión con default-command
 tmux new-session -d -s "$session_name" -n main "$ENV_CMD"
