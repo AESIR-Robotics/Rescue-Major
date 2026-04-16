@@ -5,6 +5,10 @@ After=network.target
 [Service]
 Type=simple
 
+
+Environment=HOME=/home/aesir
+Environment=ROS_LOG_DIR=/home/aesir/.ros/log
+
 # TODO:
 # Make the path be modified depending on where the repo actually is
 ExecStart=/opt/robot/Repos/aesir/launch_scripts/%i.sh
