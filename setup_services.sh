@@ -8,4 +8,5 @@ fi
 #TODO: install the services to make it work :p
 
 
-# install -m 644 "$REMINDERS_DIR/mcu-monitor@.service" /etc/systemd/system/
+install -m 644 "services/robot@.service" /etc/systemd/system/
+install -m 644 "services/robotSystem.target" /etc/systemd/system/
