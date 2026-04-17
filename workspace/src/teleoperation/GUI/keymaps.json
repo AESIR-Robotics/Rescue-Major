@@ -1,7 +1,5 @@
 {
   "flipper_control": {
-
-
     "stop_dc": {
       "type": "teleop_cmd_vel",
       "payload": {
@@ -126,6 +124,24 @@
       "payload": {
         "linear_dir": 0,
         "angular_dir": 0
+      }
+    },
+    "r": {
+      "type": "publish_topic",
+      "topics": ["/arm_command/joint_goal"],
+      "data_type": "sensor_msgs/msg/JointState",
+      "payload": {
+        "name": ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6"],
+        "position": [0.0, -2.77507, 2.58309, -1.37881, -1.5708, 0.0]
+      }
+    },
+    "t": {
+      "type": "publish_topic",
+      "topics": ["/arm_command/joint_goal"],
+      "data_type": "sensor_msgs/msg/JointState",
+      "payload": {
+        "name": ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6"],
+        "position": [0.0, -2.86234, 2.86234, -1.5708, -1.5708, 0.0]
       }
     }
   },

@@ -504,14 +504,6 @@ class InputHandler {
 
   let robotAPI = null;
   let inputHandler = null;
-  
-  let currentControlMode = "velocity";
-  window.switch_control_mode = function(mode, retriesLeft = 6) {
-    if (mode !== "velocity" && mode !== "position") return;
-    currentControlMode = mode;
-    log(`Control mode set to: ${mode} (Through MoveIt Servo)`);
-    // No hardware-level controller switch needed when running both via MoveIt Servo
-  };  
 
   let allKeymapProfiles = {};
   let currentKeymapProfile = "";
@@ -571,9 +563,6 @@ class InputHandler {
       // Create RobotAPI and InputHandler
       robotAPI = new RobotAPI(ros);
       inputHandler = new InputHandler({ robotAPI });
-      
-      // Velocity mode by default
-      window.switch_control_mode("velocity");
       
       setupKeyboardBindings();
       setupSliders();
@@ -674,6 +663,35 @@ class InputHandler {
           });
         })
         .catch(e => log(`Failed to load keymaps: ${e.message}`));
+
+      // temporal handle for move it prepos 
+      let servoDeactivations = 0;
+      const maxDeactivations = 5;
+      
+      const deactivateServo = () => {
+        servoDeactivations++;
+        if (servoDeactivations > maxDeactivations) {
+          log('[Servo] Error: No se pudo desactivar el modo servo tras 5 intentos.');
+          return;
+        }
+
+        log(`[Servo] Intentando desactivar el modo servo (Intento ${servoDeactivations}/${maxDeactivations})...`);
+        const pauseSrv = robotAPI.getOrCreateService('/servo_node/pause_servo', 'std_srvs/srv/Trigger');
+        const request = new ROSLIB.ServiceRequest({});
+        
+        pauseSrv.callService(request, (result) => {
+          if (result.success) {
+            log('[Servo] Modo servo desactivado correctamente.');
+          } else {
+            log(`[Servo] Respuesta indicando que falló al desactivar servo: ${result.message}`);
+            setTimeout(deactivateServo, 5000);
+          }
+        }, (err) => {
+          log(`[Servo] Excepción al intentar llamar al servicio pause_servo.`);
+          setTimeout(deactivateServo, 5000);
+        });
+      };
+      setTimeout(deactivateServo, 1000);
     });
 
     ros.on('close', () => {
@@ -807,10 +825,6 @@ class InputHandler {
     if (!button) return;
     
     // Check if currently unmuted
-    // The previous text state will dictate logic. Since it starts muted by default,
-    // "Servidor" normally implies we need to switch it. 
-    // We'll update the textContent internally based on current isMuted state tracker.
-    
     // Instead of relying on specific english text like 'Unmute Server', we track the state using a custom attribute or assume based on color.
     const isMuted = button.getAttribute('data-muted') !== 'false'; // Defaults to true initially
     const actionId = isMuted ? 'unmute_server' : 'mute_server';
