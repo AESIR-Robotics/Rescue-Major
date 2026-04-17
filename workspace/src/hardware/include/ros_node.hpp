@@ -26,34 +26,27 @@
 #include "commands.hpp"
 #include "protocol_handler.hpp"
 
-//#include "bridge_transport.hpp"
+#include "transport/bridge_transport.hpp"
+#include "transport/serial_iface_manager.hpp"
 
-//#include "transport/serial_mux.hpp"
-#include "transport/can_iface_manager.hpp"
 #include "utils/diagnostics.hpp"
 #include "utils/tuple_utils.hpp"
 #include "utils/logger.hpp"
 
+// Alias para el nuevo transporte por Mux Serial
+template<typename ReadID = Cmd::ESP32::Read, typename WriteID = Cmd::ESP32::Write>
+using Protocol_Handler_Bridge = Protocol_Handler<Bridge_Transport, ReadID, WriteID>;
+
 // =============================================================================
 // StepperState<N>
-// Owns desired stepper positions/speeds/accels for N motors.
-// Setters automatically mark the corresponding updated bit — callers never
-// touch `updated` directly.  clearUpdated(mask) is called by the tick after
-// it has snapshotted and enqueued the pending changes.
 // =============================================================================
-
 template <int N>
 struct StepperState {
-  // -------------------------------------------------------------------
-  // Data (SI units: rad, rad/s, rad/s²)
-  // -------------------------------------------------------------------
   std::array<double, N> position{};
   std::array<double, N> speed{};
   std::array<double, N> acceleration{M_PI};
-  std::array<double, N> effort{};   // reserved for future use
+  std::array<double, N> effort{};   
 
-  // One bit per motor per field.
-  // Layout: bits [0..N-1]=position, [N..2N-1]=speed, [2N..3N-1]=accel, [3N..4N-1]=effort
   static constexpr int FIELDS = 4;
   std::bitset<FIELDS> updated{};
 
@@ -74,51 +67,24 @@ struct StepperState {
     if (effort[motor] != eff) { effort[motor] = eff; updated.set(3); touch(); }
   }
 
-  // -------------------------------------------------------------------
-  // Helpers
-  // -------------------------------------------------------------------
-  bool updatedPosition() const {
-    return updated.test(0);
-  }
-  bool updatedSpeed() const {
-    return updated.test(1);
-  }
-  bool updatedAccel() const {
-    return updated.test(2);
-  }
+  bool updatedPosition() const { return updated.test(0); }
+  bool updatedSpeed() const    { return updated.test(1); }
+  bool updatedAccel() const    { return updated.test(2); }
+  bool anyUpdated() const      { return updated.any();   }
 
-  bool anyUpdated() const { return updated.any(); }
-
-  /// Clear only the bits present in mask — bits set by callbacks during this
-  /// window are preserved.
   void clearUpdated(std::bitset<FIELDS> mask) { updated &= ~mask; }
-
-  /// Force-mark all fields for all motors as updated (used after reconnect).
   void markAllUpdated() { updated.set(); }
 
-  /// Called by every setter — records that fresh data arrived now.
-  /// Requires the node to call stampFeedback(time) once after construction.
   void touch() { feedback_received = true; }
   void stampFeedback(const rclcpp::Time &t) { last_feedback_time = t; feedback_received = true; }
 
-  // Last time any field on this stepper group was updated by a callback.
-  // Set by every setter so the node can detect dead joints without an
-  // external timestamp array.
   rclcpp::Time last_feedback_time{};
   bool         feedback_received{false};
 };
 
 // =============================================================================
 // DCState
-// Owns desired DC motor velocities in SI units.
-// Bit 0 = linear updated, Bit 1 = angular updated.
-//
-// MCU conversion (differential drive):
-//   right_pct = (linear + angular * track_width/2) * velocity_scale
-//   left_pct  = (linear - angular * track_width/2) * velocity_scale
-// clamped to [-100, 100].
 // =============================================================================
-
 struct DCState {
   double linear{0.0};   // m/s
   double angular{0.0};  // rad/s
@@ -143,126 +109,81 @@ namespace diag = diagnostic_msgs::msg;
 namespace geom = geometry_msgs::msg;
 
 // =============================================================================
-// HardwareDiagnostics
-// Holds the last-known diagnostic state written by the tick thread (I2C
-// callbacks and error recovery).  Wrapped in Guarded<> so it is safe to
-// snapshot from a future MultiThreadedExecutor timer callback without changes
-// to the write sites.
-//
-// NOTE: with the current SingleThreadedExecutor all writes and the diag timer
-// run on the same thread — the mutex has zero contention.  If the executor is
-// ever changed to MultiThreadedExecutor this wrapper already provides safety.
+// HardwareDriverNode
 // =============================================================================
-/*/
-struct HardwareDiagnostics {
-  // Connection
-  bool     i2c_connected{false};
-  int      reconnect_attempts{0};
-
-  // Byte-loss counter reported by the MCU (populated when ERROR message added)
-  uint32_t tx_byte_loss_count{0};
-  uint32_t rx_byte_loss_count{0};
-
-  // Set to true by any write site so diagTick() knows a publish is warranted.
-  bool updated{false};
-
-  void markUpdated() { updated = true; }
-  bool anyUpdated()  const { return updated; }
-  void clearUpdated()      { updated = false; }
-};//*/
-
 class HardwareDriverNode : public rclcpp::Node {
 public:
   HardwareDriverNode();
   void tick();
   void tickI2C();
-  void tickCAN();
+  void tickBridge();
 
 private:
-  // --- Unit conversion helpers ----------------------------------------------
   int32_t radToSteps(double rad, int joint) const;
 
   template<typename T>
   double stepsToRad(T steps, int joint) const;     
   template<typename T>
   double stepsToRadRate(T steps, int joint) const;  
-  /// Differential drive: [m/s, rad/s]  [left_pct, right_pct] clamped [-100,100]
   std::pair<float, float> twistToMotorPct(double linear, double angular) const;
 
-  // --- Setup ----------------------------------------------------------------
   void generateCallbacks();
 
-  // --- ROS callbacks --------------------------------------------------------
   void cmdVelCallback(const geom::Twist::SharedPtr msg);
   void jointCommandCallback(const hardware::msg::JointControl::SharedPtr msg);
 
-  // --- Command preparation --------------------------------------------------
   static constexpr int number_arms{4};
   void prepareI2CCommands();
-  void prepareCANCommands(int arm_index);
+  void prepareBridgeCommands(int arm_index);
   void enqueueFlipperInfo(const StepperState<4> &snap);
   void enqueueArmInfo(const StepperState<number_arms> &snap, int arm_index);
   void enqueueDCInfo(const DCState &snap);
 
-  // --- Error recovery -------------------------------------------------------
   bool errorRecoveryI2C();
-  bool errorRecoveryCANArm(int i);
+  bool errorRecoveryBridgeArm(int i);
 
   void deadmanStop();
 
-  // --- Publishing -----------------------------------------------------------
   void publishJointFeedback();
   void publishDCFeedback();
   void publishDiagnostics();
-
   void diagTick();
 
   Logger logger{};
 
   Protocol_Handler_I2C<> stepper_micro;
-  std::array<Protocol_Handler_CAN<>, number_arms> stepper_arms;
+  std::array<Protocol_Handler_Bridge<>, number_arms> stepper_arms;
   std::array<int, number_arms> credit;
-  //std::shared_ptr<SerialMux> mux_;   ///< Shared serial resource for all arm bridges
 
-  // Steps per revolution and home offset per joint.
-  // Index 0-3 = flippers (I2C), 4-10 = arms (CAN).
-  // Defaults: 40000 steps/rev, 0.0 rad offset.
-  std::array<int, 11>    steps_per_rev_{};   // filled from ROS params
-  std::array<double, 11> home_offset_{};     // rad — subtracted before send, added after recv
+  std::array<int, 11>    steps_per_rev_{};   
+  std::array<double, 11> home_offset_{};     
   static constexpr int steppers{10};
 
-  double track_width_m{1.25};    ///< Distance between wheels [m]
-  double velocity_scale{1.0};   ///< (m/s or rad/s)  percent on MCU
+  double track_width_m{1.25};    
+  double velocity_scale{1.0};   
 
   std::vector<std::string> joint_names{
     "flipper_0", "flipper_1", "flipper_2", "flipper_3",
     "joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6", "joint_7"
   };
 
-  // Desired state — written by ROS callbacks, snapshotted by tick
-  // Desired state — flippers (I2C) and arms (CAN) kept separate so their
-  // updated bits do not cross-contaminate and error recovery is independent.
-  Guarded<StepperState<4>>             in_flipper;   ///< I2C stepper (4 motors)
-  Guarded<StepperState<number_arms>>   in_arms;      ///< CAN arm joints (7 motors)
-  Guarded<DCState>                in_dc;
+  Guarded<StepperState<4>>             in_flipper;   
+  Guarded<StepperState<number_arms>>   in_arms;      
+  Guarded<DCState>                     in_dc;
 
-  // Feedback state — written by callbacks, read by publish methods.
-  // Entirely on the tick thread: no mutex needed.
   StepperState<4>            feedback_flipper;
   StepperState<number_arms>  feedback_arms;
 
   static constexpr double joint_timeout_s_{2.0};
   DCState                feedback_dc;
 
-  // Deadman — stops all motion if no command arrives within timeout
   rclcpp::Time      last_cmd_time_{};
   bool              deadman_initialized_{ false };
   static constexpr double deadman_timeout_s_{ 0.5 }; 
   bool              deadman_fired_{ false };          
 
-  // Timing counters
   int i2c_poll_ticks_{0};
-  int can_poll_ticks_{0};
+  int bridge_poll_ticks_{0};
   static constexpr int feedback_poll_interval_ticks_{10};
 
   int ticks_since_feedback_publish_joint_{0};
@@ -272,32 +193,25 @@ private:
   static constexpr int feedback_publish_dc_interval_ticks_{250};
 
   int i2c_update_ticks_{0};
-  int can_update_ticks_{0};
+  int bridge_update_ticks_{0};
   static constexpr int update_interval_ticks_{3};
 
   int i2c_wait_counter_{0};
-  std::array<int, number_arms> can_wait_counter_{};
+  std::array<int, number_arms> bridge_wait_counter_{};
   static constexpr int max_wait_ticks_{50};
 
-  // Budgeting
   static int constexpr max_budget{128};
   static int constexpr min_budget{-128};
 
-  // Set true on first connect and after every reconnect.
-  // Separate flags so I2C and CAN resync independently.
   bool i2c_needs_resync_{true};
-  bool can_needs_resync_{true};
+  bool bridge_needs_resync_{true};
 
   DiagnosticRegistry sysStats;
 
-  // diagTick() increments this each call; when it reaches diag_force_ticks_
-  // a publish is forced even if nothing changed (keeps aggregator alive at ~1 Hz).
   int  diag_ticks_since_pub_{0};
-  // At diag_hz_=5 this gives a forced publish every 5 ticks = 1 Hz.
   static constexpr int  diag_force_ticks_{500};
   static constexpr double diag_hz_{5.0};
 
-  // ROS interfaces
   rclcpp::QoS qos_cmd_{rclcpp::QoS(1).best_effort()};
   rclcpp::QoS qos_feedback_{rclcpp::QoS(10).reliable()};
 
@@ -316,7 +230,11 @@ private:
 inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
   this->declare_parameter<std::string>("i2c_port", "/dev/i2c-7");
   this->declare_parameter<int>("i2c_address", 0x30);
-  this->declare_parameter<std::string>("can_interface", "can1");
+  
+  // Nuevos parámetros para Serial Bridge
+  this->declare_parameter<std::string>("bridge_serial_port", "/dev/ttyUSB0");
+  this->declare_parameter<int>("bridge_serial_baud", 921600);
+
   this->declare_parameter<std::vector<int>>(
       "steps_per_rev",
       {40000, 40000, 40000, 40000, 40000, 40000, 40000, 5000, 5000, 5000, 400});
@@ -333,6 +251,12 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
   int slave_addr_{};
   this->get_parameter("i2c_port",           i2c_port_);
   this->get_parameter("i2c_address",        slave_addr_);
+  
+  std::string bridge_port;
+  int bridge_baud = 921600;
+  this->get_parameter("bridge_serial_port", bridge_port);
+  this->get_parameter("bridge_serial_baud", bridge_baud);
+
   {
     std::vector<int64_t> spr;
     this->get_parameter("steps_per_rev", spr);
@@ -349,39 +273,24 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
   this->get_parameter("track_width_m",      track_width_m);
   this->get_parameter("velocity_scale",     velocity_scale);
 
-  std::string can_interface;
-  this->get_parameter("can_interface", can_interface);
-
   logger.setLogger([this](const std::string &msg) { RCLCPP_INFO( get_logger(), "%s", msg.c_str()); },
         [this](const std::string &msg) { RCLCPP_WARN( get_logger(), "%s", msg.c_str()); },
        [this](const std::string &msg) { RCLCPP_ERROR(get_logger(), "%s", msg.c_str()); });
 
   stepper_micro.setLogger(logger);
-
   stepper_micro.init(&sysStats, i2c_port_, slave_addr_);
 
-  /*/ // ── Bridge serial mux — shared resource for all arm instances ────────────
-  this->declare_parameter<std::string>("bridge_serial_port", "/dev/ardu_main");
-  this->declare_parameter<int>        ("bridge_serial_baud",  115200);
-  std::string bridge_port;
-  int         bridge_baud{921600};
-  this->get_parameter("bridge_serial_port", bridge_port);
-  this->get_parameter("bridge_serial_baud", bridge_baud);
-
-  mux_ = std::make_shared<SerialMux>();
-  mux_->init(bridge_port, static_cast<uint32_t>(bridge_baud),
-      logger); //*/
-
-  auto can_mgr = std::make_shared<CANIfaceManager>(&sysStats, can_interface, 500000);
-  can_mgr->setLogger(logger);
+  // Inicialización del SerialIfaceManager
+  auto bridge_mgr = std::make_shared<SerialIfaceManager>(&sysStats, bridge_port, bridge_baud);
+  bridge_mgr->setLogger(logger);
 
   for (int i = 0; i < number_arms; ++i) {
       stepper_arms[i].setLogger(logger);
+      stepper_arms[i].setIfaceManager(bridge_mgr);
       
-      stepper_arms[i].setIfaceManager(can_mgr);
-      // Register channel in mux — my addr offset per arm, peer = arm index
-      stepper_arms[i].init(&sysStats, can_interface, /*my=*/static_cast<uint8_t>(0x00 - i - 1),
-                                  /*peer=*/static_cast<uint8_t>(i + 1), /*channel=*/0);
+      // La inicialización ahora omite el string del puerto físico (lo maneja el manager)
+      stepper_arms[i].init(&sysStats, /*my=*/static_cast<uint8_t>(0x00 - i - 1),
+                                      /*peer=*/static_cast<uint8_t>(i + 1), /*channel=*/0);
         
       using Cmd::ESP32::Read;
       const auto loggerLocal = [this](const char* fmt, auto... args) {
@@ -394,7 +303,6 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
           auto &[p0] = info;
           feedback_arms.setPosition(i, stepsToRad(p0, 4 + i));
           feedback_arms.stampFeedback(this->now());
-          //logger.logInfo("Position feedback for arm %i: %i", i, p0);
         }, loggerLocal));
 
 
@@ -403,7 +311,6 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
         Cmd::make_callback<Read::SPEED>([this, i](const auto &info) {
           auto &[s0] = info;
           feedback_arms.setSpeed(i, stepsToRadRate(s0, 4 + i));
-          //logger.logInfo( "Speed feedback for arm %i: %f", i, s0);
         }, loggerLocal));
 
       stepper_arms[i].read_callbacks.emplace(
@@ -411,12 +318,8 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
         Cmd::make_callback<Read::ACCEL>([this, i](const auto &info) {
           auto &[a0] = info;
           feedback_arms.setAcceleration(i, stepsToRadRate(a0, 4 + i));
-          //logger.logInfo("Accel feedback for arm %i: %f", i, a0);
         }, loggerLocal));
   }
-
-  // All channels registered — start mux reader thread
-  //mux_->startReader();
 
   generateCallbacks();
 
@@ -443,30 +346,25 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
 }
 
 inline void HardwareDriverNode::tick() {
-  // Deadman: stop all motion if no command received within timeout
   if (deadman_initialized_ && !deadman_fired_) {
     double age = (this->now() - last_cmd_time_).seconds();
     if (age > deadman_timeout_s_) {
       deadman_fired_ = true;
-      //deadmanStop();
     }
   }
 
   tickI2C();
-  tickCAN();
+  tickBridge();
 }
 
 // -----------------------------------------------------------------------------
 inline void HardwareDriverNode::tickI2C() {
-  // 1. Connection guard
   if (!stepper_micro.connected() && !errorRecoveryI2C()) return;
 
-  // 2. Read responses then flush TX queue
   stepper_micro.readPending();
   stepper_micro.sendQueue();
   if (!stepper_micro.connected()) { i2c_wait_counter_ = 0; return; }
 
-  // 3. Periodic feedback poll — ask MCU to report current state
   if (i2c_poll_ticks_++ >= feedback_poll_interval_ticks_) {
     i2c_poll_ticks_ = 0;
     stepper_micro.addCommand(std::make_unique<ReadInst<Cmd::Teensy::Read::POSITION>>());
@@ -475,7 +373,6 @@ inline void HardwareDriverNode::tickI2C() {
     stepper_micro.addCommand(std::make_unique<ReadInst<Cmd::Teensy::Read::DCVEL>>());
   }
 
-  // 4. Send commands when something changed, periodically, or on resync
   bool flipper_changed = in_flipper.with([](auto &d) { return d.anyUpdated(); });
   bool dc_changed      = in_dc.with(    [](auto &d) { return d.anyUpdated(); });
   bool periodic        = (i2c_update_ticks_++ >= update_interval_ticks_);
@@ -485,7 +382,6 @@ inline void HardwareDriverNode::tickI2C() {
     prepareI2CCommands();
   }
 
-  // 5. Publish feedback when I2C callbacks updated the feedback structs
   if (feedback_flipper.anyUpdated() || feedback_arms.anyUpdated() ||
       ++ticks_since_feedback_publish_joint_ >= feedback_publish_joint_interval_ticks_) {
     ticks_since_feedback_publish_joint_ = 0;
@@ -501,82 +397,67 @@ inline void HardwareDriverNode::tickI2C() {
   }
 }
 
-inline void HardwareDriverNode::tickCAN() {
-  // Each arm is an independent CAN node — iterate all, skip disconnected ones.
-  // Feedback publish is handled by tickI2C to avoid double-publishing.
-
+inline void HardwareDriverNode::tickBridge() {
   bool arms_changed = in_arms.with([](auto &d) { return d.anyUpdated(); });
-  bool periodic     = (can_update_ticks_++ >= update_interval_ticks_);
-  bool do_send      = can_needs_resync_ || periodic || arms_changed;
-  if (do_send) can_update_ticks_ = 0;
+  bool periodic     = (bridge_update_ticks_++ >= update_interval_ticks_);
+  bool do_send      = bridge_needs_resync_ || periodic || arms_changed;
+  if (do_send) bridge_update_ticks_ = 0;
 
-  bool do_poll = (can_poll_ticks_++ >= feedback_poll_interval_ticks_);
-  if (do_poll) can_poll_ticks_ = 0;
+  bool do_poll = (bridge_poll_ticks_++ >= feedback_poll_interval_ticks_);
+  if (do_poll) bridge_poll_ticks_ = 0;
 
   std::array<int, number_arms> order;
   int count = 0;
 
   for (int i = 0; i < number_arms; ++i) {
-      if (stepper_arms[i].connected() || errorRecoveryCANArm(i)) {
+      if (stepper_arms[i].connected() || errorRecoveryBridgeArm(i)) {
           credit[i] = std::min(credit[i] + 8, max_budget);
-          order[count++] = i;   // <-- tu arreglo pre-declarado
+          order[count++] = i;
       }
   }
 
-  // 2. Ordenar por score (mayor primero)
   std::sort(order.data(), order.data() + count, [&](int a, int b) {
       int sa = stepper_arms[a].msgQueued() * 8 + credit[a];
       int sb = stepper_arms[b].msgQueued() * 8 + credit[b];
       return sa > sb;
   });
 
-  // 3. Procesar en orden
   for (int k = 0; k < count; ++k) {
     int i = order[k];
     auto &arm = stepper_arms[i];
-    // 2. Read responses then flush TX queue
+    
     arm.readPending();
     arm.sendQueue();
 
     credit[i] = std::max(credit[i] - arm.byteSentFromQueue(), min_budget);
 
     if (!arm.connected()) { 
-        can_wait_counter_[i] = 0; 
+        bridge_wait_counter_[i] = 0; 
         credit[i] = 0; 
         continue; 
     }
 
-    // 3. Periodic feedback poll
     if (do_poll) {
       arm.addCommand(std::make_unique<ReadInstESP<Cmd::ESP32::Read::POSITION>>());
       arm.addCommand(std::make_unique<ReadInstESP<Cmd::ESP32::Read::SPEED>>());
       arm.addCommand(std::make_unique<ReadInstESP<Cmd::ESP32::Read::ACCEL>>());
     }
 
-    // 4. Send commands
-    if (do_send) prepareCANCommands(i);
+    if (do_send) prepareBridgeCommands(i);
   }
 
-  // Clear resync flag after all arms have been serviced
-  if (can_needs_resync_) can_needs_resync_ = false;
+  if (bridge_needs_resync_) bridge_needs_resync_ = false;
 
-  // 5. Publish arm feedback when any arm callback wrote new data
   if (feedback_arms.anyUpdated()) {
-    // Joint publish is shared with flipper — only set the flag here,
-    // tickI2C drives the actual publish to keep one publish per tick.
-    // If tickI2C is not running (I2C disconnected), publish directly.
     if (!stepper_micro.connected()) {
       publishJointFeedback();
       feedback_arms.clearUpdated(feedback_arms.updated);
     }
-    // Otherwise tickI2C will publish on its next cycle and clear both flags.
   }
 }
 
 // -----------------------------------------------------------------------------
 inline void HardwareDriverNode::prepareI2CCommands() {
-  // Snapshot under lock — no I/O while holding the mutex.
-  // Only flipper (I2C) and DC state — arms are handled by prepareCANCommands.
   auto flipper_snap = in_flipper.snapshot();
   auto dc_snap      = in_dc.snapshot();
 
@@ -593,19 +474,13 @@ inline void HardwareDriverNode::prepareI2CCommands() {
   in_dc.with(    [&](auto &d) { d.clearUpdated(dc_snap.updated);      });
 }
 
-inline void HardwareDriverNode::prepareCANCommands(int i) {
-  // Snapshot under lock — same pattern as prepareI2CCommands.
-  // Only reads in_arms; flipper/DC are I2C-only.
+inline void HardwareDriverNode::prepareBridgeCommands(int i) {
   auto arms_snap = in_arms.snapshot();
 
-  if (can_needs_resync_) arms_snap.markAllUpdated();
-  // can_needs_resync_ is cleared by tickCAN after the full arm loop.
+  if (bridge_needs_resync_) arms_snap.markAllUpdated();
 
-  // Enqueue commands for arm i only — each arm is an independent CAN node.
   enqueueArmInfo(arms_snap, i);
 
-  // Clear bits for in_arms after the last arm processes them.
-  // Only the last arm clears so earlier arms don't lose their update window.
   if (i == number_arms - 1)
     in_arms.with([&](auto &d) { d.clearUpdated(arms_snap.updated); });
 }
@@ -734,10 +609,6 @@ inline double HardwareDriverNode::stepsToRadRate(T steps, int joint) const {
 }
 
 // -----------------------------------------------------------------------------
-// generateCallbacks
-// All MCU-unit  SI conversion happens here.
-// These run on the tick thread — write only to feedback_* structs, O(1), no locks.
-// -----------------------------------------------------------------------------
 inline void HardwareDriverNode::generateCallbacks() {
   using Cmd::Teensy::Read;
 
@@ -753,7 +624,6 @@ inline void HardwareDriverNode::generateCallbacks() {
         (void)p1;
       }, loggerLocal));
 
-  // POSITION: steps  rad
   stepper_micro.read_callbacks.emplace(
       Read::POSITION,
       Cmd::make_callback<Read::POSITION>([&](const auto &info) {
@@ -765,7 +635,6 @@ inline void HardwareDriverNode::generateCallbacks() {
         feedback_flipper.stampFeedback(this->now());
       }, loggerLocal));
 
-  // SPEED: steps/s  rad/s
   stepper_micro.read_callbacks.emplace(
       Read::SPEED,
       Cmd::make_callback<Read::SPEED>([&](const auto &info) {
@@ -776,7 +645,6 @@ inline void HardwareDriverNode::generateCallbacks() {
         feedback_flipper.setSpeed(3, stepsToRadRate(s3, 3));
       }, loggerLocal));
 
-  // ACCEL: steps/s2  rad/s2
   stepper_micro.read_callbacks.emplace(
       Read::ACCEL,
       Cmd::make_callback<Read::ACCEL>([&](const auto &info) {
@@ -787,10 +655,6 @@ inline void HardwareDriverNode::generateCallbacks() {
         feedback_flipper.setAcceleration(3, stepsToRadRate(a3, 3));
       }, loggerLocal));
 
-  // DCVEL: [left_pct, right_pct]  [m/s, rad/s]
-  // Inverse of twistToMotorPct:
-  //   linear  = (right + left) / (2 * velocity_scale)
-  //   angular = (right - left) / (track_width_m * velocity_scale)
   stepper_micro.read_callbacks.emplace(
       Read::DCVEL,
       Cmd::make_callback<Read::DCVEL>([&](const auto &info) {
@@ -806,26 +670,23 @@ inline void HardwareDriverNode::generateCallbacks() {
 // -----------------------------------------------------------------------------
 inline void HardwareDriverNode::cmdVelCallback(
     const geom::Twist::SharedPtr msg) {
-  // Twist is already SI — write directly through setters.
   in_dc.with([&](DCState &d) {
     d.setLinear(msg->linear.x);
     d.setAngular(msg->angular.z);
   });
   last_cmd_time_     = this->now();
   deadman_initialized_ = true;
-  deadman_fired_     = false;   // reset — operator is active again
+  deadman_fired_     = false;   
 }
 
 inline void HardwareDriverNode::jointCommandCallback(
     const hardware::msg::JointControl::SharedPtr msg) {
-      // Usar with solo cuando se esta cambiando ya que puede haber otro tipos de joints que no son los steppers
-  // Write to in_flipper (idx 0-3) or in_arms (idx 4-10) depending on joint index.
   in_flipper.with([&](StepperState<4> &d) {
     for (size_t i = 0; i < msg->joint_names.size(); ++i) {
       auto it = std::find(joint_names.begin(), joint_names.end(), msg->joint_names[i]);
       if (it == joint_names.end()) continue;
       int idx = static_cast<int>(std::distance(joint_names.begin(), it));
-      if (idx >= 4) continue;  // handled by in_arms below
+      if (idx >= 4) continue;  
       d.setPosition(idx, msg->position[i]);
       d.setSpeed(idx,    msg->velocity[i]);
       d.setAcceleration(idx, msg->acceleration[i]);
@@ -836,7 +697,7 @@ inline void HardwareDriverNode::jointCommandCallback(
       auto it = std::find(joint_names.begin(), joint_names.end(), msg->joint_names[i]);
       if (it == joint_names.end()) continue;
       int idx = static_cast<int>(std::distance(joint_names.begin(), it));
-      if (idx < 4 || idx >= steppers) continue;  // flipper range handled above
+      if (idx < 4 || idx >= steppers) continue;  
       int arm_idx = idx - 4;
       d.setPosition(arm_idx, msg->position[i]);
       d.setSpeed(arm_idx,    msg->velocity[i]);
@@ -849,10 +710,6 @@ inline void HardwareDriverNode::jointCommandCallback(
 }
 
 
-// -----------------------------------------------------------------------------
-// deadmanStop — called when no command arrives within deadman_timeout_s_
-// Zeroes all velocities and accelerations without touching target positions.
-// Mirrors the MCU deadman behavior.
 // -----------------------------------------------------------------------------
 inline void HardwareDriverNode::deadmanStop() {
   in_dc.with([](DCState &d) {
@@ -878,35 +735,26 @@ inline bool HardwareDriverNode::errorRecoveryI2C() {
   return false;
 }
 
-inline bool HardwareDriverNode::errorRecoveryCANArm(int i) {
+inline bool HardwareDriverNode::errorRecoveryBridgeArm(int i) {
   
-  if (++can_wait_counter_[i] < max_wait_ticks_) return false;
-  can_wait_counter_[i] = 0;
-  // reconnect() delegates to the shared SerialMux — if it succeeds,
-  // ALL arms benefit because they share the same physical serial port.
-  // Force full resync so every arm re-sends its current state.
+  if (++bridge_wait_counter_[i] < max_wait_ticks_) return false;
+  bridge_wait_counter_[i] = 0;
   if (stepper_arms[i].reconnect()) {
-    can_needs_resync_ = true;
-    // Reset all wait counters — the mux is back for everyone
-    //for (auto &wc : can_wait_counter_) wc = 0;
+    bridge_needs_resync_ = true;
     logger.logInfo("Bridge serial reconnected (triggered by arm %d)", i);
     return true;
   }
-  //logger.logWarn("Bridge serial reconnect failed (arm %d)", i);
   return false;
 }
 
 // -----------------------------------------------------------------------------
 inline void HardwareDriverNode::publishJointFeedback() {
-  // Only publish joints that have received at least one feedback message
-  // and whose last update is within the timeout window.
   if (!feedback_flipper.feedback_received && !feedback_arms.feedback_received) return;
 
   const rclcpp::Time now = this->now();
   jsm::JointState msg;
   msg.header.stamp = now;
 
-  // Flippers — all share a single timestamp (the MCU reports them together)
   if (feedback_flipper.feedback_received) {
     double age = (now - feedback_flipper.last_feedback_time).seconds();
     if (age <= joint_timeout_s_) {
@@ -919,10 +767,6 @@ inline void HardwareDriverNode::publishJointFeedback() {
     }
   }
 
-  // Arms — each arm has its own timestamp (independent CAN nodes)
-  // feedback_arms is a single StepperState<7> stamped per arm callback.
-  // Since stampFeedback is called per-arm in the callback, arms that never
-  // reported keep feedback_received=false and are skipped automatically.
   if (feedback_arms.feedback_received) {
     double age = (now - feedback_arms.last_feedback_time).seconds();
     if (age <= joint_timeout_s_) {
@@ -947,7 +791,6 @@ inline void HardwareDriverNode::publishDCFeedback() {
 }
 
 inline void HardwareDriverNode::diagTick() {
-
   auto changed = sysStats.amountUpdated();
   bool force = (++diag_ticks_since_pub_ >= diag_force_ticks_);
 
@@ -955,16 +798,10 @@ inline void HardwareDriverNode::diagTick() {
     diag_ticks_since_pub_ = 0;
     publishDiagnostics();
   }
-  
 }
 
 // -----------------------------------------------------------------------------
-// publishDiagnostics — builds and publishes the DiagnosticArray from a
-// snapshot of diag_data_.  Add KeyValue entries here when MCU error messages
-// are implemented.
-// -----------------------------------------------------------------------------
 inline void HardwareDriverNode::publishDiagnostics() {
-
   diag::DiagnosticArray array_msg;
   array_msg.header.stamp = this->now();
   
