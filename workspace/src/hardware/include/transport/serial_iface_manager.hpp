@@ -68,7 +68,7 @@ public:
 
     explicit SerialIfaceManager(DiagnosticRegistry *reg = nullptr, 
                                 std::string port = "", 
-                                uint32_t baudrate = 921600)
+                                uint32_t baudrate = 115200)
         : port_{std::move(port)}, baudrate_{baudrate} 
     {
         statusReport.with([this](Status &d){
