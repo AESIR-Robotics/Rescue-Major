@@ -232,6 +232,7 @@ inline HardwareDriverNode::HardwareDriverNode() : Node("hardware_node") {
   this->declare_parameter<int>("i2c_address", 0x30);
   
   // Nuevos parámetros para Serial Bridge
+  // this->declare_parameter<std::string>("can_interface", "can1");
   this->declare_parameter<std::string>("bridge_serial_port", "/dev/ttyUSB0");
   this->declare_parameter<int>("bridge_serial_baud", 921600);
 
