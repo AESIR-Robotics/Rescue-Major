@@ -133,6 +133,8 @@ protected:
         }
     }
 
+    Tracked<Status> statusReport;
+
 private:
     bool connect() override {
         disconnectImpl();
@@ -234,5 +236,4 @@ private:
     uint8_t  rx_expected_seq_{ 0 };
     bool     rx_in_progress_{ false };
 
-    Tracked<Status> statusReport;
 };
