@@ -8,6 +8,11 @@ Type=simple
 
 Environment=HOME={{USER_HOME}}
 Environment=ROS_LOG_DIR={{USER_HOME}}/.ros/log
+Environment=ROS_VERSION=2
+Environment=ROS_PYTHON_VERSION=3
+Environment=ROS_LOCALHOST_ONLY=0
+Environment=RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+
 
 ExecStart={{BASE_PATH}}/launch_scripts/%i.sh
 WorkingDirectory={{BASE_PATH}}/launch_scripts
