@@ -1,4 +1,0 @@
-Invoking command in '/home/aesir/Rescue-Major/build/mapping': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --build /home/aesir/Rescue-Major/build/mapping -- -j8 -l8
-Invoked command in '/home/aesir/Rescue-Major/build/mapping' returned '0': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --build /home/aesir/Rescue-Major/build/mapping -- -j8 -l8
-Invoking command in '/home/aesir/Rescue-Major/build/mapping': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --install /home/aesir/Rescue-Major/build/mapping
-Invoked command in '/home/aesir/Rescue-Major/build/mapping' returned '0': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --install /home/aesir/Rescue-Major/build/mapping

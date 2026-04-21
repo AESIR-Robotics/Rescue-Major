@@ -6,5 +6,5 @@
     image_height: 640
     # Estos parámetros obligan al sensor a cambiar su resolución nativa de preview
     camera_model: "OAK-D"
-    nn_path: "/home/aesir/Rescue-Major/workspace/src/mapping/yolo_training/runs/detect/runs/detect/aesir_rescue_v27_final3/weights/best.blob"
-    nn_config_path: "/home/aesir/Rescue-Major/workspace/src/mapping/yolo_training/runs/detect/runs/detect/aesir_rescue_v27_final3/weights/best.json"
+    nn_path: "/home/aesir/AESIR/mapping/workspace/src/mapping/yolo_training/runs/aesir_v23/best.blob"
+    nn_config_path: "/home/aesir/AESIR/mapping/workspace/src/mapping/yolo_training/runs/aesir_v23/best.json"
