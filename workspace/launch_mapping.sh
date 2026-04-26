@@ -83,31 +83,31 @@ tmux select-layout tiled
 
 # Comandos
 tmux send-keys -t 0 "python3 src/teleoperation/scripts/server_rtc.py --cert-file /home/aesir/AESIR/develop/cert.pem --key-file /home/aesir/AESIR/develop/key.pem --host 0.0.0.0 --port 8081" Enter
-tmux send-keys -t 1 "ros2 run rosbridge_server rosbridge_websocket --ros-args --param ssl:=false --param port:=9090 --param address:=\"0.0.0.0\"" Enter
+tmux send-keys -t 1 "ros2 run rosbridge_server rosbridge_websocket --ros-args --param ssl:=true --param certfile:="/home/aesir/AESIR/develop/cert.pem" --param keyfile:="/home/aesir/AESIR/develop/key.pem" --param port:=9090 --param address:=\"0.0.0.0"\" Enter
 sleep 1
 tmux send-keys -t 2 "ros2 launch hardware hardware.launch.py" Enter
 sleep 1
 tmux send-keys -t 3 "ros2 launch vision vision.launch.py" Enter
+tmux send-keys -t 4 "ros2 launch depthai_ros_driver camera.launch.py camera.i_nn_type:=none rgb.i_resolution:=720P rgb.i_width:=1280 rgb.i_height:=720 rgb.i_fps:=20.0" Enter
 sleep 1
 
 # Temporal
-tmux send-keys -t 4 "cd ../.." Enter
-tmux send-keys -t 4 "cd arm/workspace" Enter
-tmux send-keys -t 4 "source install/setup.bash" Enter
-tmux send-keys -t 4 "ros2 launch robot_moveit_config bringup.launch.py" Enter
+tmux send-keys -t 5 "cd ../.." Enter
+tmux send-keys -t 5 "cd arm/workspace" Enter
+tmux send-keys -t 5 "source install/setup.bash" Enter
+tmux send-keys -t 5 "ros2 launch robot_moveit_config bringup.launch.py" Enter
 sleep 1
 # Temporal
-tmux send-keys -t 6 "cd ../.." Enter
-tmux send-keys -t 6 "cd mapping/workspace" Enter
+tmux send-keys -t 6 "cd" Enter
+tmux send-keys -t 6 "cd AESIR/mapping/workspace" Enter
 tmux send-keys -t 6 "source install/setup.bash" Enter
-tmux send-keys -t 6 "ros2 launch mapping test_sergio_no_lo_borres.py" Enter
+tmux send-keys -t 6 "ros2 launch mapping mapping_tmr.py" Enter
 sleep 1
-tmux send-keys -t 7 "cd ../.." Enter
-tmux send-keys -t 7 "cd mapping/workspace" Enter
+tmux send-keys -t 7 "cd" Enter
+tmux send-keys -t 7 "cd AESIR/mapping/workspace" Enter
 tmux send-keys -t 7 "source install/setup.bash" Enter
 tmux send-keys -t 7 "ros2 launch navigation navigation.launch.py" Enter
 sleep 1
-tmux send-keys -t 5 "htop" Enter
 tmux send-keys -t 8 "jtop" Enter
 
 tmux send-keys -t 9 "" Enter
