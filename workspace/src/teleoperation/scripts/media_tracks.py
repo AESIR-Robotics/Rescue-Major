@@ -24,15 +24,41 @@ class ImageVideoTrack(MediaStreamTrack):
         self.frames = 0
         self.framerate = 30
         self.intermediate_node = intermediate_node
+        self.last_fps = 30
+        self.fps_change_time = self.start_time
 
     async def next_timestamp(self):
+        """Calculate next frame timestamp with dynamic framerate support."""
         self.frames += 1
-        next_time = self.start_time + (self.frames / self.framerate)
-        await asyncio.sleep(max(0, next_time - time.time()))
-        return int((next_time - self.start_time) * 1000)
+        
+        # Check if FPS has changed and adjust if so
+        current_fps = self.intermediate_node.fps
+        if current_fps != self.last_fps:
+            logger.info(f"Track {self.index}: FPS changed from {self.last_fps} to {current_fps}")
+            self.last_fps = current_fps
+            self.framerate = current_fps
+        
+        actual_time = time.time()
+        elapsed = actual_time - self.start_time
+        
+        expected_time = self.frames / self.framerate
+        
+        
+        sleep_time = max(0, expected_time - elapsed)
+        if sleep_time > 0:
+            await asyncio.sleep(sleep_time)
+        
+        # Return timestamp in milliseconds
+        return int(elapsed * 1000)
 
     async def recv(self):
         frame = await self.get_frame()
+        
+        # Validate frame before encoding to prevent black frame transmission
+        if frame is None or frame.size == 0:
+            logger.warning(f"Track {self.index}: Received invalid frame, retrying...")
+            frame = self.intermediate_node.get_latest_image(self.index)
+        
         image_frame = VideoFrame.from_ndarray(frame, format="rgb24")
         image_frame = image_frame.reformat(format="yuv420p")
         image_frame.pts = await self.next_timestamp()
@@ -41,7 +67,9 @@ class ImageVideoTrack(MediaStreamTrack):
 
     async def get_frame(self):
         latest_frame = self.intermediate_node.get_latest_image(self.index)
-        await asyncio.sleep(1.0 / self.intermediate_node.fps)
+        # Adjust sleep based on current FPS instead of fixed rate
+        current_fps = self.intermediate_node.fps
+        await asyncio.sleep(1.0 / current_fps)
         return latest_frame
 
 

@@ -62,6 +62,8 @@ class Intermediate(Node):
         self.pending_track_switches = []  # List of tuples: (track_index, target_source)
         
         self.latest_images = [None] * self.camera_count
+        self.buffer_indices = [0] * self.camera_count  # Double-buffering: track which buffer to read
+        self.image_locks = [threading.Lock() for _ in range(self.camera_count)]  # Per-camera locks
         self.bridge = cv_bridge.CvBridge()
         self.last_times = [time.time()] * self.camera_count
         self.fps = 30
@@ -120,14 +122,24 @@ class Intermediate(Node):
             else:
                 resized_image = self.resize_image(cv_image)
 
-            # Thread-safe buffer update
-            with self.subscription_lock:
-                # Check if buffer needs reallocation due to size change
-                if self.latest_images[index].shape != resized_image.shape:
-                    logger.info(f"Track {index}: Reallocating buffer from {self.latest_images[index].shape} to {resized_image.shape}")
-                    self.latest_images[index] = np.zeros(resized_image.shape, dtype=np.uint8)
+            # Use per-camera lock instead of global subscription_lock
+            with self.image_locks[index]:
+                # Determine write buffer (the one NOT being read)
+                read_idx = self.buffer_indices[index]
+                write_idx = 1 - read_idx
+                write_buffer = self.latest_images[index][write_idx]
                 
-                np.copyto(self.latest_images[index], resized_image)
+                # Check if buffer needs reallocation due to size change
+                if write_buffer.shape != resized_image.shape:
+                    logger.info(f"Track {index}: Reallocating buffer from {write_buffer.shape} to {resized_image.shape}")
+                    self.latest_images[index][write_idx] = np.zeros(resized_image.shape, dtype=np.uint8)
+                    write_buffer = self.latest_images[index][write_idx]
+                
+                # Copy data to write buffer
+                np.copyto(write_buffer, resized_image)
+                
+                # Swap buffers atomically - reader now reads the updated buffer
+                self.buffer_indices[index] = write_idx
             
             self.last_times[index] = current_time
         except Exception as e:
@@ -234,8 +246,11 @@ class Intermediate(Node):
         return self.source_topics[source]
 
     def _clear_image_buffer(self, index):
-        """Re-initializes the image buffer to black to drop stale frames."""
-        self.latest_images[index] = np.zeros(self.resolution[::-1] + (3,), dtype=np.uint8)
+        """Re-initializes both image buffers with placeholder image to smoothly transition sources."""
+        # Fill both buffers with placeholder to avoid black frames during source switching
+        with self.image_locks[index]:
+            self.latest_images[index][0][:] = self.placeholder_image
+            self.latest_images[index][1][:] = self.placeholder_image
 
     def _subscribe_to_cameras(self):
         """Initialize all camera subscriptions. Thread-safe."""
@@ -317,7 +332,9 @@ class Intermediate(Node):
         width, height = self.resolution
         shape = (height, width, 3)
         for i in range(self.camera_count):
-            self.latest_images[i] = np.zeros(shape, dtype=np.uint8)
+            # Double-buffering: create two buffers per camera [read_buffer, write_buffer]
+            self.latest_images[i] = [np.zeros(shape, dtype=np.uint8) for _ in range(2)]
+            self.buffer_indices[i] = 0  
 
     def adjust_fps_and_resolution(self):
         rtt_settings = {
@@ -330,10 +347,13 @@ class Intermediate(Node):
         for (lower_bound, upper_bound), settings in rtt_settings.items():
             if lower_bound <= self.rtt < upper_bound:
                 self.fps = settings['fps']
+                old_resolution = self.resolution
                 self.resolution = settings['resolution']
-                logger.info("Adjusted FPS to %s and resolution to %s", self.fps, self.resolution)
+                if old_resolution != self.resolution:
+                    logger.info("Adjusted FPS to %s and resolution to %s", self.fps, self.resolution)
+                    # Reallocate buffers for new resolution (safe with per-camera locks)
+                    self.preallocate_latest_images()
                 break
-        self.preallocate_latest_images()
 
     def resize_image(self, image):
         if self.rtt is not None:
@@ -368,8 +388,18 @@ class Intermediate(Node):
         return image
 
     def get_latest_image(self, index):
-        """Returns the latest processed image or a placeholder if none available."""
-        return self.latest_images[index] if self.latest_images[index] is not None else self.placeholder_image
+        """Returns the latest processed image with thread-safe double-buffering or a placeholder if none available."""
+        try:
+            with self.image_locks[index]:
+                read_idx = self.buffer_indices[index]
+                image = self.latest_images[index][read_idx]
+                # Ensure we return a valid image (not None or empty)
+                if image is not None and image.size > 0:
+                    return image.copy()  # Return copy to prevent external modifications
+        except (IndexError, TypeError) as e:
+            logger.warning(f"Error reading image for track {index}: {e}")
+        
+        return self.placeholder_image
 
 
 # Web handler functions

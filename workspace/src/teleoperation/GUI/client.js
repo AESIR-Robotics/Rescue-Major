@@ -62,6 +62,15 @@ function createPeerConnection() {
             if(videoIndex < videoElements.length) {
                 const video = videoElements[videoIndex];
                 const singleStream = new MediaStream([evt.track]);
+                
+                // Add event listeners to detect frame drops/artifacts
+                video.onplay = function() {
+                    console.log(`Video track ${videoIndex} started playback`);
+                };
+                video.onresizechange = function() {
+                    console.log(`Video track ${videoIndex} resolution changed to ${video.videoWidth}x${video.videoHeight}`);
+                };
+                
                 video.srcObject = singleStream;
                 placeholders[videoIndex].style.display = 'none';
                 videoIndex++;
