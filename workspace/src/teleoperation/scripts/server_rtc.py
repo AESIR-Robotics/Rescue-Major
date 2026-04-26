@@ -249,7 +249,7 @@ class Intermediate(Node):
         """Re-initializes both image buffers with placeholder image to smoothly transition sources."""
         # Fill both buffers with placeholder to avoid black frames during source switching
         with self.image_locks[index]:
-            self.latest_images[index][0][:] = self.placeholder_image ///////    
+            self.latest_images[index][0][:] = self.placeholder_image     
             self.latest_images[index][1][:] = self.placeholder_image
 
     def _subscribe_to_cameras(self):
