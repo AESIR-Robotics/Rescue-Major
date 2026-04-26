@@ -80,10 +80,10 @@ class Intermediate(Node):
             self.placeholder_image = cv2.imread(placeholder_path)
             if self.placeholder_image is None:
                 logger.warning('Found placeholder at %s but cv2 failed to read it', placeholder_path)
-                self.placeholder_image = np.zeros((480, 640, 3), dtype=np.uint8)
+                self.placeholder_image = np.zeros((1080, 1920, 3), dtype=np.uint8)
         else:
             logger.warning('Placeholder image not found at %s; using blank image', placeholder_path)
-            self.placeholder_image = np.zeros((480, 640, 3), dtype=np.uint8)
+            self.placeholder_image = np.zeros((1080, 1920, 3), dtype=np.uint8)
         
         self.new_image = None
         self.rtt = None
@@ -249,7 +249,7 @@ class Intermediate(Node):
         """Re-initializes both image buffers with placeholder image to smoothly transition sources."""
         # Fill both buffers with placeholder to avoid black frames during source switching
         with self.image_locks[index]:
-            self.latest_images[index][0][:] = self.placeholder_image
+            self.latest_images[index][0][:] = self.placeholder_image ///////    
             self.latest_images[index][1][:] = self.placeholder_image
 
     def _subscribe_to_cameras(self):
