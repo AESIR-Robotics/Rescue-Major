@@ -23,64 +23,13 @@
 #include "utils/logger.hpp"
 #include "can_iface_manager.hpp"
 #include "utils/diagnostics.hpp"
+#include "utils/crc.hpp"
 
 using micros    = std::chrono::microseconds;
 using stdclock  = std::chrono::steady_clock;
 using deadline_t = stdclock::time_point;
 using LogFn      = std::function<void(const std::string &)>;
 
-// =============================================================================
-// CAN ID encoding (29-bit extended frame)
-//
-//   [28..26] priority  (3 bits)
-//   [25..18] sender    (8 bits)
-//   [17..10] receiver  (8 bits)
-//   [9..0]   channel   (10 bits)
-// =============================================================================
-
-inline constexpr uint32_t can_make_id(uint8_t sender, uint8_t receiver,
-                                       uint16_t channel  = 0,
-                                       uint8_t  priority = 6) {
-    return CAN_EFF_FLAG |
-           ((static_cast<uint32_t>(priority & 0x07) << 26) |
-            (static_cast<uint32_t>(sender           ) << 18) |
-            (static_cast<uint32_t>(receiver          ) << 10) |
-            (static_cast<uint32_t>(channel  & 0x3FF) ));
-}
-
-// =============================================================================
-// CAN 2.0B Segmentation Protocol
-//
-// CAN 2.0B max payload = 8 bytes per frame.
-// Byte 0 is a segment header; bytes 1-7 carry up to 7 bytes of data.
-//
-// Segment header (byte 0):
-//   [7..6]  frame type:
-//             0b00 (SINGLE) — entire message fits in one frame
-//             0b01 (START)  — first frame of a multi-frame message
-//             0b10 (CONT)   — continuation frame
-//             0b11 (END)    — last frame of a multi-frame message
-//   [5..0]  sequence number (0-63, wraps)
-//
-// The receiver reassembles frames in order. If a sequence gap or timeout
-// occurs the partial transfer is discarded.
-// =============================================================================
-
-namespace seg {
-    constexpr uint8_t HEADER_SIZE    = 1;
-    constexpr uint8_t FRAME_DATA_LEN = CAN_MAX_DLEN - HEADER_SIZE;  // 7
-
-    constexpr uint8_t TYPE_SINGLE = 0b00;
-    constexpr uint8_t TYPE_START  = 0b01;
-    constexpr uint8_t TYPE_CONT   = 0b10;
-    constexpr uint8_t TYPE_END    = 0b11;
-
-    inline uint8_t make_header(uint8_t type, uint8_t seq) {
-        return static_cast<uint8_t>((type & 0x03) << 6) | (seq & 0x3F);
-    }
-    inline uint8_t frame_type(uint8_t header) { return (header >> 6) & 0x03; }
-    inline uint8_t frame_seq (uint8_t header) { return  header       & 0x3F; }
-} // namespace seg
 
 // =============================================================================
 // CAN_Transport
